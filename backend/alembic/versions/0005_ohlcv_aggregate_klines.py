@@ -27,6 +27,8 @@ TABLES = (
 
 def upgrade() -> None:
     for table_name, unique_name, index_name in TABLES:
+        if _has_table(table_name):
+            continue
         op.create_table(
             table_name,
             sa.Column("id", sa.Integer(), nullable=False),
@@ -65,3 +67,7 @@ def downgrade() -> None:
         op.drop_index(op.f(f"ix_{table_name}_aggregation_status"), table_name=table_name)
         op.drop_index(op.f(f"ix_{table_name}_symbol"), table_name=table_name)
         op.drop_table(table_name)
+
+
+def _has_table(table_name: str) -> bool:
+    return table_name in sa.inspect(op.get_bind()).get_table_names()

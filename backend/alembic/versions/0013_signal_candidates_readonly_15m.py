@@ -15,6 +15,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if _has_table("market_signal_candidates_readonly_15m"):
+        return
     op.create_table(
         "market_signal_candidates_readonly_15m",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -55,3 +57,7 @@ def downgrade() -> None:
     )
     op.drop_index("ix_market_signal_candidates_readonly_15m_symbol", table_name="market_signal_candidates_readonly_15m")
     op.drop_table("market_signal_candidates_readonly_15m")
+
+
+def _has_table(table_name: str) -> bool:
+    return table_name in sa.inspect(op.get_bind()).get_table_names()
