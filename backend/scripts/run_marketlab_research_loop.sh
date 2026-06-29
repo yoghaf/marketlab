@@ -14,6 +14,7 @@ while true; do
   python scripts/run_kline_collector.py --markets futures spot --cycles 1
   python scripts/run_ohlcv_aggregation.py --timeframes 15m --markets futures spot --cycles 1
   python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --cycles 1
+  python scripts/run_snapshot_collector.py --cycles 1 --interval-seconds 0
   python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --cycles 1
   python scripts/run_feature_builder_15m.py --cycles 1
   python scripts/run_feature_builder_1h.py --cycles 1
