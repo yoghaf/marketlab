@@ -1,0 +1,59 @@
+const styles: Record<string, string> = {
+  READY: "border-ready text-ready bg-emerald-50",
+  FULL_READY: "border-ready text-ready bg-emerald-50",
+  WARMUP: "border-warmup text-warmup bg-amber-50",
+  FULL_WARMUP: "border-warmup text-warmup bg-amber-50",
+  STALE: "border-stale text-stale bg-red-50",
+  FULL_STALE: "border-stale text-stale bg-red-50",
+  MISSING: "border-missing text-missing bg-gray-50",
+  MISSING_SPOT: "border-missing text-missing bg-gray-50",
+  FULL_MISSING_SPOT: "border-missing text-missing bg-gray-50",
+  MISSING_FUTURES: "border-stale text-stale bg-red-50",
+  FULL_MISSING_FUTURES: "border-stale text-stale bg-red-50",
+  MISSING_OI: "border-warmup text-warmup bg-amber-50",
+  FULL_MISSING_OI: "border-warmup text-warmup bg-amber-50",
+  MISSING_FUNDING: "border-warmup text-warmup bg-amber-50",
+  FULL_MISSING_FUNDING: "border-warmup text-warmup bg-amber-50",
+  FULL_ACTIVE: "border-blue-700 text-blue-700 bg-blue-50",
+  LIGHT_WATCH: "border-slate-500 text-slate-700 bg-slate-50",
+  NOT_ACTIVE: "border-missing text-missing bg-gray-50",
+  RICH_READY: "border-ready text-ready bg-emerald-50",
+  RICH_WARMUP: "border-warmup text-warmup bg-amber-50",
+  RICH_STALE: "border-stale text-stale bg-red-50",
+  RICH_MISSING: "border-missing text-missing bg-gray-50",
+  AGG_READY: "border-ready text-ready bg-emerald-50",
+  AGG_INCOMPLETE: "border-warmup text-warmup bg-amber-50",
+  AGG_WARMUP: "border-missing text-missing bg-gray-50",
+  AGG_STALE: "border-stale text-stale bg-red-50",
+  AGG_MISSING_SPOT: "border-missing text-missing bg-gray-50",
+  ALIGNED: "border-ready text-ready bg-emerald-50",
+  INCOMPLETE: "border-warmup text-warmup bg-amber-50",
+  NO_DATA: "border-missing text-missing bg-gray-50",
+  FRESH: "border-ready text-ready bg-emerald-50",
+  FUNDING_ALIGNED: "border-ready text-ready bg-emerald-50",
+  FUNDING_CARRIED_FORWARD: "border-warmup text-warmup bg-amber-50",
+  FUNDING_STALE: "border-stale text-stale bg-red-50",
+  FUNDING_MISSING: "border-missing text-missing bg-gray-50",
+  FEATURE_READY: "border-ready text-ready bg-emerald-50",
+  FEATURE_PARTIAL: "border-warmup text-warmup bg-amber-50",
+  FEATURE_BLOCKED: "border-stale text-stale bg-red-50",
+  CONTEXT_READY: "border-ready text-ready bg-emerald-50",
+  CONTEXT_PARTIAL: "border-warmup text-warmup bg-amber-50",
+  CONTEXT_BLOCKED: "border-stale text-stale bg-red-50",
+  LABEL_READY: "border-ready text-ready bg-emerald-50",
+  LABEL_PARTIAL: "border-warmup text-warmup bg-amber-50",
+  LABEL_BLOCKED: "border-stale text-stale bg-red-50",
+  SUCCESS: "border-ready text-ready bg-emerald-50",
+  PARTIAL: "border-warmup text-warmup bg-amber-50",
+  ERROR: "border-stale text-stale bg-red-50",
+  RUNNING: "border-blue-700 text-blue-700 bg-blue-50"
+};
+
+export function StatusBadge({ value }: { value?: string | null }) {
+  const label = value || "-";
+  return (
+    <span className={`inline-flex min-w-20 justify-center rounded border px-2 py-1 text-xs font-semibold ${styles[label] || "border-line text-ink bg-white"}`}>
+      {label}
+    </span>
+  );
+}

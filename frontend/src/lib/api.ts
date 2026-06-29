@@ -1,0 +1,161 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+export async function fetchJson<T>(path: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`API ${path} failed: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function fmtTime(value?: string | null): string {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "UTC"
+  }).format(new Date(value));
+}
+
+export function fmtNumber(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num);
+}
+
+export type UniverseItem = {
+  symbol: string;
+  rank: number;
+  quote_volume: string;
+  price_change_percent?: string | null;
+  last_price?: string | null;
+  high_price?: string | null;
+  low_price?: string | null;
+  volume?: string | null;
+  trade_count_24h?: number | null;
+  rank_volume?: string | null;
+  collection_tier: "FULL_ACTIVE" | "LIGHT_WATCH" | "NOT_ACTIVE";
+  is_full_active: boolean;
+  is_light_watch: boolean;
+  is_signal_eligible: boolean;
+  is_active: boolean;
+  entered_at: string;
+  last_seen_at: string;
+};
+
+export type HealthItem = {
+  symbol: string;
+  rank?: number | null;
+  rank_volume?: string | null;
+  quote_volume?: string | null;
+  collection_tier?: "FULL_ACTIVE" | "LIGHT_WATCH" | "NOT_ACTIVE";
+  is_signal_eligible?: boolean;
+  status:
+    | "READY"
+    | "WARMUP"
+    | "STALE"
+    | "MISSING_SPOT"
+    | "MISSING_FUTURES"
+    | "MISSING_OI"
+    | "MISSING_FUNDING"
+    | "NOT_ACTIVE";
+  rich_status?: "RICH_READY" | "RICH_WARMUP" | "RICH_STALE" | "RICH_MISSING";
+  rich_reason?: string | null;
+  latest_futures_candle_time?: string | null;
+  latest_spot_candle_time?: string | null;
+  latest_open_interest_time?: string | null;
+  latest_funding_time?: string | null;
+  reason?: string | null;
+};
+
+export type CollectorRun = {
+  id: number;
+  collector_name: string;
+  status: string;
+  started_at: string;
+  finished_at?: string | null;
+  request_count: number;
+  updated_count: number;
+  error_count: number;
+  duration?: number | null;
+  rows_inserted?: number;
+  rows_updated?: number;
+  errors_count?: number;
+};
+
+export type AggregationStatus = {
+  latest_15m_futures?: string | null;
+  latest_15m_spot?: string | null;
+  latest_1h_futures?: string | null;
+  latest_1h_spot?: string | null;
+  latest_4h_futures?: string | null;
+  latest_4h_spot?: string | null;
+  latest_24h_futures?: string | null;
+  latest_24h_spot?: string | null;
+  ready_count: number;
+  incomplete_count: number;
+  warmup_count: number;
+  stale_count: number;
+  missing_spot_count: number;
+  tables?: Record<string, Record<string, number>>;
+};
+
+export type RichAlignmentStatus = {
+  latest_15m?: string | null;
+  latest_1h?: string | null;
+  latest_4h?: string | null;
+  latest_24h?: string | null;
+  aligned_count: number;
+  incomplete_count: number;
+  warmup_count: number;
+  stale_count: number;
+  no_data_count: number;
+  tables?: Record<string, Record<string, number>>;
+};
+
+export type MarketStateAlignmentStatus = {
+  latest_15m?: string | null;
+  latest_1h?: string | null;
+  latest_4h?: string | null;
+  latest_24h?: string | null;
+  fresh_count: number;
+  stale_count: number;
+  missing_count: number;
+  not_applicable_count: number;
+  funding_aligned_count: number;
+  funding_carried_forward_count: number;
+  funding_stale_count: number;
+  funding_missing_count: number;
+  tables?: Record<string, Record<string, Record<string, number>>>;
+  thresholds?: Record<string, number>;
+};
+
+export type Feature15mStatus = {
+  latest_feature_time?: string | null;
+  total_features: number;
+  feature_ready_count: number;
+  feature_partial_count: number;
+  feature_blocked_count: number;
+  latest_ready_symbols_count: number;
+};
+
+export type Feature1hStatus = Feature15mStatus;
+
+export type FeatureContext15m1hStatus = {
+  latest_context_time?: string | null;
+  total_context_rows: number;
+  context_ready_count: number;
+  context_partial_count: number;
+  context_blocked_count: number;
+  latest_symbols_count: number;
+};
+
+export type Psychology15mStatus = {
+  latest_label_time?: string | null;
+  total_labels: number;
+  label_ready_count: number;
+  label_partial_count: number;
+  label_blocked_count: number;
+  top_primary_labels: { label: string; count: number }[];
+};
