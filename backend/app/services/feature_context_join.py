@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import desc, func, select
@@ -15,6 +16,17 @@ from app.services.utils import utcnow
 
 CONTEXT_STATUSES = ("CONTEXT_READY", "CONTEXT_PARTIAL", "CONTEXT_BLOCKED")
 USABLE_FEATURE_STATUSES = {"FEATURE_READY", "FEATURE_PARTIAL"}
+SPOT_SUPPORT_STATUSES = ("SPOT_SUPPORTING", "WEAK_SPOT_SUPPORT", "FUTURES_LED", "SPOT_MISSING", "SPOT_UNKNOWN")
+
+
+@dataclass(frozen=True)
+class SpotFuturesEvidenceConfig:
+    weak_spot_ratio_threshold: Decimal = Decimal("0.20")
+    strong_spot_ratio_threshold: Decimal = Decimal("0.50")
+    taker_support_threshold: Decimal = Decimal("0.55")
+    futures_led_score_threshold: Decimal = Decimal("0.65")
+    spot_support_score_threshold: Decimal = Decimal("0.75")
+    directional_move_threshold_pct: Decimal = Decimal("0.10")
 
 
 @dataclass
@@ -26,8 +38,9 @@ class FeatureContextJoinResult:
 
 
 class FeatureContextJoinService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, evidence_config: SpotFuturesEvidenceConfig | None = None) -> None:
         self.db = db
+        self.evidence_config = evidence_config or SpotFuturesEvidenceConfig()
 
     def run(
         self,
@@ -68,6 +81,14 @@ class FeatureContextJoinService:
         counts = {status: 0 for status in CONTEXT_STATUSES}
         for status, count in rows:
             counts[status] = count
+        spot_rows = self.db.execute(
+            select(MarketFeatureContext15m1h.spot_support_status_15m, func.count()).group_by(
+                MarketFeatureContext15m1h.spot_support_status_15m
+            )
+        ).all()
+        spot_support_counts = {status: 0 for status in SPOT_SUPPORT_STATUSES}
+        for status, count in spot_rows:
+            spot_support_counts[status or "SPOT_UNKNOWN"] = count
         latest_symbols_count = 0
         if latest_context_time is not None:
             latest_symbols_count = (
@@ -86,6 +107,15 @@ class FeatureContextJoinService:
             "context_partial_count": counts["CONTEXT_PARTIAL"],
             "context_blocked_count": counts["CONTEXT_BLOCKED"],
             "latest_symbols_count": latest_symbols_count,
+            "spot_support_counts": spot_support_counts,
+            "thresholds": {
+                "weak_spot_ratio_threshold": self.evidence_config.weak_spot_ratio_threshold,
+                "strong_spot_ratio_threshold": self.evidence_config.strong_spot_ratio_threshold,
+                "taker_support_threshold": self.evidence_config.taker_support_threshold,
+                "futures_led_score_threshold": self.evidence_config.futures_led_score_threshold,
+                "spot_support_score_threshold": self.evidence_config.spot_support_score_threshold,
+                "directional_move_threshold_pct": self.evidence_config.directional_move_threshold_pct,
+            },
         }
 
     def list_contexts(self, status: str | None = None, limit: int = 100) -> list[MarketFeatureContext15m1h]:
@@ -99,6 +129,7 @@ class FeatureContextJoinService:
 
     def _join_window(self, feature_15m: MarketFeature15m, now: datetime) -> dict[str, Any]:
         context_1h = self._nearest_closed_1h(feature_15m.symbol, _as_utc(feature_15m.window_close_time))
+        spot_futures_evidence = self._spot_futures_evidence(feature_15m)
         reasons: list[str] = []
 
         if feature_15m.feature_status not in USABLE_FEATURE_STATUSES:
@@ -128,6 +159,7 @@ class FeatureContextJoinService:
             "range_pct_15m": feature_15m.range_pct,
             "close_position_15m": feature_15m.close_position,
             "kline_taker_buy_ratio_15m": feature_15m.kline_taker_buy_ratio,
+            **spot_futures_evidence,
             "oi_change_pct_15m": feature_15m.oi_change_pct,
             "global_long_short_ratio_15m": feature_15m.global_long_short_ratio,
             "top_trader_position_ratio_15m": feature_15m.top_trader_position_ratio,
@@ -142,6 +174,53 @@ class FeatureContextJoinService:
             "funding_status_1h": context_1h.funding_status if context_1h else None,
             "created_at": now,
             "updated_at": now,
+        }
+
+    def _spot_futures_evidence(self, feature_15m: MarketFeature15m) -> dict[str, Any]:
+        cfg = self.evidence_config
+        direction = _direction(feature_15m.price_return_pct, cfg.directional_move_threshold_pct)
+        ratio = feature_15m.spot_futures_volume_ratio
+        futures_taker = feature_15m.kline_taker_buy_ratio
+        spot_taker = feature_15m.spot_taker_buy_ratio
+        spot_missing = bool(feature_15m.spot_missing_flag)
+
+        spot_support_score = _spot_support_score(
+            direction=direction,
+            ratio=ratio,
+            spot_taker=spot_taker,
+            strong_spot_ratio_threshold=cfg.strong_spot_ratio_threshold,
+            taker_support_threshold=cfg.taker_support_threshold,
+        )
+        futures_led_score = _futures_led_score(
+            direction=direction,
+            ratio=ratio,
+            futures_taker=futures_taker,
+            spot_missing=spot_missing,
+            weak_spot_ratio_threshold=cfg.weak_spot_ratio_threshold,
+            strong_spot_ratio_threshold=cfg.strong_spot_ratio_threshold,
+            taker_support_threshold=cfg.taker_support_threshold,
+        )
+        status = _spot_support_status(
+            direction=direction,
+            ratio=ratio,
+            spot_missing=spot_missing,
+            spot_support_score=spot_support_score,
+            futures_led_score=futures_led_score,
+            config=cfg,
+        )
+
+        return {
+            "futures_volume_15m": feature_15m.futures_volume,
+            "spot_volume_15m": feature_15m.spot_volume,
+            "futures_quote_volume_15m": feature_15m.futures_quote_volume,
+            "spot_quote_volume_15m": feature_15m.spot_quote_volume,
+            "spot_futures_volume_ratio_15m": ratio,
+            "futures_taker_buy_ratio_15m": futures_taker,
+            "spot_taker_buy_ratio_15m": spot_taker,
+            "spot_missing_flag_15m": spot_missing,
+            "spot_support_status_15m": status,
+            "futures_led_score_15m": futures_led_score,
+            "spot_support_score_15m": spot_support_score,
         }
 
     def _feature_15m_windows(self, symbol: str, limit_windows: int | None) -> list[MarketFeature15m]:
@@ -205,3 +284,92 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _direction(price_return_pct: Decimal | None, threshold: Decimal) -> int:
+    if price_return_pct is None:
+        return 0
+    if price_return_pct >= threshold:
+        return 1
+    if price_return_pct <= -threshold:
+        return -1
+    return 0
+
+
+def _supports_direction(direction: int, taker_buy_ratio: Decimal | None, threshold: Decimal) -> bool:
+    if direction == 0 or taker_buy_ratio is None:
+        return False
+    if direction > 0:
+        return taker_buy_ratio >= threshold
+    return taker_buy_ratio <= Decimal("1") - threshold
+
+
+def _ratio_score(value: Decimal | None, threshold: Decimal) -> Decimal:
+    if value is None or threshold == Decimal("0"):
+        return Decimal("0")
+    return min(max(value / threshold, Decimal("0")), Decimal("1"))
+
+
+def _low_ratio_score(value: Decimal | None, weak_threshold: Decimal, strong_threshold: Decimal) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    if value <= weak_threshold:
+        return Decimal("1")
+    if value >= strong_threshold or strong_threshold == weak_threshold:
+        return Decimal("0")
+    return (strong_threshold - value) / (strong_threshold - weak_threshold)
+
+
+def _spot_support_score(
+    direction: int,
+    ratio: Decimal | None,
+    spot_taker: Decimal | None,
+    strong_spot_ratio_threshold: Decimal,
+    taker_support_threshold: Decimal,
+) -> Decimal:
+    if direction == 0:
+        return Decimal("0.0000")
+    ratio_component = _ratio_score(ratio, strong_spot_ratio_threshold) * Decimal("0.60")
+    taker_component = Decimal("0.40") if _supports_direction(direction, spot_taker, taker_support_threshold) else Decimal("0")
+    return (ratio_component + taker_component).quantize(Decimal("0.0001"))
+
+
+def _futures_led_score(
+    direction: int,
+    ratio: Decimal | None,
+    futures_taker: Decimal | None,
+    spot_missing: bool,
+    weak_spot_ratio_threshold: Decimal,
+    strong_spot_ratio_threshold: Decimal,
+    taker_support_threshold: Decimal,
+) -> Decimal:
+    if direction == 0:
+        return Decimal("0.0000")
+    ratio_component = Decimal("0.50") if spot_missing else _low_ratio_score(
+        ratio,
+        weak_spot_ratio_threshold,
+        strong_spot_ratio_threshold,
+    ) * Decimal("0.50")
+    taker_component = Decimal("0.50") if _supports_direction(direction, futures_taker, taker_support_threshold) else Decimal("0")
+    return (ratio_component + taker_component).quantize(Decimal("0.0001"))
+
+
+def _spot_support_status(
+    direction: int,
+    ratio: Decimal | None,
+    spot_missing: bool,
+    spot_support_score: Decimal,
+    futures_led_score: Decimal,
+    config: SpotFuturesEvidenceConfig,
+) -> str:
+    if spot_missing:
+        return "SPOT_MISSING"
+    if direction == 0 or ratio is None:
+        return "SPOT_UNKNOWN"
+    if spot_support_score >= config.spot_support_score_threshold:
+        return "SPOT_SUPPORTING"
+    if futures_led_score >= config.futures_led_score_threshold:
+        return "FUTURES_LED"
+    if ratio <= config.weak_spot_ratio_threshold:
+        return "WEAK_SPOT_SUPPORT"
+    return "SPOT_UNKNOWN"

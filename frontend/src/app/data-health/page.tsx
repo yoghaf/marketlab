@@ -9,8 +9,10 @@ import {
   Feature15mStatus,
   HealthItem,
   MarketStateAlignmentStatus,
+  Outcomes15mStatus,
   Psychology15mStatus,
   RichAlignmentStatus,
+  SignalCandidatesReadonly15mStatus,
   fetchJson,
   fmtTime
 } from "@/lib/api";
@@ -37,6 +39,8 @@ type HealthResponse = {
   features_1h: Feature1hStatus;
   feature_context_15m_1h: FeatureContext15m1hStatus;
   psychology_15m: Psychology15mStatus;
+  signal_candidates_readonly_15m: SignalCandidatesReadonly15mStatus;
+  outcomes_15m: Outcomes15mStatus;
   universe: {
     active_universe_count: number;
     universe_count: number;
@@ -105,11 +109,30 @@ export default async function DataHealthPage() {
         <Metric label="Context Blocked" value={data.feature_context_15m_1h.context_blocked_count || 0} />
         <Metric label="Latest Context Symbols" value={data.feature_context_15m_1h.latest_symbols_count || 0} />
       </section>
+      <section className="grid gap-3 md:grid-cols-5">
+        <Metric label="Spot Supporting" value={data.feature_context_15m_1h.spot_support_counts?.SPOT_SUPPORTING || 0} />
+        <Metric label="Weak Spot Support" value={data.feature_context_15m_1h.spot_support_counts?.WEAK_SPOT_SUPPORT || 0} />
+        <Metric label="Futures Led" value={data.feature_context_15m_1h.spot_support_counts?.FUTURES_LED || 0} />
+        <Metric label="Spot Missing" value={data.feature_context_15m_1h.spot_support_counts?.SPOT_MISSING || 0} />
+        <Metric label="Spot Unknown" value={data.feature_context_15m_1h.spot_support_counts?.SPOT_UNKNOWN || 0} />
+      </section>
       <section className="grid gap-3 md:grid-cols-4">
         <Metric label="Label Ready" value={data.psychology_15m.label_ready_count || 0} />
         <Metric label="Label Partial" value={data.psychology_15m.label_partial_count || 0} />
         <Metric label="Label Blocked" value={data.psychology_15m.label_blocked_count || 0} />
         <Metric label="Top Label" value={data.psychology_15m.top_primary_labels[0]?.label || "-"} />
+      </section>
+      <section className="grid gap-3 md:grid-cols-4">
+        <Metric label="Readonly Ready" value={data.signal_candidates_readonly_15m.classifier_ready_count || 0} />
+        <Metric label="Readonly Partial" value={data.signal_candidates_readonly_15m.classifier_partial_count || 0} />
+        <Metric label="Readonly Blocked" value={data.signal_candidates_readonly_15m.classifier_blocked_count || 0} />
+        <Metric label="Top Readonly Type" value={data.signal_candidates_readonly_15m.candidate_type_counts[0]?.type || "-"} />
+      </section>
+      <section className="grid gap-3 md:grid-cols-4">
+        <Metric label="Outcome Ready" value={data.outcomes_15m.outcome_status_counts.OUTCOME_READY || 0} />
+        <Metric label="Outcome Waiting" value={data.outcomes_15m.outcome_status_counts.OUTCOME_WAITING_DATA || 0} />
+        <Metric label="Outcome Incomplete" value={data.outcomes_15m.outcome_status_counts.OUTCOME_INCOMPLETE || 0} />
+        <Metric label="Outcome Blocked" value={data.outcomes_15m.outcome_status_counts.OUTCOME_BLOCKED || 0} />
       </section>
       <div className="overflow-x-auto border border-line bg-white">
         <table>

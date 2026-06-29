@@ -28,8 +28,11 @@ from app.services.feature_builder_1h import FeatureBuilder1hService
 from app.services.feature_builder_15m import FeatureBuilder15mService
 from app.services.feature_context_join import FeatureContextJoinService
 from app.services.ohlcv_aggregation import OhlcvAggregationService
+from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
+from app.services.outcome_tracker_15m import OutcomeTracker15mService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
+from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
 
@@ -129,6 +132,8 @@ def data_health(db: Session = Depends(get_db)):
             "features_1h": FeatureBuilder1hService(db).status_summary(),
             "feature_context_15m_1h": FeatureContextJoinService(db).status_summary(),
             "psychology_15m": PsychologyLabeler15mService(db).status_summary(),
+            "signal_candidates_readonly_15m": SignalCandidateClassifierReadonly15mService(db).status_summary(),
+            "outcomes_15m": OutcomeTracker15mService(db).status_summary(),
             "universe": universe_counts,
             "latest": latest,
             "items": items,
@@ -226,6 +231,52 @@ def psychology_15m_status(db: Session = Depends(get_db)):
 @router.get("/api/psychology/15m")
 def psychology_15m(label_status: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
     rows = PsychologyLabeler15mService(db).list_labels(label_status=label_status, limit=limit)
+    return json_safe(
+        {
+            "count": len(rows),
+            "items": [model_to_dict(row) for row in rows],
+        }
+    )
+
+
+@router.get("/api/signal-candidates/readonly/15m/status")
+def signal_candidates_readonly_15m_status(db: Session = Depends(get_db)):
+    return json_safe(SignalCandidateClassifierReadonly15mService(db).status_summary())
+
+
+@router.get("/api/signal-candidates/readonly/15m")
+def signal_candidates_readonly_15m(
+    type: str | None = None,
+    classifier_status: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    rows = SignalCandidateClassifierReadonly15mService(db).list_candidates(
+        candidate_type=type,
+        classifier_status=classifier_status,
+        limit=limit,
+    )
+    return json_safe(
+        {
+            "count": len(rows),
+            "items": [model_to_dict(row) for row in rows],
+        }
+    )
+
+
+@router.get("/api/outcomes/15m/status")
+def outcomes_15m_status(db: Session = Depends(get_db)):
+    return json_safe(OutcomeTracker15mService(db).status_summary())
+
+
+@router.get("/api/outcomes/15m/summary")
+def outcomes_15m_summary(db: Session = Depends(get_db)):
+    return json_safe(OutcomeSummaryReadonly15mService(db).summary())
+
+
+@router.get("/api/outcomes/15m")
+def outcomes_15m(symbol: str | None = None, limit: int = 100, db: Session = Depends(get_db)):
+    rows = OutcomeTracker15mService(db).list_outcomes(symbol=symbol, limit=limit)
     return json_safe(
         {
             "count": len(rows),

@@ -10,8 +10,10 @@ import {
   Feature15mStatus,
   HealthItem,
   MarketStateAlignmentStatus,
+  Outcomes15mStatus,
   Psychology15mStatus,
   RichAlignmentStatus,
+  SignalCandidatesReadonly15mStatus,
   UniverseItem,
   fetchJson,
   fmtTime
@@ -29,7 +31,7 @@ type HealthResponse = { counts: Record<string, number>; latest: Record<string, s
 type CollectorResponse = { collectors: CollectorRun[]; last_errors: { message: string; created_at: string }[]; request_usage: { latest_used_weight_1m?: number | null } };
 
 export default async function DashboardPage() {
-  const [universe, health, collectors, aggregation, richAlignment, marketStateAlignment, features15m, features1h, featureContext, psychology15m] = await Promise.all([
+  const [universe, health, collectors, aggregation, richAlignment, marketStateAlignment, features15m, features1h, featureContext, psychology15m, signalCandidates, outcomes15m] = await Promise.all([
     fetchJson<UniverseResponse>("/api/universe/active"),
     fetchJson<HealthResponse>("/api/data-health"),
     fetchJson<CollectorResponse>("/api/collectors/status"),
@@ -39,7 +41,9 @@ export default async function DashboardPage() {
     fetchJson<Feature15mStatus>("/api/features/15m/status"),
     fetchJson<Feature1hStatus>("/api/features/1h/status"),
     fetchJson<FeatureContext15m1hStatus>("/api/features/context/15m-1h/status"),
-    fetchJson<Psychology15mStatus>("/api/psychology/15m/status")
+    fetchJson<Psychology15mStatus>("/api/psychology/15m/status"),
+    fetchJson<SignalCandidatesReadonly15mStatus>("/api/signal-candidates/readonly/15m/status"),
+    fetchJson<Outcomes15mStatus>("/api/outcomes/15m/status")
   ]);
   const lastRun = collectors.collectors[0];
   const lastError = collectors.last_errors[0];
@@ -101,11 +105,33 @@ export default async function DashboardPage() {
         <Metric label="Latest Context Symbols" value={featureContext.latest_symbols_count || 0} />
       </section>
 
+      <section className="grid gap-3 md:grid-cols-5">
+        <Metric label="Spot Supporting" value={featureContext.spot_support_counts?.SPOT_SUPPORTING || 0} />
+        <Metric label="Weak Spot Support" value={featureContext.spot_support_counts?.WEAK_SPOT_SUPPORT || 0} />
+        <Metric label="Futures Led" value={featureContext.spot_support_counts?.FUTURES_LED || 0} />
+        <Metric label="Spot Missing" value={featureContext.spot_support_counts?.SPOT_MISSING || 0} />
+        <Metric label="Spot Unknown" value={featureContext.spot_support_counts?.SPOT_UNKNOWN || 0} />
+      </section>
+
       <section className="grid gap-3 md:grid-cols-4">
         <Metric label="Labels Ready" value={psychology15m.label_ready_count || 0} />
         <Metric label="Labels Partial" value={psychology15m.label_partial_count || 0} />
         <Metric label="Labels Blocked" value={psychology15m.label_blocked_count || 0} />
         <Metric label="Total Labels" value={psychology15m.total_labels || 0} />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-4">
+        <Metric label="Read-only Ready" value={signalCandidates.classifier_ready_count || 0} />
+        <Metric label="Read-only Partial" value={signalCandidates.classifier_partial_count || 0} />
+        <Metric label="Read-only Blocked" value={signalCandidates.classifier_blocked_count || 0} />
+        <Metric label="Read-only Rows" value={signalCandidates.total_rows || 0} />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-4">
+        <Metric label="Outcome Ready" value={outcomes15m.outcome_status_counts.OUTCOME_READY || 0} />
+        <Metric label="Outcome Waiting" value={outcomes15m.outcome_status_counts.OUTCOME_WAITING_DATA || 0} />
+        <Metric label="Outcome Incomplete" value={outcomes15m.outcome_status_counts.OUTCOME_INCOMPLETE || 0} />
+        <Metric label="Outcome Blocked" value={outcomes15m.outcome_status_counts.OUTCOME_BLOCKED || 0} />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -226,6 +252,22 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-2 border-b border-line px-4 py-3">
             <dt className="font-medium text-slate-600">top label</dt>
             <dd>{psychology15m.top_primary_labels[0]?.label || "-"}</dd>
+          </div>
+          <div className="grid grid-cols-2 border-b border-line px-4 py-3">
+            <dt className="font-medium text-slate-600">readonly candidate latest time</dt>
+            <dd>{fmtTime(signalCandidates.latest_candidate_time)}</dd>
+          </div>
+          <div className="grid grid-cols-2 border-b border-line px-4 py-3">
+            <dt className="font-medium text-slate-600">top readonly type</dt>
+            <dd>{signalCandidates.candidate_type_counts[0]?.type || "-"}</dd>
+          </div>
+          <div className="grid grid-cols-2 border-b border-line px-4 py-3">
+            <dt className="font-medium text-slate-600">outcome latest update</dt>
+            <dd>{fmtTime(outcomes15m.latest_outcome_update)}</dd>
+          </div>
+          <div className="grid grid-cols-2 border-b border-line px-4 py-3">
+            <dt className="font-medium text-slate-600">outcome rows</dt>
+            <dd>{outcomes15m.total_rows || 0}</dd>
           </div>
         </dl>
       </section>

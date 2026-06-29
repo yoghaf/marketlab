@@ -6,8 +6,10 @@ import {
   Feature1hStatus,
   Feature15mStatus,
   MarketStateAlignmentStatus,
+  Outcomes15mStatus,
   Psychology15mStatus,
   RichAlignmentStatus,
+  SignalCandidatesReadonly15mStatus,
   fetchJson,
   fmtTime
 } from "@/lib/api";
@@ -36,6 +38,8 @@ type Feature15mResponse = Feature15mStatus;
 type Feature1hResponse = Feature1hStatus;
 type FeatureContextResponse = FeatureContext15m1hStatus;
 type Psychology15mResponse = Psychology15mStatus;
+type SignalCandidatesReadonly15mResponse = SignalCandidatesReadonly15mStatus;
+type Outcomes15mResponse = Outcomes15mStatus;
 
 const richLatestKey: Record<string, string> = {
   futures_taker_buy_sell_volume: "taker_buy_sell_latest",
@@ -47,7 +51,7 @@ const richLatestKey: Record<string, string> = {
 };
 
 export default async function CollectorsPage() {
-  const [data, rich, aggregation, richAlignment, marketStateAlignment, features15m, features1h, featureContext, psychology15m] = await Promise.all([
+  const [data, rich, aggregation, richAlignment, marketStateAlignment, features15m, features1h, featureContext, psychology15m, signalCandidates, outcomes15m] = await Promise.all([
     fetchJson<CollectorResponse>("/api/collectors/status"),
     fetchJson<RichFuturesResponse>("/api/rich-futures/status"),
     fetchJson<AggregationStatus>("/api/aggregation/status"),
@@ -56,7 +60,9 @@ export default async function CollectorsPage() {
     fetchJson<Feature15mResponse>("/api/features/15m/status"),
     fetchJson<Feature1hResponse>("/api/features/1h/status"),
     fetchJson<FeatureContextResponse>("/api/features/context/15m-1h/status"),
-    fetchJson<Psychology15mResponse>("/api/psychology/15m/status")
+    fetchJson<Psychology15mResponse>("/api/psychology/15m/status"),
+    fetchJson<SignalCandidatesReadonly15mResponse>("/api/signal-candidates/readonly/15m/status"),
+    fetchJson<Outcomes15mResponse>("/api/outcomes/15m/status")
   ]);
   return (
     <div className="space-y-5">
@@ -205,11 +211,30 @@ export default async function CollectorsPage() {
             <tr><td>context_latest_time</td><td>{fmtTime(featureContext.latest_context_time)}</td></tr>
             <tr><td>context_latest_symbols</td><td>{featureContext.latest_symbols_count || 0}</td></tr>
             <tr><td>context_total_rows</td><td>{featureContext.total_context_rows || 0}</td></tr>
+            <tr><td>SPOT_SUPPORTING</td><td>{featureContext.spot_support_counts?.SPOT_SUPPORTING || 0}</td></tr>
+            <tr><td>WEAK_SPOT_SUPPORT</td><td>{featureContext.spot_support_counts?.WEAK_SPOT_SUPPORT || 0}</td></tr>
+            <tr><td>FUTURES_LED</td><td>{featureContext.spot_support_counts?.FUTURES_LED || 0}</td></tr>
+            <tr><td>SPOT_MISSING</td><td>{featureContext.spot_support_counts?.SPOT_MISSING || 0}</td></tr>
+            <tr><td>SPOT_UNKNOWN</td><td>{featureContext.spot_support_counts?.SPOT_UNKNOWN || 0}</td></tr>
             <tr><td>LABEL_READY</td><td>{psychology15m.label_ready_count || 0}</td></tr>
             <tr><td>LABEL_PARTIAL</td><td>{psychology15m.label_partial_count || 0}</td></tr>
             <tr><td>LABEL_BLOCKED</td><td>{psychology15m.label_blocked_count || 0}</td></tr>
             <tr><td>label_latest_time</td><td>{fmtTime(psychology15m.latest_label_time)}</td></tr>
             <tr><td>top_primary_label</td><td>{psychology15m.top_primary_labels[0]?.label || "-"}</td></tr>
+            <tr><td>CLASSIFIER_READY</td><td>{signalCandidates.classifier_ready_count || 0}</td></tr>
+            <tr><td>CLASSIFIER_PARTIAL</td><td>{signalCandidates.classifier_partial_count || 0}</td></tr>
+            <tr><td>CLASSIFIER_BLOCKED</td><td>{signalCandidates.classifier_blocked_count || 0}</td></tr>
+            <tr><td>readonly_candidate_latest_time</td><td>{fmtTime(signalCandidates.latest_candidate_time)}</td></tr>
+            <tr><td>top_readonly_candidate_type</td><td>{signalCandidates.candidate_type_counts[0]?.type || "-"}</td></tr>
+            <tr><td>OUTCOME_READY</td><td>{outcomes15m.outcome_status_counts.OUTCOME_READY || 0}</td></tr>
+            <tr><td>OUTCOME_WAITING_DATA</td><td>{outcomes15m.outcome_status_counts.OUTCOME_WAITING_DATA || 0}</td></tr>
+            <tr><td>OUTCOME_INCOMPLETE</td><td>{outcomes15m.outcome_status_counts.OUTCOME_INCOMPLETE || 0}</td></tr>
+            <tr><td>OUTCOME_BLOCKED</td><td>{outcomes15m.outcome_status_counts.OUTCOME_BLOCKED || 0}</td></tr>
+            <tr><td>outcome_latest_update</td><td>{fmtTime(outcomes15m.latest_outcome_update)}</td></tr>
+            <tr><td>outcome_15m_ready</td><td>{outcomes15m.horizon_15m_status_counts.OUTCOME_READY || 0}</td></tr>
+            <tr><td>outcome_30m_ready</td><td>{outcomes15m.horizon_30m_status_counts.OUTCOME_READY || 0}</td></tr>
+            <tr><td>outcome_1h_ready</td><td>{outcomes15m.horizon_1h_status_counts.OUTCOME_READY || 0}</td></tr>
+            <tr><td>outcome_4h_ready</td><td>{outcomes15m.horizon_4h_status_counts.OUTCOME_READY || 0}</td></tr>
           </tbody>
         </table>
       </section>

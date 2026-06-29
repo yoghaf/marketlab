@@ -142,6 +142,14 @@ export type Feature15mStatus = {
 
 export type Feature1hStatus = Feature15mStatus;
 
+export type SpotSupportCounts = {
+  SPOT_SUPPORTING?: number;
+  WEAK_SPOT_SUPPORT?: number;
+  FUTURES_LED?: number;
+  SPOT_MISSING?: number;
+  SPOT_UNKNOWN?: number;
+};
+
 export type FeatureContext15m1hStatus = {
   latest_context_time?: string | null;
   total_context_rows: number;
@@ -149,6 +157,8 @@ export type FeatureContext15m1hStatus = {
   context_partial_count: number;
   context_blocked_count: number;
   latest_symbols_count: number;
+  spot_support_counts?: SpotSupportCounts;
+  thresholds?: Record<string, number | string>;
 };
 
 export type Psychology15mStatus = {
@@ -158,4 +168,34 @@ export type Psychology15mStatus = {
   label_partial_count: number;
   label_blocked_count: number;
   top_primary_labels: { label: string; count: number }[];
+};
+
+export type SignalCandidatesReadonly15mStatus = {
+  latest_candidate_time?: string | null;
+  total_rows: number;
+  classifier_ready_count: number;
+  classifier_partial_count: number;
+  classifier_blocked_count: number;
+  candidate_type_counts: { type: string; count: number }[];
+  direction_counts: { direction: string; count: number }[];
+};
+
+export type OutcomeStatusCounts = {
+  OUTCOME_READY?: number;
+  OUTCOME_WAITING_DATA?: number;
+  OUTCOME_INCOMPLETE?: number;
+  OUTCOME_BLOCKED?: number;
+};
+
+export type Outcomes15mStatus = {
+  total_rows: number;
+  latest_candidate_time?: string | null;
+  latest_outcome_update?: string | null;
+  outcome_status_counts: OutcomeStatusCounts;
+  horizon_15m_status_counts: OutcomeStatusCounts;
+  horizon_30m_status_counts: OutcomeStatusCounts;
+  horizon_1h_status_counts: OutcomeStatusCounts;
+  horizon_4h_status_counts: OutcomeStatusCounts;
+  candidate_type_counts: { type: string; count: number }[];
+  direction_counts: { direction: string; count: number }[];
 };

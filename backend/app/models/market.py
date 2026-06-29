@@ -765,6 +765,17 @@ class MarketFeatureContext15m1h(Base):
     range_pct_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     close_position_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     kline_taker_buy_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    futures_volume_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    spot_volume_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    futures_quote_volume_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    spot_quote_volume_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    spot_futures_volume_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    futures_taker_buy_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    spot_taker_buy_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    spot_missing_flag_15m: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    spot_support_status_15m: Mapped[str | None] = mapped_column(String(32))
+    futures_led_score_15m: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    spot_support_score_15m: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     oi_change_pct_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     global_long_short_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     top_trader_position_ratio_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
@@ -811,6 +822,83 @@ class MarketPsychologyLabel15m(Base):
     __table_args__ = (
         UniqueConstraint("symbol", "window_open_time", name="uq_market_psychology_labels_15m_symbol_open"),
         Index("ix_market_psychology_labels_15m_close_status", "window_close_time", "label_status"),
+    )
+
+
+class MarketSignalCandidateReadonly15m(Base):
+    __tablename__ = "market_signal_candidates_readonly_15m"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    window_open_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_close_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    classifier_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    candidate_direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    evidence: Mapped[dict | None] = mapped_column(JSON)
+    block_reason: Mapped[str | None] = mapped_column(Text)
+    not_entry_signal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "window_open_time",
+            name="uq_market_signal_candidates_readonly_15m_symbol_open",
+        ),
+        Index("ix_market_signal_candidates_readonly_15m_close_status", "window_close_time", "classifier_status"),
+    )
+
+
+class MarketCandidateOutcome15m(Base):
+    __tablename__ = "market_candidate_outcomes_15m"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    candidate_window_open_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    candidate_window_close_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    candidate_direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    classifier_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    candidate_close_price: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    outcome_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_15m_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_30m_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_1h_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_4h_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    future_return_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    future_return_30m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    future_return_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    future_return_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_up_move_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_down_move_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_up_move_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_down_move_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_favorable_move_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_adverse_move_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_favorable_move_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    max_adverse_move_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    followthrough_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    invalidation_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_candle_count_15m: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_candle_count_30m: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_candle_count_1h: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_candle_count_4h: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_window_list: Mapped[list | None] = mapped_column(JSON)
+    evidence: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol",
+            "candidate_window_open_time",
+            name="uq_market_candidate_outcomes_15m_symbol_open",
+        ),
+        Index("ix_market_candidate_outcomes_15m_close_status", "candidate_window_close_time", "outcome_status"),
     )
 
 

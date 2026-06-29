@@ -26,6 +26,7 @@ class PsychologyLabelConfig:
     crowded_short_ratio: Decimal = Decimal("0.85")
     positive_funding: Decimal = Decimal("0")
     negative_funding: Decimal = Decimal("0")
+    futures_led_score_threshold: Decimal = Decimal("0.65")
 
 
 @dataclass
@@ -163,7 +164,10 @@ class PsychologyLabeler15mService:
 
         if self._futures_led(context):
             labels.append("FUTURES_LED_MOVE")
+        if context.spot_support_status_15m == "WEAK_SPOT_SUPPORT":
             labels.append("WEAK_SPOT_SUPPORT")
+        if context.spot_support_status_15m == "SPOT_SUPPORTING":
+            labels.append("SPOT_SUPPORTING_MOVE")
 
         if not labels:
             labels.append("CHOPPY_CONTEXT")
@@ -238,6 +242,18 @@ class PsychologyLabeler15mService:
             "close_position_15m": context.close_position_15m,
             "kline_taker_buy_ratio_15m": taker_buy_15m,
             "kline_taker_sell_ratio_15m": Decimal("1") - taker_buy_15m if taker_buy_15m is not None else None,
+            "futures_volume_15m": context.futures_volume_15m,
+            "spot_volume_15m": context.spot_volume_15m,
+            "futures_quote_volume_15m": context.futures_quote_volume_15m,
+            "spot_quote_volume_15m": context.spot_quote_volume_15m,
+            "spot_futures_volume_ratio_15m": context.spot_futures_volume_ratio_15m,
+            "futures_taker_buy_ratio_15m": context.futures_taker_buy_ratio_15m,
+            "spot_taker_buy_ratio_15m": context.spot_taker_buy_ratio_15m,
+            "spot_missing_flag_15m": context.spot_missing_flag_15m,
+            "spot_support_status_15m": context.spot_support_status_15m,
+            "futures_led_score_15m": context.futures_led_score_15m,
+            "spot_support_score_15m": context.spot_support_score_15m,
+            "spot_futures_evidence_reason": _spot_futures_evidence_reason(context),
             "oi_change_pct_15m": context.oi_change_pct_15m,
             "global_long_short_ratio_15m": context.global_long_short_ratio_15m,
             "top_trader_position_ratio_15m": context.top_trader_position_ratio_15m,
@@ -269,7 +285,11 @@ class PsychologyLabeler15mService:
         )
 
     def _futures_led(self, context: MarketFeatureContext15m1h) -> bool:
-        return False
+        return (
+            context.spot_support_status_15m == "FUTURES_LED"
+            and context.futures_led_score_15m is not None
+            and context.futures_led_score_15m >= self.config.futures_led_score_threshold
+        )
 
     def _funding_rate(self, evidence: dict[str, Any]) -> Decimal | None:
         # Funding status is available in the context table; rate can be added later without changing label semantics.
@@ -372,3 +392,16 @@ def _dedupe(labels: list[str]) -> list[str]:
             seen.add(label)
             output.append(label)
     return output
+
+
+def _spot_futures_evidence_reason(context: MarketFeatureContext15m1h) -> str:
+    status = context.spot_support_status_15m or "SPOT_UNKNOWN"
+    if status == "SPOT_MISSING":
+        return "spot OHLCV is missing for this 15m window"
+    if status == "SPOT_SUPPORTING":
+        return "spot quote volume and spot taker pressure support the 15m futures move"
+    if status == "WEAK_SPOT_SUPPORT":
+        return "spot quote volume is below the weak support threshold for the 15m futures move"
+    if status == "FUTURES_LED":
+        return "futures taker pressure is directional while spot support is weak"
+    return "spot/futures evidence is insufficient or non-directional"
