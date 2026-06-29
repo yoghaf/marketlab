@@ -151,6 +151,11 @@ async def main() -> None:
         lock = RunLock(LOCK_PATH)
         if not lock.acquire():
             print(f"{utcnow().isoformat()} collector_loop skipped: lock exists at {LOCK_PATH}")
+            completed += 1
+            if args.cycles and completed >= args.cycles:
+                break
+            if args.interval_seconds:
+                await asyncio.sleep(args.interval_seconds)
         else:
             started = utcnow()
             try:
