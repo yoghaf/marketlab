@@ -26,7 +26,7 @@ module.exports = {
       cwd: "/var/www/marketlab/backend",
       script: "scripts/run_snapshot_collector.py",
       args: "--interval-seconds 60",
-      interpreter: ".venv/bin/python",
+      interpreter: "/var/www/marketlab/backend/.venv/bin/python",
       env: {
         APP_ENV: "production",
       },
