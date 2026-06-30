@@ -140,10 +140,21 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                     <td>{item.confidence}{item.confidence_score ? ` (${item.confidence_score})` : ""}</td>
                     <td className="min-w-64">
                       <div>{item.tier_reason}</div>
+                      {item.using_fallback_usable_row && (
+                        <div className="mt-1 inline-flex rounded border border-amber-600 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
+                          Previous usable context
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-slate-500">{item.scanner_visibility_reason}</div>
+                      {item.latest_actual_status && (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Latest actual: {item.latest_actual_status} at {fmtTime(item.latest_actual_observation_timestamp)}
+                        </div>
+                      )}
                     </td>
                     <td className="min-w-64">
                       <div>{item.warning_reason || "No scanner warning"}</div>
+                      {item.fallback_reason && <div className="mt-1 text-xs font-semibold text-amber-700">{item.fallback_reason}</div>}
                       {item.inactive_warning && <div className="mt-1 text-xs font-semibold text-stale">{item.inactive_warning}</div>}
                     </td>
                     <td><StatusBadge value={item.latest_outcome_status} /></td>

@@ -75,8 +75,69 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(items[0]["collection_tier"], "FULL_ACTIVE")
         self.assertEqual(items[0]["universe_rank"], 1)
         self.assertEqual(items[0]["warning_reason"], "No scanner warning")
+        self.assertEqual(items[0]["latest_actual_status"], "CLASSIFIER_PARTIAL")
+        self.assertEqual(items[0]["latest_actual_observation_timestamp"], "2026-01-01T00:30:00")
+        self.assertFalse(items[0]["using_fallback_usable_row"])
+        self.assertIsNone(items[0]["fallback_reason"])
         self.assertTrue(items[0]["not_entry_signal"])
         self.assertEqual(items[0]["evidence_summary"]["price_return_pct_15m"], "0.12")
+
+    def test_default_falls_back_to_latest_usable_when_latest_actual_is_blocked(self) -> None:
+        old_open = self.window_open
+        blocked_open = self.window_open + timedelta(minutes=15)
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_candidate("AAAUSDT", old_open, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
+        self._insert_candidate(
+            "AAAUSDT",
+            blocked_open,
+            "DATA_BLOCKED",
+            "BLOCKED_CONTEXT",
+            classifier_status="CLASSIFIER_BLOCKED",
+        )
+        self.db.commit()
+
+        default_items = LiveCandidateScannerService(self.db).list_live()
+        blocked_items = LiveCandidateScannerService(self.db).list_live(include_blocked=True)
+
+        self.assertEqual(len(default_items), 1)
+        self.assertEqual(default_items[0]["symbol"], "AAAUSDT")
+        self.assertEqual(default_items[0]["candidate_type"], "MID_SHORT_CONTEXT_READONLY")
+        self.assertEqual(default_items[0]["scanner_tier"], "WATCHLIST_CONTEXT")
+        self.assertTrue(default_items[0]["using_fallback_usable_row"])
+        self.assertEqual(default_items[0]["latest_actual_status"], "CLASSIFIER_BLOCKED")
+        self.assertEqual(default_items[0]["latest_actual_observation_timestamp"], "2026-01-01T00:30:00")
+        self.assertEqual(
+            default_items[0]["fallback_reason"],
+            "latest cycle is blocked; showing latest usable non-blocked scanner row",
+        )
+        self.assertEqual(
+            default_items[0]["scanner_visibility_reason"],
+            "active universe fallback to latest usable non-blocked scanner row",
+        )
+
+        self.assertEqual(len(blocked_items), 1)
+        self.assertEqual(blocked_items[0]["candidate_type"], "DATA_BLOCKED")
+        self.assertEqual(blocked_items[0]["scanner_tier"], "BLOCKED")
+        self.assertFalse(blocked_items[0]["using_fallback_usable_row"])
+
+    def test_default_hides_symbol_when_latest_actual_blocked_without_previous_usable(self) -> None:
+        blocked_open = self.window_open + timedelta(minutes=15)
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_candidate(
+            "AAAUSDT",
+            blocked_open,
+            "DATA_BLOCKED",
+            "BLOCKED_CONTEXT",
+            classifier_status="CLASSIFIER_BLOCKED",
+        )
+        self.db.commit()
+
+        default_items = LiveCandidateScannerService(self.db).list_live()
+        blocked_items = LiveCandidateScannerService(self.db).list_live(include_blocked=True)
+
+        self.assertEqual(default_items, [])
+        self.assertEqual(len(blocked_items), 1)
+        self.assertEqual(blocked_items[0]["candidate_type"], "DATA_BLOCKED")
 
     def test_filters_and_endpoint_http_200(self) -> None:
         open_time = self.window_open
@@ -149,6 +210,28 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(blocked_item["scanner_tier"], "BLOCKED")
         self.assertEqual(blocked_item["warning_reason"], "blocked row; not usable for live radar")
         self.assertEqual(blocked_item["scanner_visibility_reason"], "shown because include_blocked=true")
+
+    def test_fallback_does_not_duplicate_symbols(self) -> None:
+        old_open = self.window_open
+        blocked_open = self.window_open + timedelta(minutes=15)
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("BBBUSDT", rank=2)
+        self._insert_candidate("AAAUSDT", old_open, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
+        self._insert_candidate(
+            "AAAUSDT",
+            blocked_open,
+            "DATA_BLOCKED",
+            "BLOCKED_CONTEXT",
+            classifier_status="CLASSIFIER_BLOCKED",
+        )
+        self._insert_candidate("BBBUSDT", blocked_open, "MID_LONG_CONTEXT_READONLY", "BULLISH_CONTEXT")
+        self.db.commit()
+
+        items = LiveCandidateScannerService(self.db).list_live()
+        symbols = [item["symbol"] for item in items]
+
+        self.assertEqual(len(symbols), len(set(symbols)))
+        self.assertEqual(set(symbols), {"AAAUSDT", "BBBUSDT"})
 
     def _insert_universe(self, symbol: str, rank: int, is_active: bool = True) -> None:
         self.db.add(

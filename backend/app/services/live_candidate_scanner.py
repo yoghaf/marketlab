@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
 from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
@@ -78,13 +79,17 @@ class LiveCandidateScannerService:
         include_blocked: bool = False,
         include_inactive: bool = False,
     ) -> list[dict[str, Any]]:
-        rows = self._latest_candidate_rows(include_inactive=include_inactive)
+        rows = self._latest_candidate_rows(
+            include_blocked=include_blocked,
+            include_inactive=include_inactive,
+        )
         items: list[dict[str, Any]] = []
         normalized_tier = tier.upper() if tier else None
         normalized_type = candidate_type.upper() if candidate_type else None
-        for row, universe in rows:
+        for row, latest_actual_row, universe in rows:
             item = self._candidate_payload(
                 row,
+                latest_actual_row,
                 universe,
                 include_blocked=include_blocked,
                 include_inactive=include_inactive,
@@ -102,11 +107,19 @@ class LiveCandidateScannerService:
 
     def _latest_candidate_rows(
         self,
+        include_blocked: bool,
         include_inactive: bool = False,
-    ) -> list[tuple[MarketSignalCandidateReadonly15m, MarketlabActiveUniverse | None]]:
-        ranked = (
+    ) -> list[
+        tuple[
+            MarketSignalCandidateReadonly15m,
+            MarketSignalCandidateReadonly15m,
+            MarketlabActiveUniverse | None,
+        ]
+    ]:
+        latest_actual_ranked = (
             select(
                 MarketSignalCandidateReadonly15m.id.label("id"),
+                MarketSignalCandidateReadonly15m.symbol.label("symbol"),
                 func.row_number()
                 .over(
                     partition_by=MarketSignalCandidateReadonly15m.symbol,
@@ -120,24 +133,61 @@ class LiveCandidateScannerService:
             )
             .subquery()
         )
+        latest_usable_ranked = (
+            select(
+                MarketSignalCandidateReadonly15m.id.label("id"),
+                MarketSignalCandidateReadonly15m.symbol.label("symbol"),
+                func.row_number()
+                .over(
+                    partition_by=MarketSignalCandidateReadonly15m.symbol,
+                    order_by=(
+                        desc(MarketSignalCandidateReadonly15m.window_close_time),
+                        desc(MarketSignalCandidateReadonly15m.window_open_time),
+                        desc(MarketSignalCandidateReadonly15m.id),
+                    ),
+                )
+                .label("row_rank"),
+            )
+            .where(_usable_candidate_filter(MarketSignalCandidateReadonly15m))
+            .subquery()
+        )
+        latest_actual = aliased(MarketSignalCandidateReadonly15m)
+        latest_usable = aliased(MarketSignalCandidateReadonly15m)
         query = (
-            select(MarketSignalCandidateReadonly15m, MarketlabActiveUniverse)
-            .join(ranked, MarketSignalCandidateReadonly15m.id == ranked.c.id)
+            select(latest_actual, latest_usable, MarketlabActiveUniverse)
+            .join(latest_actual_ranked, latest_actual.id == latest_actual_ranked.c.id)
             .join(
                 MarketlabActiveUniverse,
-                MarketSignalCandidateReadonly15m.symbol == MarketlabActiveUniverse.symbol,
+                latest_actual.symbol == MarketlabActiveUniverse.symbol,
                 isouter=include_inactive,
             )
-            .where(ranked.c.row_rank == 1)
-            .order_by(desc(MarketSignalCandidateReadonly15m.window_close_time), MarketSignalCandidateReadonly15m.symbol)
+            .join(
+                latest_usable_ranked,
+                (latest_usable_ranked.c.symbol == latest_actual.symbol)
+                & (latest_usable_ranked.c.row_rank == 1),
+                isouter=True,
+            )
+            .join(latest_usable, latest_usable.id == latest_usable_ranked.c.id, isouter=True)
+            .where(latest_actual_ranked.c.row_rank == 1)
         )
         if not include_inactive:
             query = query.where(MarketlabActiveUniverse.is_active.is_(True))
-        return list(self.db.execute(query).all())
+        records = []
+        for latest_actual_row, latest_usable_row, universe in self.db.execute(query).all():
+            selected = latest_actual_row if include_blocked else latest_usable_row
+            if selected is None:
+                continue
+            records.append((selected, latest_actual_row, universe))
+        return sorted(
+            records,
+            key=lambda item: (item[0].window_close_time, item[0].window_open_time, item[0].symbol),
+            reverse=True,
+        )
 
     def _candidate_payload(
         self,
         candidate: MarketSignalCandidateReadonly15m,
+        latest_actual_candidate: MarketSignalCandidateReadonly15m,
         universe: MarketlabActiveUniverse | None,
         include_blocked: bool,
         include_inactive: bool,
@@ -149,6 +199,10 @@ class LiveCandidateScannerService:
         warning_reason = tier.warning or "No scanner warning"
         if inactive_warning:
             warning_reason = inactive_warning
+        using_fallback = candidate.id != latest_actual_candidate.id
+        fallback_reason = None
+        if using_fallback:
+            fallback_reason = "latest cycle is blocked; showing latest usable non-blocked scanner row"
         return json_safe(
             {
                 "symbol": candidate.symbol,
@@ -161,7 +215,12 @@ class LiveCandidateScannerService:
                     scanner_tier=tier.tier,
                     include_blocked=include_blocked,
                     include_inactive=include_inactive,
+                    using_fallback_usable_row=using_fallback,
                 ),
+                "latest_actual_status": latest_actual_candidate.classifier_status,
+                "latest_actual_observation_timestamp": latest_actual_candidate.window_close_time,
+                "using_fallback_usable_row": using_fallback,
+                "fallback_reason": fallback_reason,
                 "observation_time": candidate.window_close_time,
                 "window_open_time": candidate.window_open_time,
                 "window_close_time": candidate.window_close_time,
@@ -226,12 +285,22 @@ def _decimal_to_plain(value: Any) -> Any:
     return value
 
 
+def _usable_candidate_filter(model) -> Any:
+    return ~or_(
+        model.classifier_status == "CLASSIFIER_BLOCKED",
+        model.candidate_type.in_(BLOCKED_TYPES),
+    )
+
+
 def _visibility_reason(
     is_active: bool,
     scanner_tier: str,
     include_blocked: bool,
     include_inactive: bool,
+    using_fallback_usable_row: bool,
 ) -> str:
+    if using_fallback_usable_row:
+        return "active universe fallback to latest usable non-blocked scanner row"
     if not is_active and include_inactive:
         return "shown because include_inactive=true"
     if scanner_tier == "BLOCKED" and include_blocked:

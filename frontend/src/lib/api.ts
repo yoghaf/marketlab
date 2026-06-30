@@ -207,6 +207,10 @@ export type LiveScannerItem = {
   universe_rank?: number | null;
   inactive_warning?: string | null;
   scanner_visibility_reason: string;
+  latest_actual_status?: string | null;
+  latest_actual_observation_timestamp?: string | null;
+  using_fallback_usable_row: boolean;
+  fallback_reason?: string | null;
   observation_time?: string | null;
   window_open_time?: string | null;
   window_close_time?: string | null;
