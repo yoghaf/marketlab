@@ -31,6 +31,7 @@ from app.services.live_candidate_scanner import LiveCandidateScannerService
 from app.services.ohlcv_aggregation import OhlcvAggregationService
 from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
+from app.services.paper_signal_evaluator import PaperSignalEvaluatorService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
@@ -320,6 +321,18 @@ def scanner_live(
             "not_entry_signal": True,
             "items": items,
         }
+    )
+
+
+@router.get("/api/paper-signals/short-candidates")
+def paper_short_candidates(
+    limit: int = 100,
+    include_rejected: bool = True,
+    db: Session = Depends(get_db),
+):
+    return PaperSignalEvaluatorService(db).list_short_candidates(
+        limit=limit,
+        include_rejected=include_rejected,
     )
 
 
