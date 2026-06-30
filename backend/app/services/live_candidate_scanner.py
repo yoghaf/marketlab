@@ -163,7 +163,6 @@ def _evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
         "feature_1h_status",
         "price_return_pct_15m",
         "close_position_15m",
-        "kline_taker_buy_ratio_15m",
         "oi_change_pct_15m",
         "price_return_pct_1h",
         "global_long_short_ratio_15m",
