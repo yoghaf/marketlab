@@ -27,6 +27,7 @@ from app.models.market import (
 from app.services.feature_builder_1h import FeatureBuilder1hService
 from app.services.feature_builder_15m import FeatureBuilder15mService
 from app.services.feature_context_join import FeatureContextJoinService
+from app.services.live_candidate_scanner import LiveCandidateScannerService
 from app.services.ohlcv_aggregation import OhlcvAggregationService
 from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
@@ -281,6 +282,40 @@ def outcomes_15m(symbol: str | None = None, limit: int = 100, db: Session = Depe
         {
             "count": len(rows),
             "items": [model_to_dict(row) for row in rows],
+        }
+    )
+
+
+@router.get("/api/scanner/live")
+def scanner_live(
+    tier: str | None = None,
+    candidate_type: str | None = None,
+    limit: int = 100,
+    include_blocked: bool = False,
+    db: Session = Depends(get_db),
+):
+    items = LiveCandidateScannerService(db).list_live(
+        tier=tier,
+        candidate_type=candidate_type,
+        limit=limit,
+        include_blocked=include_blocked,
+    )
+    tier_counts: dict[str, int] = {}
+    for item in items:
+        tier_counts[item["scanner_tier"]] = tier_counts.get(item["scanner_tier"], 0) + 1
+    return json_safe(
+        {
+            "count": len(items),
+            "filters": {
+                "tier": tier,
+                "candidate_type": candidate_type,
+                "limit": limit,
+                "include_blocked": include_blocked,
+            },
+            "tier_counts": tier_counts,
+            "read_only": True,
+            "not_entry_signal": True,
+            "items": items,
         }
     )
 
