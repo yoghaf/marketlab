@@ -24,13 +24,22 @@ class PaperSignalEvaluatorService:
     def list_short_candidates(self, limit: int = 100, include_rejected: bool = True) -> dict[str, Any]:
         items: list[dict[str, Any]] = []
         counts: dict[str, int] = {}
+        seen_included_symbols: set[str] = set()
         normalized_limit = min(max(limit, 1), 500)
         scan_limit = normalized_limit if include_rejected else 5000
         for candidate, universe, outcome in self._candidate_rows(scan_limit=scan_limit):
             item = self._evaluate(candidate, universe, outcome)
             counts[item["paper_candidate_status"]] = counts.get(item["paper_candidate_status"], 0) + 1
+            if (
+                not include_rejected
+                and item["paper_candidate_status"] == PAPER_STATUS_INCLUDED
+                and item["symbol"] in seen_included_symbols
+            ):
+                continue
             if item["paper_candidate_status"] == PAPER_STATUS_INCLUDED or include_rejected:
                 items.append(item)
+                if item["paper_candidate_status"] == PAPER_STATUS_INCLUDED:
+                    seen_included_symbols.add(item["symbol"])
             if len(items) >= normalized_limit:
                 break
         return json_safe(

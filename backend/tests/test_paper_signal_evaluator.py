@@ -120,6 +120,27 @@ class PaperSignalEvaluatorTest(unittest.TestCase):
         self.assertEqual(payload["items"][0]["symbol"], "AAAUSDT")
         self.assertEqual(payload["items"][0]["paper_candidate_status"], "PAPER_SHORT_CANDIDATE")
 
+    def test_paper_only_returns_latest_unique_symbol(self) -> None:
+        old_open = self.window_open
+        new_open = self.window_open + timedelta(minutes=15)
+        self._insert_universe("AAAUSDT", rank=1)
+        for window_open in (old_open, new_open):
+            self._insert_candidate(
+                "AAAUSDT",
+                window_open,
+                "MID_SHORT_CONTEXT_READONLY",
+                "BEARISH_CONTEXT",
+                evidence={"spot_support_status_15m": "FUTURES_LED", "supporting_psychology_labels": []},
+            )
+            self._insert_outcome("AAAUSDT", window_open, "OUTCOME_READY")
+        self.db.commit()
+
+        payload = PaperSignalEvaluatorService(self.db).list_short_candidates(limit=10, include_rejected=False)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["items"][0]["symbol"], "AAAUSDT")
+        self.assertEqual(payload["items"][0]["window_open_time"], "2026-01-01T00:15:00")
+
     def _insert_universe(self, symbol: str, rank: int, is_active: bool = True) -> None:
         self.db.add(
             MarketlabActiveUniverse(
