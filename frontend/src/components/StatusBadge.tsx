@@ -15,6 +15,7 @@ const styles: Record<string, string> = {
   MISSING_FUNDING: "border-warmup text-warmup bg-amber-50",
   FULL_MISSING_FUNDING: "border-warmup text-warmup bg-amber-50",
   FULL_ACTIVE: "border-blue-700 text-blue-700 bg-blue-50",
+  ACTIVE: "border-ready text-ready bg-emerald-50",
   LIGHT_WATCH: "border-slate-500 text-slate-700 bg-slate-50",
   NOT_ACTIVE: "border-missing text-missing bg-gray-50",
   RICH_READY: "border-ready text-ready bg-emerald-50",

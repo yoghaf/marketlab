@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m
+from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
 from app.services.utils import json_safe
 
 WATCHLIST_CONTEXT_TYPES = {"MID_SHORT_CONTEXT_READONLY", "MID_LONG_CONTEXT_READONLY"}
@@ -76,13 +76,19 @@ class LiveCandidateScannerService:
         candidate_type: str | None = None,
         limit: int = 100,
         include_blocked: bool = False,
+        include_inactive: bool = False,
     ) -> list[dict[str, Any]]:
-        rows = self._latest_candidate_rows()
+        rows = self._latest_candidate_rows(include_inactive=include_inactive)
         items: list[dict[str, Any]] = []
         normalized_tier = tier.upper() if tier else None
         normalized_type = candidate_type.upper() if candidate_type else None
-        for row in rows:
-            item = self._candidate_payload(row)
+        for row, universe in rows:
+            item = self._candidate_payload(
+                row,
+                universe,
+                include_blocked=include_blocked,
+                include_inactive=include_inactive,
+            )
             if normalized_type and row.candidate_type != normalized_type:
                 continue
             if normalized_tier and item["scanner_tier"] != normalized_tier:
@@ -94,7 +100,10 @@ class LiveCandidateScannerService:
                 break
         return items
 
-    def _latest_candidate_rows(self) -> list[MarketSignalCandidateReadonly15m]:
+    def _latest_candidate_rows(
+        self,
+        include_inactive: bool = False,
+    ) -> list[tuple[MarketSignalCandidateReadonly15m, MarketlabActiveUniverse | None]]:
         ranked = (
             select(
                 MarketSignalCandidateReadonly15m.id.label("id"),
@@ -112,19 +121,47 @@ class LiveCandidateScannerService:
             .subquery()
         )
         query = (
-            select(MarketSignalCandidateReadonly15m)
+            select(MarketSignalCandidateReadonly15m, MarketlabActiveUniverse)
             .join(ranked, MarketSignalCandidateReadonly15m.id == ranked.c.id)
+            .join(
+                MarketlabActiveUniverse,
+                MarketSignalCandidateReadonly15m.symbol == MarketlabActiveUniverse.symbol,
+                isouter=include_inactive,
+            )
             .where(ranked.c.row_rank == 1)
             .order_by(desc(MarketSignalCandidateReadonly15m.window_close_time), MarketSignalCandidateReadonly15m.symbol)
         )
-        return list(self.db.scalars(query).all())
+        if not include_inactive:
+            query = query.where(MarketlabActiveUniverse.is_active.is_(True))
+        return list(self.db.execute(query).all())
 
-    def _candidate_payload(self, candidate: MarketSignalCandidateReadonly15m) -> dict[str, Any]:
+    def _candidate_payload(
+        self,
+        candidate: MarketSignalCandidateReadonly15m,
+        universe: MarketlabActiveUniverse | None,
+        include_blocked: bool,
+        include_inactive: bool,
+    ) -> dict[str, Any]:
         tier = scanner_tier_for(candidate.candidate_type, candidate.classifier_status)
         outcome = self._matching_outcome(candidate)
+        is_active = bool(universe and universe.is_active)
+        inactive_warning = None if is_active else "Symbol is not in active universe"
+        warning_reason = tier.warning or "No scanner warning"
+        if inactive_warning:
+            warning_reason = inactive_warning
         return json_safe(
             {
                 "symbol": candidate.symbol,
+                "is_active": is_active,
+                "collection_tier": universe.collection_tier if universe else "NOT_ACTIVE",
+                "universe_rank": universe.rank if universe else None,
+                "inactive_warning": inactive_warning if include_inactive else None,
+                "scanner_visibility_reason": _visibility_reason(
+                    is_active=is_active,
+                    scanner_tier=tier.tier,
+                    include_blocked=include_blocked,
+                    include_inactive=include_inactive,
+                ),
                 "observation_time": candidate.window_close_time,
                 "window_open_time": candidate.window_open_time,
                 "window_close_time": candidate.window_close_time,
@@ -135,7 +172,7 @@ class LiveCandidateScannerService:
                 "confidence_score": candidate.confidence_score,
                 "scanner_tier": tier.tier,
                 "tier_reason": tier.reason,
-                "warning_reason": tier.warning,
+                "warning_reason": warning_reason,
                 "evidence_summary": _evidence_summary(candidate.evidence or {}),
                 "latest_outcome_status": outcome.outcome_status if outcome else None,
                 "latest_outcome_update": outcome.updated_at if outcome else None,
@@ -187,3 +224,16 @@ def _decimal_to_plain(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _decimal_to_plain(item) for key, item in value.items()}
     return value
+
+
+def _visibility_reason(
+    is_active: bool,
+    scanner_tier: str,
+    include_blocked: bool,
+    include_inactive: bool,
+) -> str:
+    if not is_active and include_inactive:
+        return "shown because include_inactive=true"
+    if scanner_tier == "BLOCKED" and include_blocked:
+        return "shown because include_blocked=true"
+    return "active universe latest non-blocked scanner row"

@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m
+from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
 from app.services.live_candidate_scanner import LiveCandidateScannerService, scanner_tier_for
 
 
@@ -50,6 +50,8 @@ class LiveCandidateScannerTest(unittest.TestCase):
     def test_live_scanner_returns_latest_per_symbol_and_matching_outcome(self) -> None:
         old_open = self.window_open
         new_open = self.window_open + timedelta(minutes=15)
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("BBBUSDT", rank=2)
         self._insert_candidate("AAAUSDT", old_open, "MID_LONG_CONTEXT_READONLY", "BULLISH_CONTEXT")
         self._insert_candidate("AAAUSDT", new_open, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
         self._insert_candidate(
@@ -69,11 +71,17 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(items[0]["candidate_type"], "MID_SHORT_CONTEXT_READONLY")
         self.assertEqual(items[0]["scanner_tier"], "WATCHLIST_CONTEXT")
         self.assertEqual(items[0]["latest_outcome_status"], "OUTCOME_READY")
+        self.assertTrue(items[0]["is_active"])
+        self.assertEqual(items[0]["collection_tier"], "FULL_ACTIVE")
+        self.assertEqual(items[0]["universe_rank"], 1)
+        self.assertEqual(items[0]["warning_reason"], "No scanner warning")
         self.assertTrue(items[0]["not_entry_signal"])
         self.assertEqual(items[0]["evidence_summary"]["price_return_pct_15m"], "0.12")
 
     def test_filters_and_endpoint_http_200(self) -> None:
         open_time = self.window_open
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("BBBUSDT", rank=2)
         self._insert_candidate("AAAUSDT", open_time, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
         self._insert_candidate("BBBUSDT", open_time, "SQUEEZE_RISK_CONTEXT_READONLY", "MIXED_CONTEXT")
         self.db.commit()
@@ -97,6 +105,69 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertTrue(payload["read_only"])
         self.assertTrue(payload["not_entry_signal"])
         self.assertEqual(payload["items"][0]["scanner_tier"], "WATCHLIST_CONTEXT")
+
+    def test_inactive_symbol_hidden_by_default_and_visible_when_requested(self) -> None:
+        open_time = self.window_open
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("OLDUSDT", rank=75, is_active=False)
+        self._insert_candidate("AAAUSDT", open_time, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
+        self._insert_candidate("OLDUSDT", open_time, "MID_LONG_CONTEXT_READONLY", "BULLISH_CONTEXT")
+        self.db.commit()
+
+        default_items = LiveCandidateScannerService(self.db).list_live()
+        inactive_items = LiveCandidateScannerService(self.db).list_live(include_inactive=True)
+
+        self.assertEqual([item["symbol"] for item in default_items], ["AAAUSDT"])
+        self.assertEqual({item["symbol"] for item in inactive_items}, {"AAAUSDT", "OLDUSDT"})
+        old_item = next(item for item in inactive_items if item["symbol"] == "OLDUSDT")
+        self.assertFalse(old_item["is_active"])
+        self.assertEqual(old_item["collection_tier"], "NOT_ACTIVE")
+        self.assertEqual(old_item["universe_rank"], 75)
+        self.assertEqual(old_item["inactive_warning"], "Symbol is not in active universe")
+        self.assertEqual(old_item["warning_reason"], "Symbol is not in active universe")
+
+    def test_blocked_rows_are_hidden_by_default_and_visible_when_requested(self) -> None:
+        open_time = self.window_open
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("BBBUSDT", rank=2)
+        self._insert_candidate("AAAUSDT", open_time, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
+        self._insert_candidate(
+            "BBBUSDT",
+            open_time,
+            "DATA_BLOCKED",
+            "BLOCKED_CONTEXT",
+            classifier_status="CLASSIFIER_BLOCKED",
+        )
+        self.db.commit()
+
+        default_items = LiveCandidateScannerService(self.db).list_live()
+        blocked_items = LiveCandidateScannerService(self.db).list_live(include_blocked=True)
+
+        self.assertEqual([item["symbol"] for item in default_items], ["AAAUSDT"])
+        self.assertEqual({item["symbol"] for item in blocked_items}, {"AAAUSDT", "BBBUSDT"})
+        blocked_item = next(item for item in blocked_items if item["symbol"] == "BBBUSDT")
+        self.assertEqual(blocked_item["scanner_tier"], "BLOCKED")
+        self.assertEqual(blocked_item["warning_reason"], "blocked row; not usable for live radar")
+        self.assertEqual(blocked_item["scanner_visibility_reason"], "shown because include_blocked=true")
+
+    def _insert_universe(self, symbol: str, rank: int, is_active: bool = True) -> None:
+        self.db.add(
+            MarketlabActiveUniverse(
+                symbol=symbol,
+                rank=rank,
+                quote_volume=Decimal("1000000"),
+                collection_tier="FULL_ACTIVE" if is_active else "NOT_ACTIVE",
+                is_full_active=is_active,
+                is_light_watch=False,
+                is_signal_eligible=is_active,
+                is_active=is_active,
+                entered_at=self.now,
+                exited_at=None if is_active else self.now,
+                last_seen_at=self.now,
+                created_at=self.now,
+                updated_at=self.now,
+            )
+        )
 
     def _insert_candidate(
         self,

@@ -292,6 +292,7 @@ def scanner_live(
     candidate_type: str | None = None,
     limit: int = 100,
     include_blocked: bool = False,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
 ):
     items = LiveCandidateScannerService(db).list_live(
@@ -299,6 +300,7 @@ def scanner_live(
         candidate_type=candidate_type,
         limit=limit,
         include_blocked=include_blocked,
+        include_inactive=include_inactive,
     )
     tier_counts: dict[str, int] = {}
     for item in items:
@@ -311,6 +313,7 @@ def scanner_live(
                 "candidate_type": candidate_type,
                 "limit": limit,
                 "include_blocked": include_blocked,
+                "include_inactive": include_inactive,
             },
             "tier_counts": tier_counts,
             "read_only": True,

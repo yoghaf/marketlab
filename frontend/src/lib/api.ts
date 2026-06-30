@@ -202,6 +202,11 @@ export type Outcomes15mStatus = {
 
 export type LiveScannerItem = {
   symbol: string;
+  is_active: boolean;
+  collection_tier: string;
+  universe_rank?: number | null;
+  inactive_warning?: string | null;
+  scanner_visibility_reason: string;
   observation_time?: string | null;
   window_open_time?: string | null;
   window_close_time?: string | null;
@@ -226,6 +231,7 @@ export type LiveScannerResponse = {
     candidate_type?: string | null;
     limit: number;
     include_blocked: boolean;
+    include_inactive: boolean;
   };
   tier_counts: Record<string, number>;
   read_only: boolean;

@@ -28,8 +28,9 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   const tier = firstParam(params.tier);
   const candidateType = firstParam(params.candidate_type);
   const includeBlocked = firstParam(params.include_blocked) === "true";
+  const includeInactive = firstParam(params.include_inactive) === "true";
   const limit = normalizeLimit(firstParam(params.limit));
-  const apiPath = scannerApiPath({ tier, candidateType, includeBlocked, limit });
+  const apiPath = scannerApiPath({ tier, candidateType, includeBlocked, includeInactive, limit });
 
   let data: LiveScannerResponse | null = null;
   let error: string | null = null;
@@ -52,7 +53,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         </div>
       </div>
 
-      <form className="grid gap-3 border border-line bg-white p-4 md:grid-cols-[1fr_1fr_120px_160px_auto]" method="get">
+      <form className="grid gap-3 border border-line bg-white p-4 md:grid-cols-[1fr_1fr_120px_150px_150px_auto]" method="get">
         <label className="grid gap-1 text-sm">
           <span className="font-semibold text-slate-600">Tier</span>
           <select className="border border-line bg-white px-3 py-2" name="tier" defaultValue={tier || ""}>
@@ -78,6 +79,10 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
           <input name="include_blocked" type="checkbox" value="true" defaultChecked={includeBlocked} />
           Include blocked
+        </label>
+        <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+          <input name="include_inactive" type="checkbox" value="true" defaultChecked={includeInactive} />
+          Include inactive
         </label>
         <div className="flex items-end">
           <button className="border border-line px-4 py-2 text-sm font-semibold hover:bg-field" type="submit">
@@ -105,6 +110,8 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
               <thead>
                 <tr>
                   <th>Symbol</th>
+                  <th>Active</th>
+                  <th>Universe Tier</th>
                   <th>Tier</th>
                   <th>Candidate Type</th>
                   <th>Direction</th>
@@ -120,12 +127,25 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 {data?.items.map((item) => (
                   <tr key={`${item.symbol}-${item.window_open_time}`}>
                     <td className="font-semibold">{item.symbol}</td>
+                    <td><StatusBadge value={item.is_active ? "ACTIVE" : "NOT_ACTIVE"} /></td>
+                    <td>
+                      <div className="space-y-1">
+                        <StatusBadge value={item.collection_tier} />
+                        <div className="text-xs text-slate-500">Rank {item.universe_rank ?? "-"}</div>
+                      </div>
+                    </td>
                     <td><StatusBadge value={item.scanner_tier} /></td>
                     <td>{item.candidate_type}</td>
                     <td><StatusBadge value={item.candidate_direction} /></td>
                     <td>{item.confidence}{item.confidence_score ? ` (${item.confidence_score})` : ""}</td>
-                    <td className="min-w-64">{item.tier_reason}</td>
-                    <td className="min-w-64">{item.warning_reason || "-"}</td>
+                    <td className="min-w-64">
+                      <div>{item.tier_reason}</div>
+                      <div className="mt-1 text-xs text-slate-500">{item.scanner_visibility_reason}</div>
+                    </td>
+                    <td className="min-w-64">
+                      <div>{item.warning_reason || "No scanner warning"}</div>
+                      {item.inactive_warning && <div className="mt-1 text-xs font-semibold text-stale">{item.inactive_warning}</div>}
+                    </td>
                     <td><StatusBadge value={item.latest_outcome_status} /></td>
                     <td>{fmtTime(item.latest_outcome_update || item.observation_time)}</td>
                     <td>
@@ -137,7 +157,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 ))}
                 {!data?.items.length && (
                   <tr>
-                    <td colSpan={10}>No scanner rows match the selected filters.</td>
+                    <td colSpan={12}>No scanner rows match the selected filters.</td>
                   </tr>
                 )}
               </tbody>
@@ -163,16 +183,19 @@ function scannerApiPath({
   tier,
   candidateType,
   includeBlocked,
+  includeInactive,
   limit
 }: {
   tier?: string;
   candidateType?: string;
   includeBlocked: boolean;
+  includeInactive: boolean;
   limit: number;
 }): string {
   const query = new URLSearchParams({ limit: String(limit) });
   if (tier) query.set("tier", tier);
   if (candidateType) query.set("candidate_type", candidateType);
   if (includeBlocked) query.set("include_blocked", "true");
+  if (includeInactive) query.set("include_inactive", "true");
   return `/api/scanner/live?${query.toString()}`;
 }
