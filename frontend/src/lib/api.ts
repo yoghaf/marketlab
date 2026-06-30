@@ -242,3 +242,88 @@ export type LiveScannerResponse = {
   not_entry_signal: boolean;
   items: LiveScannerItem[];
 };
+
+export type StrategyArenaLeaderboardItem = {
+  rank: number;
+  setup_label: string;
+  setup_family: string;
+  direction_label: string;
+  horizon_label: string;
+  risk_label: string;
+  rr_label: string;
+  sample_size: number;
+  pessimistic_avg_r?: number | null;
+  resolved_avg_r?: number | null;
+  tp_first_share: number;
+  sl_first_share: number;
+  both_same_candle_share: number;
+  neither_share: number;
+  top_symbol_share: number;
+  verdict: string;
+  verdict_label: string;
+};
+
+export type StrategyArenaResult = Omit<StrategyArenaLeaderboardItem, "rank"> & {
+  source_candidate_type: string;
+  direction: string;
+  horizon: string;
+  atr_mult: number;
+  rr: number;
+  tp_first_count: number;
+  sl_first_count: number;
+  both_same_candle_count: number;
+  neither_count: number;
+  insufficient_forward_data_count: number;
+  median_r?: number | null;
+  worst_r?: number | null;
+  best_r?: number | null;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  distinct_symbols: number;
+  warning_label: string;
+};
+
+export type StrategyArenaLeaderboardResponse = {
+  metadata: {
+    generated_at?: string;
+    ranking_metric: string;
+    read_only: boolean;
+    not_live_signal: boolean;
+  };
+  summary: {
+    total_setups_tested: number;
+    total_combinations: number;
+    promising_count: number;
+    noisy_count: number;
+    rejected_count: number;
+    best_short_setup?: StrategyArenaLeaderboardItem | null;
+    best_long_setup?: StrategyArenaLeaderboardItem | null;
+    best_horizon?: string | null;
+  };
+  top_by_pessimistic_avg_r: StrategyArenaLeaderboardItem[];
+  top_by_resolved_avg_r: StrategyArenaLeaderboardItem[];
+  best_short_setup: StrategyArenaLeaderboardItem[];
+  best_long_setup: StrategyArenaLeaderboardItem[];
+  best_by_horizon: Record<string, StrategyArenaLeaderboardItem[]>;
+  worst_setups: StrategyArenaLeaderboardItem[];
+  noisy_setups: StrategyArenaLeaderboardItem[];
+  rejected_setups: StrategyArenaLeaderboardItem[];
+  baseline_comparison: {
+    setup_family: string;
+    horizon: string;
+    atr_mult: number;
+    rr: number;
+    baseline_status: string;
+    pessimistic_avg_r_delta?: number | null;
+  }[];
+};
+
+export type StrategyArenaResultsResponse = {
+  metadata: {
+    generated_at?: string;
+    candidate_rows_loaded: number;
+    setup_candidate_counts: Record<string, number>;
+    skipped_counts: Record<string, number>;
+  };
+  results: StrategyArenaResult[];
+};

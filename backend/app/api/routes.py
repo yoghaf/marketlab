@@ -36,6 +36,7 @@ from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
+from app.services.strategy_arena import StrategyArenaArtifactService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
 
 router = APIRouter()
@@ -334,6 +335,30 @@ def paper_short_candidates(
         limit=limit,
         include_rejected=include_rejected,
     )
+
+
+@router.get("/api/strategy-arena/v1/leaderboard")
+def strategy_arena_v1_leaderboard():
+    try:
+        return json_safe(StrategyArenaArtifactService().leaderboard())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/strategy-arena/v1/results")
+def strategy_arena_v1_results():
+    try:
+        return json_safe(StrategyArenaArtifactService().results())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/strategy-arena/v1/setup/{setup_family}")
+def strategy_arena_v1_setup(setup_family: str):
+    try:
+        return json_safe(StrategyArenaArtifactService().setup(setup_family))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/api/rich-futures/status")
