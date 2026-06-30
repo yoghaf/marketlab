@@ -1,6 +1,6 @@
 # Strategy Arena v1 ATR/R All Labels Multi-Horizon
 
-Generated at: `2026-06-30T15:10:49+00:00`
+Generated at: `2026-06-30T15:14:15+00:00`
 
 This is an offline/read-only strategy test arena. It is not a live entry signal, not an order system, and not a final TP/SL model.
 
