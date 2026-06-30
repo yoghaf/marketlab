@@ -25,7 +25,7 @@ class PaperSignalEvaluatorService:
         items: list[dict[str, Any]] = []
         counts: dict[str, int] = {}
         normalized_limit = min(max(limit, 1), 500)
-        scan_limit = normalized_limit if include_rejected else min(max(normalized_limit * 20, 500), 5000)
+        scan_limit = normalized_limit if include_rejected else 5000
         for candidate, universe, outcome in self._candidate_rows(scan_limit=scan_limit):
             item = self._evaluate(candidate, universe, outcome)
             counts[item["paper_candidate_status"]] = counts.get(item["paper_candidate_status"], 0) + 1
