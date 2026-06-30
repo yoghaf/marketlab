@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -32,7 +32,11 @@ def json_safe(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, (date, time)):
+        return value.isoformat()
     if isinstance(value, list):
+        return [json_safe(item) for item in value]
+    if isinstance(value, tuple):
         return [json_safe(item) for item in value]
     if isinstance(value, dict):
         return {key: json_safe(item) for key, item in value.items()}

@@ -164,7 +164,7 @@ class OutcomeTracker15mService:
             "source_candle_count_30m": horizon_results["30m"]["actual_count"],
             "source_candle_count_1h": horizon_results["1h"]["actual_count"],
             "source_candle_count_4h": horizon_results["4h"]["actual_count"],
-            "missing_window_list": missing_windows,
+            "missing_window_list": json_safe(missing_windows),
             "evidence": json_safe(evidence),
             "created_at": now,
             "updated_at": now,

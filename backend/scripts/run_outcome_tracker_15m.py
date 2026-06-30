@@ -40,6 +40,7 @@ class RunLock:
 
 def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: bool) -> dict[str, Any]:
     db = SessionLocal()
+    error: Exception | None = None
     run = CollectorRun(
         collector_name="outcome_tracker_15m",
         status="RUNNING",
@@ -56,6 +57,7 @@ def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: boo
     db.add(run)
     db.commit()
     db.refresh(run)
+    run_id = run.id
     try:
         service = OutcomeTracker15mService(db)
         result = service.run(symbols=symbols, limit_windows=limit_windows, dry_run=dry_run)
@@ -69,6 +71,11 @@ def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: boo
             "status_counts": result.status_counts,
         }
     except Exception as exc:
+        error = exc
+        db.rollback()
+        run = db.get(CollectorRun, run_id)
+        if run is None:
+            raise
         run.status = "ERROR"
         run.error_count += 1
         db.add(
@@ -84,8 +91,13 @@ def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: boo
                 created_at=utcnow(),
             )
         )
-        raise
     finally:
+        run = db.get(CollectorRun, run_id)
+        if run is None:
+            db.close()
+            if error is not None:
+                raise error
+            raise RuntimeError(f"collector run {run_id} disappeared")
         run.finished_at = utcnow()
         run.duration_seconds = duration_seconds(run.started_at, run.finished_at)
         db.commit()
@@ -99,6 +111,8 @@ def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: boo
             "details": run.details_json,
         }
         db.close()
+    if error is not None:
+        raise error
     return json_safe(payload)
 
 
