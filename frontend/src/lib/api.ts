@@ -199,3 +199,36 @@ export type Outcomes15mStatus = {
   candidate_type_counts: { type: string; count: number }[];
   direction_counts: { direction: string; count: number }[];
 };
+
+export type LiveScannerItem = {
+  symbol: string;
+  observation_time?: string | null;
+  window_open_time?: string | null;
+  window_close_time?: string | null;
+  candidate_type: string;
+  candidate_direction: string;
+  classifier_status: string;
+  confidence: string;
+  confidence_score?: string | null;
+  scanner_tier: string;
+  tier_reason: string;
+  warning_reason?: string | null;
+  evidence_summary: Record<string, string | string[] | number | boolean | null>;
+  latest_outcome_status?: string | null;
+  latest_outcome_update?: string | null;
+  not_entry_signal: boolean;
+};
+
+export type LiveScannerResponse = {
+  count: number;
+  filters: {
+    tier?: string | null;
+    candidate_type?: string | null;
+    limit: number;
+    include_blocked: boolean;
+  };
+  tier_counts: Record<string, number>;
+  read_only: boolean;
+  not_entry_signal: boolean;
+  items: LiveScannerItem[];
+};
