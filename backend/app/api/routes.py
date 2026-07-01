@@ -34,6 +34,7 @@ from app.services.outcome_tracker_15m import OutcomeTracker15mService
 from app.services.paper_signal_evaluator import PaperSignalEvaluatorService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
+from app.services.anomaly_signal_factory import SignalFactoryArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_arena import StrategyArenaArtifactService
@@ -359,6 +360,48 @@ def strategy_arena_v1_setup(setup_family: str):
         return json_safe(StrategyArenaArtifactService().setup(setup_family))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/signal-factory/v1/summary")
+def signal_factory_v1_summary():
+    try:
+        return json_safe(SignalFactoryArtifactService().summary())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Signal factory artifact not found. Run signal factory script first.") from exc
+
+
+@router.get("/api/signal-factory/v1/candidates")
+def signal_factory_v1_candidates(
+    timeframe: str | None = None,
+    setup_type: str | None = None,
+    direction: str | None = None,
+    confidence: str | None = None,
+    symbol: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+):
+    try:
+        return json_safe(
+            SignalFactoryArtifactService().candidates(
+                timeframe=timeframe,
+                setup_type=setup_type,
+                direction=direction,
+                confidence=confidence,
+                symbol=symbol,
+                status=status,
+                limit=limit,
+            )
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Signal factory artifact not found. Run signal factory script first.") from exc
+
+
+@router.get("/api/signal-factory/v1/candidates/{symbol}")
+def signal_factory_v1_symbol(symbol: str):
+    try:
+        return json_safe(SignalFactoryArtifactService().candidates_for_symbol(symbol))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Signal factory artifact not found. Run signal factory script first.") from exc
 
 
 @router.get("/api/rich-futures/status")

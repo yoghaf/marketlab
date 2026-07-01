@@ -327,3 +327,63 @@ export type StrategyArenaResultsResponse = {
   };
   results: StrategyArenaResult[];
 };
+
+export type SignalFactoryCandidate = {
+  symbol: string;
+  timeframe: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  setup_type: string;
+  setup_family: string;
+  setup_name: string;
+  direction: string;
+  confidence: string;
+  reason: string;
+  evidence: {
+    anomalies?: string[];
+    price_return?: number | null;
+    volume_spike?: boolean | null;
+    oi_change_pct?: number | null;
+    funding_pressure?: string | null;
+    relative_strength?: string | null;
+    futures_led_flag?: boolean | null;
+    spot_led_flag?: boolean | null;
+    feature_status?: string | null;
+    status_reasons?: string[];
+  };
+  feature_status: string;
+  candidate_status: string;
+  conflict_status?: string | null;
+  atr_reference_timeframe: string;
+  atr_reference_status: string;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+};
+
+export type SignalFactoryCandidatesResponse = {
+  generated_at?: string;
+  count: number;
+  total_matching: number;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  items: SignalFactoryCandidate[];
+};
+
+export type SignalFactorySummaryResponse = {
+  generated_at?: string;
+  feature_count: number;
+  candidate_count: number;
+  feature_count_by_timeframe: Record<string, number>;
+  feature_status_counts: Record<string, number>;
+  candidate_count_by_timeframe: Record<string, number>;
+  candidate_count_by_setup: Record<string, number>;
+  candidate_status_counts: Record<string, number>;
+  conflict_count: number;
+  missing_data_count: number;
+  guardrails: {
+    read_only: boolean;
+    not_live_signal: boolean;
+    not_execution_instruction: boolean;
+  };
+};
