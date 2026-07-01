@@ -454,3 +454,80 @@ export type Phase6DecisionResponse = {
   best_setup?: Phase7CandidateDecisionRow | null;
   generated_at?: string;
 };
+
+export type Phase7FullBlockerAuditResponse = {
+  generated_at?: string;
+  final_verdicts: string[];
+  next_action: string;
+  data_coverage: Record<
+    string,
+    {
+      futures: {
+        ready_rows: number;
+        non_ready_rows: number;
+        total_rows: number;
+        status_counts: Record<string, number>;
+        symbols_with_ready_rows: number;
+      };
+      spot: {
+        ready_rows: number;
+        non_ready_rows: number;
+        total_rows: number;
+        status_counts: Record<string, number>;
+      };
+    }
+  >;
+  atr_readiness: Record<
+    string,
+    {
+      available_symbols: number;
+      failed_symbols: number;
+      fail_reasons: Record<string, number>;
+    }
+  >;
+  signal_factory: {
+    total_candidates: number;
+    signal_candidate_count: number;
+    radar_only_count: number;
+    blocked_count: number;
+    status_counts: Record<string, number>;
+  };
+  radar_only: {
+    counts: Record<string, number>;
+  };
+  edge: {
+    eligible_edge_rows: number;
+    edge_buckets: Record<string, number>;
+    diagnosis: string;
+    best_edges: {
+      symbol: string;
+      timeframe: string;
+      setup: string;
+      edge_vs_baseline?: number | null;
+      arena_verdict?: string | null;
+      score?: number | null;
+    }[];
+  };
+  phase6_scoring: {
+    highest_score: number;
+    score_ge_7_count: number;
+    score_6_count: number;
+    score_5_count: number;
+    score_4_count: number;
+    diagnosis: string;
+  };
+  runtime_health: {
+    checked: boolean;
+    problems?: string[];
+  };
+  fix: {
+    technical_fix_applied: boolean;
+    fix_summary: string;
+  };
+  rerun_result: {
+    phase7_decision?: string;
+    approved_count: number;
+    watchlist_count: number;
+    unlock_verdict?: string;
+  };
+};

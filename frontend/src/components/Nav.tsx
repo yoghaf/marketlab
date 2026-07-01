@@ -6,7 +6,7 @@ const links = [
   { href: "/strategy-arena", label: "Strategy Test" },
   { href: "/data-health", label: "System Health" },
   { href: "/universe", label: "Universe" },
-  { href: "/collectors", label: "Developer" }
+  { href: "/collectors", label: "Advanced" }
 ];
 
 export function Nav() {

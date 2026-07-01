@@ -29,6 +29,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   const candidateType = firstParam(params.candidate_type);
   const includeBlocked = firstParam(params.include_blocked) === "true";
   const includeInactive = firstParam(params.include_inactive) === "true";
+  const showBaseline = firstParam(params.show_baseline) === "true";
   const limit = normalizeLimit(firstParam(params.limit));
   const apiPath = scannerApiPath({ tier, candidateType, includeBlocked, includeInactive, limit });
 
@@ -40,14 +41,15 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
     error = err instanceof Error ? err.message : "Scanner API failed";
   }
 
-  const tierCounts = data?.tier_counts || {};
+  const visibleItems = (data?.items || []).filter((item) => showBaseline || (item.scanner_tier !== "BASELINE_CONTEXT" && item.candidate_type !== "NO_SIGNAL_CONTEXT"));
+  const tierCounts = countTiers(visibleItems);
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Radar Market"
-        badge="READ-ONLY / NOT ENTRY SIGNAL"
-        subtitle="Candidate terbaru per symbol untuk monitoring konteks market. Default hanya active universe dan non-blocked."
+        badge="READ-ONLY - bukan sinyal entry live"
+        subtitle="Pantauan market read-only. Tidak ada sinyal entry live di halaman ini."
       />
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar Market</Link>
@@ -55,10 +57,10 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       </div>
 
       <section className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Watchlist" value={tierCounts.WATCHLIST_CONTEXT || 0} tone="info" />
-        <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} tone="warn" />
-        <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} />
-        <MetricCard label="Blocked" value={tierCounts.BLOCKED || 0} tone={tierCounts.BLOCKED ? "warn" : "neutral"} />
+        <MetricCard label="Watchlist" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Perlu dicek, bukan entry" tone="info" />
+        <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Ada risiko/campuran" tone="warn" />
+        <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
+        <MetricCard label="Blocked" value={tierCounts.BLOCKED || 0} helper="Data belum cukup" tone={tierCounts.BLOCKED ? "warn" : "neutral"} />
       </section>
 
       <FilterBar>
@@ -76,12 +78,16 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
           <input name="include_inactive" type="checkbox" value="true" defaultChecked={includeInactive} />
           Include inactive
         </label>
+        <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+          <input name="show_baseline" type="checkbox" value="true" defaultChecked={showBaseline} />
+          Show baseline/control rows
+        </label>
       </FilterBar>
 
       {error ? (
         <div className="rounded border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : (
-        <SectionCard title="Radar table" description="Debug/fallback status disimpan di detail per row.">
+        <SectionCard title="Radar table" description="Default: active universe, non-blocked, dan baseline/control disembunyikan.">
           <div className="table-wrap">
             <table>
               <thead>
@@ -91,15 +97,18 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                   <th>Setup</th>
                   <th>Arah</th>
                   <th>Confidence</th>
-                  <th>Konteks</th>
+                  <th>Alasan</th>
                   <th>Update</th>
+                  <th>Detail</th>
                 </tr>
               </thead>
               <tbody>
-                {data?.items.map((item) => <ScannerRow key={`${item.symbol}-${item.window_open_time}`} item={item} />)}
-                {!data?.items.length && (
+                {visibleItems.map((item) => <ScannerRow key={`${item.symbol}-${item.window_open_time}-${item.scanner_tier}`} item={item} />)}
+                {!visibleItems.length && (
                   <tr>
-                    <td colSpan={7}><EmptyState title="Radar kosong" detail="Tidak ada active non-blocked candidate saat ini." /></td>
+                    <td colSpan={8}>
+                      <EmptyState title="Belum ada radar yang lolos" detail="Data 4h/24h belum cukup dan edge masih lemah." />
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -119,21 +128,25 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         {!item.is_active && <div className="mt-1"><StatusBadge value="NOT_ACTIVE" /></div>}
       </td>
       <td><StatusBadge value={item.scanner_tier} /></td>
-      <td className="max-w-48 truncate" title={item.candidate_type}>{labelFor(item.candidate_type)}</td>
+      <td className="max-w-56">{labelFor(item.candidate_type)}</td>
       <td><StatusBadge value={item.candidate_direction} /></td>
       <td>{labelFor(item.confidence)}</td>
       <td className="min-w-72">
-        <div>{compactReason(item.tier_reason || item.warning_reason || "No scanner warning")}</div>
+        <div>{compactReason(userReason(item))}</div>
         {item.using_fallback_usable_row && (
           <div className="mt-1 inline-flex rounded border border-amber-600 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
             Previous usable context
           </div>
         )}
-        <details className="mt-1 text-xs text-slate-500">
-          <summary className="cursor-pointer font-semibold">Show technical labels</summary>
-          <div className="mt-2 space-y-1">
+      </td>
+      <td>{fmtTime(item.latest_outcome_update || item.observation_time)}</td>
+      <td>
+        <details className="text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold">Detail</summary>
+          <div className="mt-2 min-w-64 space-y-1">
             <div>Raw type: {item.candidate_type}</div>
-            <div>Classifier: {item.classifier_status}</div>
+            <div>Raw status: {item.classifier_status}</div>
+            <div>Raw direction: {item.candidate_direction}</div>
             <div>Visibility: {item.scanner_visibility_reason}</div>
             <div>Warning: {item.warning_reason || "No scanner warning"}</div>
             <div>Latest actual: {item.latest_actual_status || "-"} at {fmtTime(item.latest_actual_observation_timestamp)}</div>
@@ -142,9 +155,26 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
           </div>
         </details>
       </td>
-      <td>{fmtTime(item.latest_outcome_update || item.observation_time)}</td>
     </tr>
   );
+}
+
+function userReason(item: LiveScannerItem): string {
+  const text = `${item.tier_reason || ""} ${item.warning_reason || ""} ${item.scanner_visibility_reason || ""}`.toLowerCase();
+  if (item.scanner_tier === "RISK_CONTEXT") return "Konteks risiko, belum layak entry";
+  if (item.scanner_tier === "BASELINE_CONTEXT" || item.candidate_type === "NO_SIGNAL_CONTEXT") return "Baseline pembanding, bukan setup";
+  if (item.scanner_tier === "BLOCKED" || item.classifier_status.includes("BLOCKED")) return "Data belum cukup";
+  if (text.includes("partial")) return "Data belum lengkap";
+  if (text.includes("missing atr")) return "ATR belum tersedia";
+  if (text.includes("conflict")) return "Sinyal campuran";
+  return item.warning_reason || item.tier_reason || "No scanner warning";
+}
+
+function countTiers(items: LiveScannerItem[]): Record<string, number> {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.scanner_tier] = (acc[item.scanner_tier] || 0) + 1;
+    return acc;
+  }, {});
 }
 
 function firstParam(value: string | string[] | undefined): string | undefined {

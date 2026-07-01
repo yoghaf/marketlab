@@ -1,3 +1,5 @@
+import { labelFor } from "@/lib/labels";
+
 const styles: Record<string, string> = {
   READY: "border-ready text-ready bg-emerald-50",
   FULL_READY: "border-ready text-ready bg-emerald-50",
@@ -87,11 +89,10 @@ export function StatusBadge({ value }: { value?: string | null }) {
   const label = value || "-";
   return (
     <span
-      className={`inline-flex max-w-56 justify-center truncate rounded border px-2 py-1 text-xs font-semibold ${styles[label] || "border-line text-ink bg-white"}`}
+      className={`inline-flex max-w-72 justify-center whitespace-normal break-words rounded border px-2 py-1 text-center text-xs font-semibold ${styles[label] || "border-line text-ink bg-white"}`}
       title={label}
     >
       {labelFor(label)}
     </span>
   );
 }
-import { labelFor } from "@/lib/labels";

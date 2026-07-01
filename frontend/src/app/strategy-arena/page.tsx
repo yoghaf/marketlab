@@ -38,7 +38,8 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
     horizon: firstParam(params.horizon),
     verdict: firstParam(params.verdict),
     minSample: normalizeNumber(firstParam(params.min_sample), 50),
-    hideRejected: firstParam(params.hide_rejected) !== "false"
+    hideRejected: firstParam(params.hide_rejected) !== "false",
+    showBaseline: firstParam(params.show_baseline) === "true"
   };
 
   let leaderboard: StrategyArenaLeaderboardResponse | null = null;
@@ -54,16 +55,18 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
   }
 
   const edgeMap = buildEdgeMap(leaderboard?.baseline_comparison || []);
+  const actualRows = (results?.results || []).filter((row) => !isBaselineRow(row) && row.sample_size >= 50);
+  const bestActual = sortRows(actualRows, edgeMap)[0];
+  const bestShort = sortRows(actualRows.filter((row) => directionSide(row) === "SHORT"), edgeMap)[0];
+  const bestLong = sortRows(actualRows.filter((row) => directionSide(row) === "LONG"), edgeMap)[0];
   const filteredRows = filterRows(results?.results || [], filters, edgeMap).slice(0, 100);
-  const bestShort = leaderboard?.summary.best_short_setup;
-  const bestLong = leaderboard?.summary.best_long_setup;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Strategy Test"
-        badge="TEST MODE - BUKAN SINYAL ENTRY LIVE"
-        subtitle="Arena read-only untuk melihat setup mana yang diuji, R konservatif, baseline edge, sample, dan verdict."
+        badge="TEST MODE - bukan sinyal entry live"
+        subtitle="Mengukur performa setup historis dibanding baseline. Hasil ini belum otomatis menjadi sinyal live."
         updatedAt={fmtTime(leaderboard?.metadata.generated_at)}
       />
       <div className="flex flex-wrap gap-2 text-sm">
@@ -76,12 +79,12 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Best Setup" value={bestShort?.setup_label || "-"} helper={bestShort?.verdict_label} tone="info" />
-            <MetricCard label="Best Short" value={bestShort?.setup_label || "-"} helper={bestShort ? `${bestShort.horizon_label} ${bestShort.rr_label}` : undefined} />
-            <MetricCard label="Best Long" value={bestLong?.setup_label || "-"} helper={bestLong ? `${bestLong.horizon_label} ${bestLong.rr_label}` : undefined} />
-            <MetricCard label="Baseline Warning" value="Wajib dibandingkan" helper="Raw R saja tidak cukup" tone="warn" />
-            <MetricCard label="Promising" value={leaderboard?.summary.promising_count ?? 0} tone="good" />
-            <MetricCard label="Noisy" value={leaderboard?.summary.noisy_count ?? 0} tone="warn" />
+            <MetricCard label="Best Actual Setup" value={bestActual ? labelFor(bestActual.setup_family) : "Belum ada"} helper="Belum approved Phase 7" tone="info" />
+            <MetricCard label="Best Short" value={bestShort ? labelFor(bestShort.setup_family) : "Belum ada short layak"} helper={bestShort ? "Edge belum cukup" : "Baseline masih lebih kuat"} />
+            <MetricCard label="Best Long" value={bestLong ? labelFor(bestLong.setup_family) : "Belum ada"} helper="Edge belum cukup" />
+            <MetricCard label="Baseline" value="Pembanding kuat" helper="Baseline tidak dihitung sebagai sinyal" tone="warn" />
+            <MetricCard label="Promising" value={leaderboard?.summary.promising_count ?? 0} helper="Masih perlu validasi" tone="good" />
+            <MetricCard label="Noisy" value={leaderboard?.summary.noisy_count ?? 0} helper="Belum stabil" tone="warn" />
           </section>
 
           <FilterBar>
@@ -97,9 +100,13 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
               <input name="hide_rejected" type="checkbox" value="true" defaultChecked={filters.hideRejected} />
               Hide rejected
             </label>
+            <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+              <input name="show_baseline" type="checkbox" value="true" defaultChecked={filters.showBaseline} />
+              Show baseline rows
+            </label>
           </FilterBar>
 
-          <SectionCard title="Strategy test results" description="Default view dibatasi 100 rows dan rejected disembunyikan.">
+          <SectionCard title="Strategy test results" description="Default: baseline dan rejected disembunyikan; minimum sample 50.">
             <div className="table-wrap">
               <table>
                 <thead>
@@ -122,7 +129,10 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
                     return (
                       <tr key={`${row.setup_family}-${row.horizon}-${row.atr_mult}-${row.rr}`}>
                         <td>{index + 1}</td>
-                        <td className="max-w-56 truncate" title={row.setup_family}>{labelFor(row.setup_family)}</td>
+                        <td className="max-w-64" title={row.setup_family}>
+                          {labelFor(row.setup_family)}
+                          {isBaselineRow(row) && <div className="mt-1 text-xs font-semibold text-slate-500">Baseline / pembanding</div>}
+                        </td>
                         <td>{row.direction_label}</td>
                         <td>{row.horizon_label}</td>
                         <td>{row.risk_label}</td>
@@ -135,7 +145,7 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
                           <details className="mt-1 text-xs text-slate-500">
                             <summary className="cursor-pointer font-semibold">Show technical labels</summary>
                             <div className="mt-2">Raw setup: {row.setup_family}</div>
-                            <div>Target first: {fmtPct(row.tp_first_share)} Stop first: {fmtPct(row.sl_first_share)}</div>
+                            <div>Favorable first: {fmtPct(row.tp_first_share)} Adverse first: {fmtPct(row.sl_first_share)}</div>
                             <div>Top symbol share: {fmtPct(row.top_symbol_share)}</div>
                           </details>
                         </td>
@@ -144,7 +154,7 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
                   })}
                   {!filteredRows.length && (
                     <tr>
-                      <td colSpan={10}><EmptyState title="Tidak ada hasil cocok filter" detail="Longgarkan filter atau tampilkan rejected." /></td>
+                      <td colSpan={10}><EmptyState title="Tidak ada hasil cocok filter" detail="Longgarkan filter atau tampilkan baseline/rejected." /></td>
                     </tr>
                   )}
                 </tbody>
@@ -176,21 +186,34 @@ function filterRows(rows: StrategyArenaResult[], filters: {
   verdict?: string;
   minSample: number;
   hideRejected: boolean;
+  showBaseline: boolean;
 }, edgeMap: Record<string, number | null>): StrategyArenaResult[] {
-  return rows
-    .filter((row) => !filters.setup || row.setup_family === filters.setup)
-    .filter((row) => filters.direction === "ALL" || directionSide(row) === filters.direction)
-    .filter((row) => !filters.horizon || row.horizon === filters.horizon)
-    .filter((row) => !filters.verdict || row.verdict === filters.verdict)
-    .filter((row) => row.sample_size >= filters.minSample)
-    .filter((row) => !filters.hideRejected || row.verdict !== "REJECT")
-    .sort((a, b) => (edgeFor(b, edgeMap) ?? b.pessimistic_avg_r ?? -999) - (edgeFor(a, edgeMap) ?? a.pessimistic_avg_r ?? -999));
+  return sortRows(
+    rows
+      .filter((row) => !filters.setup || row.setup_family === filters.setup)
+      .filter((row) => filters.direction === "ALL" || directionSide(row) === filters.direction)
+      .filter((row) => !filters.horizon || row.horizon === filters.horizon)
+      .filter((row) => !filters.verdict || row.verdict === filters.verdict)
+      .filter((row) => row.sample_size >= filters.minSample)
+      .filter((row) => !filters.hideRejected || row.verdict !== "REJECT")
+      .filter((row) => filters.showBaseline || !isBaselineRow(row)),
+    edgeMap
+  );
+}
+
+function sortRows(rows: StrategyArenaResult[], edgeMap: Record<string, number | null>): StrategyArenaResult[] {
+  return [...rows].sort((a, b) => (edgeFor(b, edgeMap) ?? b.pessimistic_avg_r ?? -999) - (edgeFor(a, edgeMap) ?? a.pessimistic_avg_r ?? -999));
 }
 
 function directionSide(row: StrategyArenaResult): string {
   if (row.setup_family.includes("LONG") || row.direction_label.toLowerCase().includes("long")) return "LONG";
   if (row.setup_family.includes("SHORT") || row.direction_label.toLowerCase().includes("short")) return "SHORT";
   return "ALL";
+}
+
+function isBaselineRow(row: Pick<StrategyArenaResult, "setup_family" | "setup_label" | "direction_label">): boolean {
+  const text = `${row.setup_family} ${row.setup_label} ${row.direction_label}`.toLowerCase();
+  return text.includes("baseline") || text.includes("no signal");
 }
 
 function firstParam(value: string | string[] | undefined): string | undefined {

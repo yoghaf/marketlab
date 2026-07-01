@@ -68,7 +68,7 @@ export default async function CollectorsPage() {
   ]);
   return (
     <div className="space-y-5">
-      <PageHeader title="Developer" subtitle="Raw ops/debug view untuk collector, request usage, rich datasets, dan status pipeline." />
+      <PageHeader title="Advanced" subtitle="Raw ops/debug view untuk collector, request usage, rich datasets, dan status pipeline. Halaman ini untuk investigasi teknis, bukan halaman sinyal." />
       <section className="grid gap-3 md:grid-cols-4">
         <MetricCard label="Active Universe" value={rich.universe.active_universe_count ?? rich.universe.universe_count} />
         <MetricCard label="Core Target" value={rich.universe.full_active_count} />
