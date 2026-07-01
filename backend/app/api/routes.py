@@ -32,6 +32,7 @@ from app.services.ohlcv_aggregation import OhlcvAggregationService
 from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
 from app.services.paper_signal_evaluator import PaperSignalEvaluatorService
+from app.services.phase6_readiness_audit import Phase6ArtifactService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
 from app.services.anomaly_signal_factory import SignalFactoryArtifactService
@@ -402,6 +403,30 @@ def signal_factory_v1_symbol(symbol: str):
         return json_safe(SignalFactoryArtifactService().candidates_for_symbol(symbol))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Signal factory artifact not found. Run signal factory script first.") from exc
+
+
+@router.get("/api/phase6/readiness")
+def phase6_readiness():
+    try:
+        return json_safe(Phase6ArtifactService().readiness())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Phase 6 artifact not found. Run phase6 readiness audit script first.") from exc
+
+
+@router.get("/api/phase6/edge-audit")
+def phase6_edge_audit():
+    try:
+        return json_safe(Phase6ArtifactService().edge_audit())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Phase 6 artifact not found. Run phase6 readiness audit script first.") from exc
+
+
+@router.get("/api/phase6/phase7-decision")
+def phase6_phase7_decision():
+    try:
+        return json_safe(Phase6ArtifactService().phase7_decision())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Phase 6 artifact not found. Run phase6 readiness audit script first.") from exc
 
 
 @router.get("/api/rich-futures/status")

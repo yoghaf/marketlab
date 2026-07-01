@@ -387,3 +387,70 @@ export type SignalFactorySummaryResponse = {
     not_execution_instruction: boolean;
   };
 };
+
+export type Phase6FeatureReadinessRow = {
+  timeframe: string;
+  total_feature_rows: number;
+  ready_count: number;
+  partial_data_count: number;
+  missing_candles_count: number;
+  missing_atr_count: number;
+  missing_oi_count: number;
+  readiness_status: string;
+};
+
+export type Phase7CandidateDecisionRow = {
+  symbol: string;
+  timeframe: string;
+  setup_type: string;
+  mapped_setup_family?: string | null;
+  direction: string;
+  confidence: string;
+  reason?: string | null;
+  recommended_arena_horizon?: string | null;
+  recommended_atr_mult?: number | null;
+  recommended_rr?: number | null;
+  arena_verdict?: string | null;
+  setup_pessR?: number | null;
+  baseline_pessR?: number | null;
+  edge_vs_baseline?: number | null;
+  total_score?: number | null;
+  phase7_verdict: string;
+};
+
+export type Phase6ReadinessResponse = {
+  generated_at?: string;
+  phase6_status: string;
+  artifact_status: string;
+  phase7_decision: string;
+  approved_count: number;
+  watchlist_count: number;
+  rejected_count: number;
+  best_setup?: Phase7CandidateDecisionRow | null;
+  most_blocked_timeframe?: string | null;
+  feature_readiness: {
+    by_timeframe: Record<string, Phase6FeatureReadinessRow>;
+    most_ready_timeframe?: string | null;
+    most_blocked_timeframe?: string | null;
+  };
+  candidate_readiness: {
+    total_candidates: number;
+    eligible_candidate_count: number;
+    blocked_candidate_count: number;
+    radar_only_count: number;
+    conflicted_count: number;
+    status_counts: Record<string, number>;
+    setup_counts: Record<string, number>;
+  };
+};
+
+export type Phase6DecisionResponse = {
+  phase6_status: string;
+  phase7_decision: string;
+  approved_candidates: Phase7CandidateDecisionRow[];
+  watchlist_candidates: Phase7CandidateDecisionRow[];
+  rejected_candidates: Phase7CandidateDecisionRow[];
+  blocked_reasons: Record<string, number>;
+  best_setup?: Phase7CandidateDecisionRow | null;
+  generated_at?: string;
+};

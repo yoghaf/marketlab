@@ -4,6 +4,7 @@ const links = [
   { href: "/", label: "Dashboard" },
   { href: "/scanner", label: "Scanner" },
   { href: "/signal-factory", label: "Signal Factory" },
+  { href: "/phase6-audit", label: "Phase 6 Audit" },
   { href: "/strategy-arena", label: "Strategy Arena" },
   { href: "/universe", label: "Universe" },
   { href: "/data-health", label: "Data Health" },
