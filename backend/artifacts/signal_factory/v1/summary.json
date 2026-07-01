@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-01T02:05:44.484744+00:00",
+  "generated_at": "2026-07-01T02:07:47.571329+00:00",
   "feature_count": 300,
   "candidate_count": 300,
   "feature_count_by_timeframe": {
@@ -9,8 +9,9 @@
     "4h": 75
   },
   "feature_status_counts": {
-    "MISSING_CANDLES": 225,
-    "PARTIAL_DATA": 75
+    "MISSING_ATR": 74,
+    "MISSING_CANDLES": 81,
+    "PARTIAL_DATA": 145
   },
   "candidate_count_by_timeframe": {
     "15m": 75,
@@ -19,17 +20,23 @@
     "4h": 75
   },
   "candidate_count_by_setup": {
-    "BLOCKED_DATA": 225,
-    "EARLY_LONG": 9,
-    "EARLY_SHORT": 32,
-    "NO_SETUP": 34
+    "BLOCKED_DATA": 155,
+    "EARLY_LONG": 33,
+    "EARLY_SHORT": 15,
+    "MID_LONG": 17,
+    "MID_SHORT": 9,
+    "NO_SETUP": 68,
+    "SQUEEZE": 3
   },
   "candidate_status_counts": {
-    "RADAR_ONLY": 75,
-    "TIMEFRAME_NOT_READY": 225
+    "BLOCKED_DATA": 74,
+    "CONFLICTED": 2,
+    "RADAR_ONLY": 137,
+    "SIGNAL_CANDIDATE": 6,
+    "TIMEFRAME_NOT_READY": 81
   },
-  "conflict_count": 0,
-  "missing_data_count": 225,
+  "conflict_count": 12,
+  "missing_data_count": 155,
   "guardrails": {
     "read_only": true,
     "not_live_signal": true,
