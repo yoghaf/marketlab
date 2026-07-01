@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { Nav } from "@/components/Nav";
+import { AppShell } from "@/components/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,8 +12,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <Nav />
-        <main className="mx-auto max-w-7xl px-5 py-6">{children}</main>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

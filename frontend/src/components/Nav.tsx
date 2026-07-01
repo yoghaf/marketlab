@@ -1,20 +1,18 @@
 import Link from "next/link";
 
 const links = [
-  { href: "/", label: "Dashboard" },
-  { href: "/scanner", label: "Scanner" },
-  { href: "/signal-factory", label: "Signal Factory" },
-  { href: "/phase6-audit", label: "Phase 6 Audit" },
-  { href: "/strategy-arena", label: "Strategy Arena" },
+  { href: "/", label: "Overview" },
+  { href: "/scanner", label: "Signals" },
+  { href: "/strategy-arena", label: "Strategy Test" },
+  { href: "/data-health", label: "System Health" },
   { href: "/universe", label: "Universe" },
-  { href: "/data-health", label: "Data Health" },
-  { href: "/collectors", label: "Collectors" }
+  { href: "/collectors", label: "Developer" }
 ];
 
 export function Nav() {
   return (
-    <header className="border-b border-line bg-white">
-      <div className="mx-auto flex max-w-7xl items-center gap-6 px-5 py-4">
+    <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-5 px-4 py-3 md:px-6">
         <Link href="/" className="text-lg font-bold tracking-normal text-ink">
           MarketLab
         </Link>

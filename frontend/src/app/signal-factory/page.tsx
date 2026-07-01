@@ -1,4 +1,8 @@
-import { Metric } from "@/components/Metric";
+import { EmptyState } from "@/components/EmptyState";
+import { FilterBar, SelectFilter } from "@/components/FilterBar";
+import { MetricCard } from "@/components/MetricCard";
+import { PageHeader } from "@/components/PageHeader";
+import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   SignalFactoryCandidatesResponse,
@@ -8,6 +12,7 @@ import {
   fmtNumber,
   fmtTime
 } from "@/lib/api";
+import { compactReason, labelFor } from "@/lib/labels";
 
 type SignalFactorySearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -24,7 +29,7 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
     direction: firstParam(params.direction),
     confidence: firstParam(params.confidence),
     status: firstParam(params.status),
-    limit: normalizeNumber(firstParam(params.limit), 100)
+    limit: normalizeNumber(firstParam(params.limit), 50)
   };
   const query = new URLSearchParams();
   if (filters.timeframe) query.set("timeframe", filters.timeframe);
@@ -39,8 +44,8 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
   let error: string | null = null;
   try {
     [summary, candidates] = await Promise.all([
-      fetchJson<SignalFactorySummaryResponse>("/api/signal-factory/v1/summary"),
-      fetchJson<SignalFactoryCandidatesResponse>(`/api/signal-factory/v1/candidates?${query.toString()}`)
+      fetchJson<SignalFactorySummaryResponse>("/api/signal-factory/v1/summary", { revalidateSeconds: 20 }),
+      fetchJson<SignalFactoryCandidatesResponse>(`/api/signal-factory/v1/candidates?${query.toString()}`, { revalidateSeconds: 20 })
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Signal Factory artifact belum tersedia";
@@ -48,82 +53,66 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-normal">Signal Factory</h1>
-          <div className="mt-2 inline-flex rounded border border-blue-700 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-            TEST MODE - BUKAN SINYAL ENTRY LIVE
-          </div>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Factory ini menampilkan kandidat anomaly multi-timeframe read-only dari data MarketLab. Output dipakai untuk observasi dan validasi konteks, bukan instruksi eksekusi.
-          </p>
-        </div>
-        <div className="text-right text-xs text-slate-500">
-          Artifact: {fmtTime(summary?.generated_at)}
-        </div>
-      </div>
+      <PageHeader
+        title="Signal Factory"
+        badge="TEST MODE - BUKAN SINYAL ENTRY LIVE"
+        subtitle="Kandidat anomaly multi-timeframe read-only. Lihat setup utama di tabel; evidence teknis tetap tersedia di detail."
+        updatedAt={fmtTime(summary?.generated_at)}
+      />
 
       {error ? (
-        <div className="border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
+        <div className="rounded border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : (
         <>
-          <section className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <Metric label="Feature Rows" value={summary?.feature_count ?? 0} />
-            <Metric label="Candidate Rows" value={summary?.candidate_count ?? 0} />
-            <Metric label="Signal Candidates" value={summary?.candidate_status_counts.SIGNAL_CANDIDATE ?? 0} />
-            <Metric label="Radar Only" value={summary?.candidate_status_counts.RADAR_ONLY ?? 0} />
-            <Metric label="Conflicted" value={summary?.candidate_status_counts.CONFLICTED ?? 0} />
-            <Metric label="Missing Data" value={summary?.missing_data_count ?? 0} />
-            <Metric label="Conflicts" value={summary?.conflict_count ?? 0} />
-            <Metric label="Rows Shown" value={candidates?.count ?? 0} />
+          <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <MetricCard label="Kandidat signal" value={summary?.candidate_status_counts.SIGNAL_CANDIDATE ?? 0} tone="info" />
+            <MetricCard label="Radar" value={summary?.candidate_status_counts.RADAR_ONLY ?? 0} />
+            <MetricCard label="Blocked" value={(summary?.candidate_status_counts.BLOCKED_DATA ?? 0) + (summary?.candidate_status_counts.TIMEFRAME_NOT_READY ?? 0)} tone="warn" />
+            <MetricCard label="Conflict" value={summary?.conflict_count ?? 0} tone={summary?.conflict_count ? "warn" : "good"} />
+            <MetricCard label="Timeframe ready" value={`${summary?.feature_status_counts.PARTIAL_DATA ?? 0} partial`} helper="READY/PARTIAL dari artifact" />
+            <MetricCard label="Rows shown" value={candidates?.count ?? 0} helper={`Limit ${filters.limit}`} />
           </section>
 
-          <form className="grid gap-3 border border-line bg-white p-4 md:grid-cols-3 xl:grid-cols-7" method="get">
-            <SelectField label="Timeframe" name="timeframe" value={filters.timeframe || ""} options={timeframes} emptyLabel="All timeframe" />
-            <SelectField label="Setup" name="setup_type" value={filters.setupType || ""} options={setupTypes} emptyLabel="All setup" />
-            <SelectField label="Arah" name="direction" value={filters.direction || ""} options={directions} emptyLabel="All arah" />
-            <SelectField label="Confidence" name="confidence" value={filters.confidence || ""} options={confidences} emptyLabel="All confidence" />
-            <SelectField label="Status" name="status" value={filters.status || ""} options={["SIGNAL_CANDIDATE", "RADAR_ONLY", "CONFLICTED", "BLOCKED_DATA", "TIMEFRAME_NOT_READY"]} emptyLabel="All status" />
+          <FilterBar>
+            <SelectFilter label="Timeframe" name="timeframe" value={filters.timeframe || ""} options={timeframes} emptyLabel="All timeframe" />
+            <SelectFilter label="Setup" name="setup_type" value={filters.setupType || ""} options={setupTypes} emptyLabel="All setup" />
+            <SelectFilter label="Arah" name="direction" value={filters.direction || ""} options={directions} emptyLabel="All arah" />
+            <SelectFilter label="Confidence" name="confidence" value={filters.confidence || ""} options={confidences} emptyLabel="All confidence" />
+            <SelectFilter label="Status" name="status" value={filters.status || ""} options={["SIGNAL_CANDIDATE", "RADAR_ONLY", "CONFLICTED", "BLOCKED_DATA", "TIMEFRAME_NOT_READY"]} emptyLabel="All status" />
             <label className="grid gap-1 text-sm">
               <span className="font-semibold text-slate-600">Limit</span>
-              <input className="border border-line px-3 py-2" min={1} name="limit" type="number" defaultValue={filters.limit} />
+              <input className="rounded border border-line px-3 py-2" min={1} max={200} name="limit" type="number" defaultValue={filters.limit} />
             </label>
-            <div className="flex items-end">
-              <button className="border border-line px-4 py-2 text-sm font-semibold hover:bg-field" type="submit">
-                Apply
-              </button>
-            </div>
-          </form>
+          </FilterBar>
 
-          <div className="overflow-x-auto border border-line bg-white">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Timeframe</th>
-                  <th>Setup</th>
-                  <th>Arah</th>
-                  <th>Confidence</th>
-                  <th>Alasan</th>
-                  <th>Relative Strength</th>
-                  <th>Flow</th>
-                  <th>ATR Ref</th>
-                  <th>Status</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidates?.items.map((item) => (
-                  <CandidateRow key={`${item.symbol}-${item.timeframe}-${item.window_end}-${item.setup_type}`} item={item} />
-                ))}
-                {!candidates?.items.length && (
+          <SectionCard title="Candidate table" description="Raw anomaly dan technical label ada di expandable detail.">
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={11}>Tidak ada candidate yang cocok dengan filter.</td>
+                    <th>Symbol</th>
+                    <th>TF</th>
+                    <th>Setup</th>
+                    <th>Arah</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                    <th>Alasan singkat</th>
+                    <th>Flow</th>
+                    <th>Relative Strength</th>
+                    <th>ATR Ref</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {candidates?.items.map((item) => <CandidateRow key={`${item.symbol}-${item.timeframe}-${item.window_end}-${item.setup_type}`} item={item} />)}
+                  {!candidates?.items.length && (
+                    <tr>
+                      <td colSpan={10}><EmptyState title="Tidak ada kandidat" detail="Coba ubah filter atau refresh artifact Signal Factory." /></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
         </>
       )}
     </div>
@@ -135,59 +124,30 @@ function CandidateRow({ item }: { item: SignalFactoryCandidate }) {
     <tr>
       <td className="font-semibold">{item.symbol}</td>
       <td>{item.timeframe}</td>
-      <td>{item.setup_type}</td>
-      <td>{item.direction}</td>
-      <td>{item.confidence}</td>
-      <td className="min-w-80">
-        <div className="space-y-1">
-          <p>{item.reason}</p>
-          <p className="text-xs text-slate-500">{(item.evidence.anomalies || []).join(", ") || "-"}</p>
-          <span className="inline-flex rounded border border-blue-700 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-700">
-            READ-ONLY / NOT ENTRY SIGNAL
-          </span>
-        </div>
+      <td className="max-w-44 truncate" title={item.setup_type}>{labelFor(item.setup_type)}</td>
+      <td><StatusBadge value={item.direction} /></td>
+      <td><StatusBadge value={item.candidate_status} /></td>
+      <td>{labelFor(item.confidence)}</td>
+      <td className="min-w-72">
+        <div>{compactReason(item.reason)}</div>
+        <details className="mt-1 text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold">Show technical labels</summary>
+          <div className="mt-2 space-y-1">
+            <div>Raw setup: {item.setup_type}</div>
+            <div>Feature status: {item.feature_status}</div>
+            <div>Conflict: {item.conflict_status || "NONE"}</div>
+            <div>Anomaly: {(item.evidence.anomalies || []).join(", ") || "-"}</div>
+            <div>Reason: {item.reason}</div>
+          </div>
+        </details>
       </td>
-      <td>{item.evidence.relative_strength || "-"}</td>
       <td>{flowLabel(item)}</td>
+      <td>{labelFor(item.evidence.relative_strength)}</td>
       <td>
         {item.atr_reference_timeframe}
-        <div className="mt-1 text-xs text-slate-500">{item.atr_reference_status}</div>
+        <div className="mt-1 text-xs text-slate-500">{labelFor(item.atr_reference_status)}</div>
       </td>
-      <td>
-        <div className="space-y-1">
-          <StatusBadge value={item.candidate_status} />
-          <StatusBadge value={item.feature_status} />
-          {item.conflict_status && item.conflict_status !== "NONE" && <StatusBadge value={item.conflict_status} />}
-        </div>
-      </td>
-      <td>{fmtTime(item.window_end)}</td>
     </tr>
-  );
-}
-
-function SelectField({
-  label,
-  name,
-  value,
-  options,
-  emptyLabel
-}: {
-  label: string;
-  name: string;
-  value: string;
-  options: string[];
-  emptyLabel: string;
-}) {
-  return (
-    <label className="grid gap-1 text-sm">
-      <span className="font-semibold text-slate-600">{label}</span>
-      <select className="border border-line bg-white px-3 py-2" name={name} defaultValue={value}>
-        <option value="">{emptyLabel}</option>
-        {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -207,5 +167,6 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 function normalizeNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value || fallback);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.trunc(parsed), 1), 200);
 }

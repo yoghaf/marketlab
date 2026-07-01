@@ -10,6 +10,7 @@ body {
   margin: 0;
   background: #f4f7f9;
   color: #17212f;
+  font-feature-settings: "tnum";
 }
 
 table {
@@ -20,9 +21,9 @@ table {
 th,
 td {
   border-bottom: 1px solid #d8e0e7;
-  padding: 0.65rem 0.75rem;
+  padding: 0.7rem 0.85rem;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
@@ -31,4 +32,23 @@ th {
   text-transform: uppercase;
   color: #5d6b7a;
   background: #edf2f6;
+}
+
+tbody tr:hover {
+  background: #f8fafc;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  min-width: 900px;
+}
+
+.truncate-cell {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

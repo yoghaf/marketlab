@@ -1,4 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
+import { MetricCard } from "@/components/MetricCard";
+import { PageHeader } from "@/components/PageHeader";
 import {
   AggregationStatus,
   CollectorRun,
@@ -66,24 +68,12 @@ export default async function CollectorsPage() {
   ]);
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold tracking-normal">Collectors</h1>
+      <PageHeader title="Developer" subtitle="Raw ops/debug view untuk collector, request usage, rich datasets, dan status pipeline." />
       <section className="grid gap-3 md:grid-cols-4">
-        <div className="border border-line bg-white p-4">
-          <div className="text-xs font-semibold uppercase text-slate-500">Active Universe</div>
-          <div className="mt-2 text-2xl font-bold">{rich.universe.active_universe_count ?? rich.universe.universe_count}</div>
-        </div>
-        <div className="border border-line bg-white p-4">
-          <div className="text-xs font-semibold uppercase text-slate-500">Core Target</div>
-          <div className="mt-2 text-2xl font-bold">{rich.universe.full_active_count}</div>
-        </div>
-        <div className="border border-line bg-white p-4">
-          <div className="text-xs font-semibold uppercase text-slate-500">Rich Target</div>
-          <div className="mt-2 text-2xl font-bold">{rich.universe.full_active_count}</div>
-        </div>
-        <div className="border border-line bg-white p-4">
-          <div className="text-xs font-semibold uppercase text-slate-500">Signal Eligible</div>
-          <div className="mt-2 text-2xl font-bold">{rich.universe.signal_eligible_count}</div>
-        </div>
+        <MetricCard label="Active Universe" value={rich.universe.active_universe_count ?? rich.universe.universe_count} />
+        <MetricCard label="Core Target" value={rich.universe.full_active_count} />
+        <MetricCard label="Rich Target" value={rich.universe.full_active_count} />
+        <MetricCard label="Signal Eligible" value={rich.universe.signal_eligible_count} />
       </section>
       <section className="overflow-x-auto border border-line bg-white">
         <h2 className="border-b border-line px-4 py-3 text-base font-semibold">OHLCV Aggregation</h2>

@@ -86,8 +86,12 @@ const styles: Record<string, string> = {
 export function StatusBadge({ value }: { value?: string | null }) {
   const label = value || "-";
   return (
-    <span className={`inline-flex min-w-20 justify-center rounded border px-2 py-1 text-xs font-semibold ${styles[label] || "border-line text-ink bg-white"}`}>
-      {label}
+    <span
+      className={`inline-flex max-w-56 justify-center truncate rounded border px-2 py-1 text-xs font-semibold ${styles[label] || "border-line text-ink bg-white"}`}
+      title={label}
+    >
+      {labelFor(label)}
     </span>
   );
 }
+import { labelFor } from "@/lib/labels";

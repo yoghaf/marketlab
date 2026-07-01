@@ -1,4 +1,8 @@
-import { Metric } from "@/components/Metric";
+import { DecisionBanner } from "@/components/DecisionBanner";
+import { EmptyState } from "@/components/EmptyState";
+import { MetricCard } from "@/components/MetricCard";
+import { PageHeader } from "@/components/PageHeader";
+import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   Phase6DecisionResponse,
@@ -8,6 +12,7 @@ import {
   fmtNumber,
   fmtTime
 } from "@/lib/api";
+import { compactReason, labelFor } from "@/lib/labels";
 
 export default async function Phase6AuditPage() {
   let readiness: Phase6ReadinessResponse | null = null;
@@ -15,8 +20,8 @@ export default async function Phase6AuditPage() {
   let error: string | null = null;
   try {
     [readiness, decision] = await Promise.all([
-      fetchJson<Phase6ReadinessResponse>("/api/phase6/readiness"),
-      fetchJson<Phase6DecisionResponse>("/api/phase6/phase7-decision")
+      fetchJson<Phase6ReadinessResponse>("/api/phase6/readiness", { revalidateSeconds: 20 }),
+      fetchJson<Phase6DecisionResponse>("/api/phase6/phase7-decision", { revalidateSeconds: 20 })
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Phase 6 artifact belum tersedia";
@@ -26,101 +31,103 @@ export default async function Phase6AuditPage() {
   const candidateRows = [
     ...(decision?.approved_candidates || []),
     ...(decision?.watchlist_candidates || []),
-    ...(decision?.rejected_candidates || []).slice(0, 40)
+    ...(decision?.rejected_candidates || []).slice(0, 20)
   ];
+  const phase7 = decision?.phase7_decision || "NO_PHASE7_CANDIDATE_YET";
+  const mainBlocker = topBlocker(decision?.blocked_reasons || {});
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-normal">Phase 6 Audit</h1>
-          <div className="mt-2 inline-flex rounded border border-blue-700 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-            AUDIT MODE - BUKAN SINYAL ENTRY LIVE
-          </div>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Readiness gate untuk menentukan setup/timeframe yang boleh masuk shadow forward-test. Dashboard ini membaca artifact audit, bukan menghitung ulang dan bukan instruksi eksekusi.
-          </p>
-        </div>
-        <div className="text-right text-xs text-slate-500">Artifact: {fmtTime(readiness?.generated_at)}</div>
+      <PageHeader
+        title="Phase 6 Audit"
+        badge="AUDIT MODE - BUKAN SINYAL ENTRY LIVE"
+        subtitle="Gate keputusan sebelum shadow forward-test. Halaman ini menjawab boleh lanjut Phase 7 atau belum."
+        updatedAt={fmtTime(readiness?.generated_at)}
+      />
+      <div className="flex flex-wrap gap-2 text-sm">
+        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/strategy-arena">Strategy Arena</a>
+        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Phase 6 Audit</a>
       </div>
 
       {error ? (
-        <div className="border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
+        <div className="rounded border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : (
         <>
-          <section className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <Metric label="Phase 6 Status" value={readiness?.phase6_status || "-"} />
-            <Metric label="Phase 7 Decision" value={decisionLabel(readiness?.phase7_decision)} />
-            <Metric label="Eligible Candidates" value={readiness?.candidate_readiness.eligible_candidate_count ?? 0} />
-            <Metric label="Approved" value={readiness?.approved_count ?? 0} />
-            <Metric label="Watchlist" value={readiness?.watchlist_count ?? 0} />
-            <Metric label="Rejected" value={readiness?.rejected_count ?? 0} />
-            <Metric label="Best Setup" value={readiness?.best_setup?.mapped_setup_family || readiness?.best_setup?.setup_type || "-"} />
-            <Metric label="Most Blocked TF" value={readiness?.most_blocked_timeframe || "-"} />
+          <DecisionBanner
+            title={phase7 === "HAS_CANDIDATES" ? "Phase 7 boleh disiapkan" : "Phase 7 belum boleh"}
+            status={phase7}
+            tone={phase7 === "HAS_CANDIDATES" ? "good" : "warn"}
+            description={
+              phase7 === "HAS_CANDIDATES"
+                ? "Ada candidate yang lolos score audit. Tetap shadow forward-test, bukan live execution."
+                : `Belum ada candidate score cukup. Blocker utama: ${labelFor(mainBlocker)}. Arena masih noisy dan 4h/24h belum siap.`
+            }
+          />
+
+          <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <MetricCard label="Phase 6 Status" value={readiness?.phase6_status || "-"} tone="good" />
+            <MetricCard label="Phase 7 Decision" value={labelFor(phase7)} tone={phase7 === "HAS_CANDIDATES" ? "good" : "warn"} />
+            <MetricCard label="Approved" value={readiness?.approved_count ?? 0} />
+            <MetricCard label="Watchlist" value={readiness?.watchlist_count ?? 0} tone="info" />
+            <MetricCard label="Rejected" value={readiness?.rejected_count ?? 0} tone="warn" />
+            <MetricCard label="Main Blocker" value={labelFor(mainBlocker)} tone="warn" />
           </section>
 
-          <section className="overflow-x-auto border border-line bg-white">
-            <div className="border-b border-line p-4">
-              <h2 className="text-lg font-bold">Feature readiness</h2>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Timeframe</th>
-                  <th>Ready</th>
-                  <th>Partial</th>
-                  <th>Missing Candles</th>
-                  <th>Missing ATR</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {featureRows.map((row) => (
-                  <tr key={row.timeframe}>
-                    <td className="font-semibold">{row.timeframe}</td>
-                    <td>{row.ready_count}</td>
-                    <td>{row.partial_data_count}</td>
-                    <td>{row.missing_candles_count}</td>
-                    <td>{row.missing_atr_count}</td>
-                    <td><StatusBadge value={row.readiness_status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-          <section className="overflow-x-auto border border-line bg-white">
-            <div className="border-b border-line p-4">
-              <h2 className="text-lg font-bold">Phase 7 candidate decision</h2>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Timeframe</th>
-                  <th>Setup</th>
-                  <th>Arah</th>
-                  <th>Confidence</th>
-                  <th>Score</th>
-                  <th>Edge vs Baseline</th>
-                  <th>Arena Verdict</th>
-                  <th>Relative Strength</th>
-                  <th>Decision</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidateRows.map((row, index) => (
-                  <CandidateRow key={`${row.symbol}-${row.timeframe}-${row.setup_type}-${index}`} row={row} />
-                ))}
-                {!candidateRows.length && (
+          <SectionCard title="Feature readiness" description="Timeframe tinggi tidak dipaksa siap.">
+            <div className="table-wrap">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={11}>Belum ada candidate decision artifact.</td>
+                    <th>Timeframe</th>
+                    <th>Ready</th>
+                    <th>Partial</th>
+                    <th>Missing Candles</th>
+                    <th>Missing ATR</th>
+                    <th>Status</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </section>
+                </thead>
+                <tbody>
+                  {featureRows.map((row) => (
+                    <tr key={row.timeframe}>
+                      <td className="font-semibold">{row.timeframe}</td>
+                      <td>{row.ready_count}</td>
+                      <td>{row.partial_data_count}</td>
+                      <td>{row.missing_candles_count}</td>
+                      <td>{row.missing_atr_count}</td>
+                      <td><StatusBadge value={row.readiness_status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Phase 7 candidate table" description="Approved dan watchlist tampil dulu; rejected dibatasi agar halaman ringan.">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>TF</th>
+                    <th>Setup</th>
+                    <th>Score</th>
+                    <th>Edge</th>
+                    <th>Arena</th>
+                    <th>Decision</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidateRows.map((row, index) => <CandidateRow key={`${row.symbol}-${row.timeframe}-${row.setup_type}-${index}`} row={row} />)}
+                  {!candidateRows.length && (
+                    <tr>
+                      <td colSpan={8}><EmptyState title="Belum ada candidate decision" detail="Jalankan Phase 6 readiness audit script." /></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
         </>
       )}
     </div>
@@ -132,33 +139,26 @@ function CandidateRow({ row }: { row: Phase7CandidateDecisionRow }) {
     <tr>
       <td className="font-semibold">{row.symbol}</td>
       <td>{row.timeframe}</td>
-      <td>{row.mapped_setup_family || row.setup_type}</td>
-      <td>{row.direction}</td>
-      <td>{row.confidence}</td>
+      <td className="max-w-52 truncate" title={row.mapped_setup_family || row.setup_type}>{labelFor(row.mapped_setup_family || row.setup_type)}</td>
       <td>{row.total_score ?? "-"}</td>
       <td>{fmtR(row.edge_vs_baseline)}</td>
-      <td>{row.arena_verdict || "-"}</td>
-      <td>{relativeLabel(row)}</td>
+      <td><StatusBadge value={row.arena_verdict} /></td>
       <td><StatusBadge value={row.phase7_verdict} /></td>
-      <td className="min-w-80">
-        <div className="space-y-1">
-          <p>{decisionText(row.phase7_verdict)}</p>
-          <p className="text-xs text-slate-500">{row.reason || "-"}</p>
-          {row.recommended_arena_horizon && (
-            <p className="text-xs text-slate-500">
-              ATR model {row.recommended_atr_mult}x / RR {row.recommended_rr} / horizon {row.recommended_arena_horizon}
-            </p>
-          )}
-        </div>
+      <td className="min-w-72">
+        <div>{decisionText(row.phase7_verdict)}</div>
+        <div className="mt-1 text-xs text-slate-500">{compactReason(row.reason)}</div>
+        <details className="mt-1 text-xs text-slate-500">
+          <summary className="cursor-pointer font-semibold">Show technical labels</summary>
+          <div className="mt-2 space-y-1">
+            <div>Raw setup: {row.mapped_setup_family || row.setup_type}</div>
+            <div>Direction: {row.direction}</div>
+            <div>ATR/RR: {row.recommended_atr_mult ?? "-"}x / {row.recommended_rr ?? "-"} / {row.recommended_arena_horizon || "-"}</div>
+            <div>Setup R: {fmtR(row.setup_pessR)} Baseline R: {fmtR(row.baseline_pessR)}</div>
+          </div>
+        </details>
       </td>
     </tr>
   );
-}
-
-function decisionLabel(value?: string | null): string {
-  if (value === "HAS_CANDIDATES") return "Ada kandidat shadow";
-  if (value === "NO_PHASE7_CANDIDATE_YET") return "Belum ada kandidat";
-  return value || "-";
 }
 
 function decisionText(value: string): string {
@@ -166,14 +166,15 @@ function decisionText(value: string): string {
   if (value === "WATCHLIST_FOR_MORE_DATA") return "Pantau dulu";
   if (value === "RADAR_ONLY") return "Radar saja";
   if (value === "REJECT_FOR_PHASE7") return "Ditolak untuk Phase 7";
-  return value;
-}
-
-function relativeLabel(_row: Phase7CandidateDecisionRow): string {
-  return "Lihat edge audit";
+  return labelFor(value);
 }
 
 function fmtR(value?: number | null): string {
   if (value === null || value === undefined) return "-";
   return `${fmtNumber(value)}R`;
+}
+
+function topBlocker(blockers: Record<string, number>): string {
+  const sorted = Object.entries(blockers).sort((a, b) => b[1] - a[1]);
+  return sorted[0]?.[0] || "NO_PHASE7_CANDIDATE_YET";
 }
