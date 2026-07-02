@@ -32,7 +32,7 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
     def test_no_approved_candidate_writes_waiting_artifacts(self) -> None:
         payload = self._service().run()
 
-        self.assertEqual(payload["status"]["mode"], "WAITING_FOR_APPROVED_CANDIDATE")
+        self.assertEqual(payload["status"]["mode"], "WAITING_FOR_CANDIDATE")
         self.assertEqual(payload["status"]["approved_candidate_count"], 0)
         self.assertEqual(payload["events"]["events"], [])
         self.assertTrue((self.artifact_dir / "forward_test_status.json").exists())
@@ -50,7 +50,77 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
         event = second["events"]["events"][0]
         self.assertFalse(event["is_live_signal"])
         self.assertFalse(event["is_execution"])
+        self.assertEqual(event["lane"], "APPROVED_SHADOW")
+        self.assertEqual(event["shadow_type"], "STRICT_APPROVED")
+        self.assertIn("generated_at_utc", second["status"])
+        self.assertIn("observation_timestamp_utc", event)
         self.assertEqual(event["event_id"], first["events"]["events"][0]["event_id"])
+
+    def test_lab_shadow_candidate_with_noisy_arena_enters_lab_lane(self) -> None:
+        self._insert_reference_candles("AAAUSDT")
+        self._write_edge_artifacts([self._lab_candidate("AAAUSDT", edge=0.06, arena_verdict="NOISY")])
+
+        payload = self._service().run()
+
+        self.assertEqual(payload["status"]["mode"], "ACTIVE_LAB_SHADOW")
+        self.assertEqual(payload["status"]["approved_shadow_event_count"], 0)
+        self.assertEqual(payload["status"]["lab_shadow_candidate_count"], 1)
+        self.assertEqual(payload["status"]["lab_shadow_event_count"], 1)
+        event = payload["events"]["events"][0]
+        self.assertEqual(event["lane"], "LAB_SHADOW")
+        self.assertEqual(event["shadow_type"], "LAB_NEAR_MISS")
+        self.assertFalse(event["is_live_signal"])
+        self.assertFalse(event["is_execution"])
+
+    def test_lab_shadow_rejects_arena_reject(self) -> None:
+        self._write_edge_artifacts([self._lab_candidate("AAAUSDT", edge=0.06, arena_verdict="REJECT")])
+
+        payload = self._service().run()
+
+        self.assertEqual(payload["status"]["mode"], "WAITING_FOR_CANDIDATE")
+        self.assertEqual(payload["status"]["lab_shadow_candidate_count"], 0)
+
+    def test_lab_shadow_rejects_non_positive_edge(self) -> None:
+        self._write_edge_artifacts([self._lab_candidate("AAAUSDT", edge=0.0, arena_verdict="NOISY")])
+
+        payload = self._service().run()
+
+        self.assertEqual(payload["status"]["lab_shadow_candidate_count"], 0)
+
+    def test_lab_shadow_rejects_radar_only(self) -> None:
+        self._write_edge_artifacts([self._lab_candidate("AAAUSDT", edge=0.06, arena_verdict="NOISY", candidate_status="RADAR_ONLY")])
+
+        payload = self._service().run()
+
+        self.assertEqual(payload["status"]["lab_shadow_candidate_count"], 0)
+
+    def test_summary_splits_approved_and_lab_lanes(self) -> None:
+        self._insert_reference_candles("AAAUSDT")
+        self._insert_reference_candles("BBBUSDT")
+        self._write_edge_artifacts(
+            [self._approved_candidate("AAAUSDT", "MID_LONG", "BULLISH_CONTEXT")],
+            [self._lab_candidate("BBBUSDT", edge=0.06, arena_verdict="NOISY")],
+        )
+
+        payload = self._service().run()
+
+        self.assertEqual(payload["summary"]["approved_shadow_summary"]["total_events"], 1)
+        self.assertEqual(payload["summary"]["lab_shadow_summary"]["total_events"], 1)
+
+    def test_dedup_does_not_duplicate_events_across_lane_reruns(self) -> None:
+        self._insert_reference_candles("AAAUSDT")
+        self._insert_reference_candles("BBBUSDT")
+        approved = self._approved_candidate("AAAUSDT", "MID_LONG", "BULLISH_CONTEXT")
+        lab = self._lab_candidate("BBBUSDT", edge=0.06, arena_verdict="NOISY")
+        self._write_edge_artifacts([approved], [lab])
+
+        self._service().run()
+        payload = self._service().run()
+
+        self.assertEqual(len(payload["events"]["events"]), 2)
+        self.assertEqual(payload["status"]["created_event_count"], 0)
+        lanes = {event["lane"] for event in payload["events"]["events"]}
+        self.assertEqual(lanes, {"APPROVED_SHADOW", "LAB_SHADOW"})
 
     def test_missing_reference_prevents_active_event_creation(self) -> None:
         self._write_required_artifacts([self._approved_candidate("AAAUSDT", "MID_LONG", "BULLISH_CONTEXT")])
@@ -197,8 +267,11 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
                 )
 
     def _write_required_artifacts(self, approved: list[dict]) -> None:
+        self._write_edge_artifacts(approved, [])
+
+    def _write_edge_artifacts(self, approved: list[dict], lab_rows: list[dict] | None = None) -> None:
         edge_rows = []
-        for row in approved:
+        for row in [*approved, *(lab_rows or [])]:
             edge_rows.append(
                 {
                     "symbol": row["symbol"],
@@ -210,11 +283,16 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
                     "edge_vs_baseline": row["edge_vs_baseline"],
                     "total_score": row["total_score"],
                     "phase7_verdict": row["phase7_verdict"],
+                    "candidate_status": row.get("candidate_status", "SIGNAL_CANDIDATE"),
+                    "atr_reference_status": row.get("atr_reference_status", "AVAILABLE"),
+                    "baseline_match": row.get("baseline_match"),
+                    "conflict_status": row.get("conflict_status", "NONE"),
+                    "confidence": row.get("confidence"),
                 }
             )
         self._write_json(self.phase6_dir / "phase7_candidate_decision.json", {"approved_candidates": approved})
         self._write_json(self.phase6_dir / "setup_edge_audit.json", {"rows": edge_rows})
-        self._write_json(self.signal_factory_dir / "candidates.json", {"items": []})
+        self._write_json(self.signal_factory_dir / "candidates.json", {"items": lab_rows or []})
         self._write_json(self.strategy_arena_dir / "results.json", {"results": []})
         self._write_json(self.strategy_arena_dir / "leaderboard.json", {"top_by_pessimistic_avg_r": []})
 
@@ -238,6 +316,31 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
             "total_score": 8,
             "phase7_verdict": "PHASE7_READY",
             "atr_reference_timeframe": "1h",
+            "atr_reference_status": "AVAILABLE",
+            "candidate_status": "SIGNAL_CANDIDATE",
+            "baseline_match": {"verdict": "REJECT", "pessimistic_avg_r": -0.01},
+            "conflict_status": "NONE",
+        }
+
+    def _lab_candidate(self, symbol: str, edge: float, arena_verdict: str, candidate_status: str = "SIGNAL_CANDIDATE") -> dict:
+        return {
+            "symbol": symbol,
+            "timeframe": "15m",
+            "setup_type": "MID_LONG",
+            "mapped_setup_family": "MID_LONG",
+            "direction": "BULLISH_CONTEXT",
+            "direction_side": "LONG",
+            "confidence": "LOW",
+            "window_end": self.observation.isoformat(),
+            "arena_match": {"verdict": arena_verdict, "horizon": "15m", "atr_mult": 1.0, "rr": 2.0},
+            "baseline_match": {"verdict": "REJECT", "pessimistic_avg_r": -0.01},
+            "edge_vs_baseline": edge,
+            "total_score": 5,
+            "phase7_verdict": "WATCHLIST_FOR_MORE_DATA",
+            "atr_reference_timeframe": "1h",
+            "atr_reference_status": "AVAILABLE",
+            "candidate_status": candidate_status,
+            "conflict_status": "NONE",
         }
 
     def _write_json(self, path: Path, payload: dict) -> None:

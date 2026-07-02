@@ -11,9 +11,9 @@ import {
   HealthItem,
   Phase7FullBlockerAuditResponse,
   RichAlignmentStatus,
-  fetchJson,
-  fmtTime
+  fetchJson
 } from "@/lib/api";
+import { formatLocalDateTime, formatRelativeTime, formatTimeWithUtcDetail } from "@/lib/time";
 
 type HealthResponse = {
   counts: Record<string, number>;
@@ -35,12 +35,12 @@ export default async function DataHealthPage() {
   const atr24 = audit?.atr_readiness["24h"]?.available_symbols ?? 0;
   return (
     <div className="space-y-5">
-      <PageHeader title="System Health" subtitle="Kesehatan data dan kematangan timeframe yang menentukan apakah MarketLab bisa menilai kandidat." updatedAt={fmtTime(data.latest.latest_futures_candle_time)} />
+      <PageHeader title="System Health" subtitle="Kesehatan data dan kematangan timeframe yang menentukan apakah MarketLab bisa menilai kandidat." updatedAt={`${formatLocalDateTime(data.latest.latest_futures_candle_time)}, ${formatRelativeTime(data.latest.latest_futures_candle_time)}`} />
 
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         <MetricCard label="System Status" value="Running" helper="Collector API online" tone="good" />
         <MetricCard label="Symbol Ready" value={`${data.counts.READY || 0}/75`} helper="Data utama fresh" tone="good" />
-        <MetricCard label="Latest 15m" value={fmtTime(data.aggregation.latest.latest_15m_futures)} helper="Futures aggregate" />
+        <MetricCard label="Latest 15m" value={formatLocalDateTime(data.aggregation.latest.latest_15m_futures)} helper={formatRelativeTime(data.aggregation.latest.latest_15m_futures)} />
         <MetricCard label="4h ATR" value={atr4 > 0 ? `${atr4}/75` : "Belum siap"} helper="Butuh minimal 15 candle" tone={atr4 > 0 ? "warn" : "bad"} />
         <MetricCard label="24h ATR" value={atr24 > 0 ? `${atr24}/75` : "Belum siap"} helper="Butuh minimal 15 candle" tone={atr24 > 0 ? "warn" : "bad"} />
         <MetricCard label="Missing Spot" value={data.counts.MISSING_SPOT || 0} helper="Spot belum tersedia" />
@@ -60,7 +60,7 @@ export default async function DataHealthPage() {
           {Object.entries(data.latest).map(([key, value]) => (
             <div key={key} className="grid grid-cols-2 border-b border-line px-4 py-3">
               <dt className="font-medium text-slate-600">{key.replaceAll("_", " ")}</dt>
-              <dd>{fmtTime(value)}</dd>
+              <dd><LocalTimeDetail value={value} /></dd>
             </div>
           ))}
         </dl>
@@ -85,8 +85,8 @@ export default async function DataHealthPage() {
                   <td><Link className="font-semibold text-blue-700 hover:underline" href={`/tokens/${item.symbol}`}>{item.symbol}</Link></td>
                   <td>{item.rank ?? "-"}</td>
                   <td><StatusBadge value={item.status} /></td>
-                  <td>{fmtTime(item.latest_futures_candle_time)}</td>
-                  <td>{fmtTime(item.latest_spot_candle_time)}</td>
+                  <td><LocalTimeDetail value={item.latest_futures_candle_time} compact /></td>
+                  <td><LocalTimeDetail value={item.latest_spot_candle_time} compact /></td>
                   <td className="truncate-cell" title={item.reason || item.rich_reason || "-"}>{healthReason(item.reason || item.rich_reason)}</td>
                 </tr>
               ))}
@@ -118,6 +118,21 @@ function MaturityItem({ label, value }: { label: string; value: string }) {
     <div className="rounded border border-line p-3">
       <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
       <div className="mt-1 font-bold text-ink">{value}</div>
+    </div>
+  );
+}
+
+function LocalTimeDetail({ value, compact = false }: { value?: string | null; compact?: boolean }) {
+  const detail = formatTimeWithUtcDetail(value);
+  return (
+    <div>
+      <div>{detail.local}</div>
+      {!compact && <div className="text-xs text-slate-500">{detail.relative}</div>}
+      <details className="mt-1 text-xs text-slate-500">
+        <summary className="cursor-pointer font-semibold">UTC detail</summary>
+        <div>Local time: {detail.local}</div>
+        <div>UTC: {detail.utc}</div>
+      </details>
     </div>
   );
 }

@@ -22,10 +22,14 @@ DEFAULT_PHASE7_DIR = REPO_ROOT / "backend" / "artifacts" / "phase7"
 HORIZON_BARS = {"15m": 1, "1h": 4, "4h": 16, "24h": 96}
 TIMEFRAME_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "24h": 1440}
 PHASE7_EDGE_THRESHOLD_R = Decimal("0.10")
+LAB_SHADOW_EDGE_THRESHOLD_R = Decimal("0.05")
 PHASE7_SCORE_THRESHOLD = 7
 ARENA_VERDICT_OK = {"MONITOR_MORE", "PROMISING_FOR_FORWARD_TEST"}
+LAB_REJECT_VERDICTS = {"REJECT"}
 ACTIVE_STATUSES = {"WAITING_OUTCOME", "UNKNOWN_FORWARD_DATA"}
 COMPLETED_STATUSES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE", "EXPIRED", "INVALIDATED", "CANNOT_EVALUATE"}
+APPROVED_SHADOW = "APPROVED_SHADOW"
+LAB_SHADOW = "LAB_SHADOW"
 
 
 @dataclass(frozen=True)
@@ -54,11 +58,11 @@ class Phase7ForwardTestService:
         self.artifact_dir = artifact_dir
 
     def run(self) -> dict[str, Any]:
-        generated_at = utcnow().isoformat()
+        generated_at = iso_utc(utcnow())
         try:
             decision = self.load_phase6_decision()
             edge_rows = self.load_phase6_edge_rows()
-            self.load_signal_factory_candidates()
+            signal_candidates = self.load_signal_factory_candidates()
             self.load_strategy_arena()
         except FileNotFoundError as exc:
             payload = self._missing_artifact_payload(generated_at, str(exc))
@@ -67,13 +71,23 @@ class Phase7ForwardTestService:
 
         existing_events = self.load_existing_events()
         approved = self.get_approved_candidates(decision, edge_rows)
+        lab_candidates = self.get_lab_shadow_candidates(edge_rows, signal_candidates, approved)
         events_by_id = {event["event_id"]: event for event in existing_events}
         create_errors = []
         created_count = 0
         for candidate in approved:
-            event = self.build_shadow_event(candidate)
+            event = self.build_shadow_event(candidate, APPROVED_SHADOW)
             event_id = event["event_id"]
-            if event_id in events_by_id:
+            if event_id in events_by_id and events_by_id[event_id].get("status") != "CANNOT_CREATE_EVENT_MISSING_REFERENCE":
+                continue
+            events_by_id[event_id] = event
+            created_count += 1
+            if event["status"] == "CANNOT_CREATE_EVENT_MISSING_REFERENCE":
+                create_errors.append({"event_id": event_id, "symbol": event["symbol"], "reason": event.get("cannot_create_reason")})
+        for candidate in lab_candidates:
+            event = self.build_shadow_event(candidate, LAB_SHADOW)
+            event_id = event["event_id"]
+            if event_id in events_by_id and events_by_id[event_id].get("status") != "CANNOT_CREATE_EVENT_MISSING_REFERENCE":
                 continue
             events_by_id[event_id] = event
             created_count += 1
@@ -89,13 +103,23 @@ class Phase7ForwardTestService:
             elif result and result["result_status"] == "UNKNOWN_FORWARD_DATA" and event["status"] in ACTIVE_STATUSES:
                 event["status"] = "WAITING_OUTCOME"
 
-        status = self.build_status(generated_at, approved, events, results, len(create_errors))
+        status = self.build_status(generated_at, approved, lab_candidates, events, results, len(create_errors))
         status["created_event_count"] = created_count
         summary = self.build_summary(generated_at, events, results)
         payload = {
             "status": status,
-            "events": {"generated_at": generated_at, "events": events},
-            "results": {"generated_at": generated_at, "results": results},
+            "events": {
+                "generated_at": generated_at,
+                "generated_at_utc": generated_at,
+                "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+                "events": events,
+            },
+            "results": {
+                "generated_at": generated_at,
+                "generated_at_utc": generated_at,
+                "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+                "results": results,
+            },
             "summary": summary,
         }
         self.write_artifacts(payload)
@@ -124,31 +148,65 @@ class Phase7ForwardTestService:
             merged = {**edge, **row}
             if not is_phase7_approved(merged):
                 continue
+            merged["lane"] = APPROVED_SHADOW
+            merged["shadow_type"] = "STRICT_APPROVED"
             approved.append(merged)
         return approved
 
-    def build_shadow_event(self, candidate: dict[str, Any]) -> dict[str, Any]:
+    def get_lab_shadow_candidates(
+        self,
+        edge_rows: list[dict[str, Any]],
+        signal_candidates: list[dict[str, Any]],
+        approved: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        signal_index = {
+            (row.get("symbol"), row.get("timeframe"), row.get("setup_type")): row
+            for row in signal_candidates
+        }
+        approved_keys = {
+            (row.get("symbol"), row.get("timeframe"), row.get("setup_type"), row.get("window_end"))
+            for row in approved
+        }
+        lab = []
+        for row in edge_rows:
+            merged = {**signal_index.get((row.get("symbol"), row.get("timeframe"), row.get("setup_type")), {}), **row}
+            key = (merged.get("symbol"), merged.get("timeframe"), merged.get("setup_type"), merged.get("window_end"))
+            if key in approved_keys:
+                continue
+            if not is_lab_shadow_candidate(merged):
+                continue
+            merged["lane"] = LAB_SHADOW
+            merged["shadow_type"] = "LAB_NEAR_MISS"
+            lab.append(merged)
+        return lab
+
+    def build_shadow_event(self, candidate: dict[str, Any], lane: str) -> dict[str, Any]:
         observation = parse_dt(candidate.get("window_end") or candidate.get("candidate_timestamp") or candidate.get("observation_timestamp"))
         direction = direction_side(candidate)
-        event_id = deterministic_event_id(candidate, observation, direction)
+        event_id = deterministic_event_id(candidate, observation, direction, lane)
+        created_at = iso_utc(utcnow())
         base = {
             "event_id": event_id,
             "symbol": candidate.get("symbol"),
             "timeframe": candidate.get("timeframe"),
             "setup": candidate.get("mapped_setup_family") or candidate.get("setup_type"),
             "direction": direction,
+            "lane": lane,
+            "shadow_type": "STRICT_APPROVED" if lane == APPROVED_SHADOW else "LAB_NEAR_MISS",
             "confidence": candidate.get("confidence"),
-            "candidate_timestamp": observation.isoformat(),
-            "observation_timestamp": observation.isoformat(),
+            "candidate_timestamp": iso_utc(observation),
+            "observation_timestamp": iso_utc(observation),
+            "observation_timestamp_utc": iso_utc(observation),
             "source_candidate_id": source_candidate_id(candidate, observation),
             "phase6_score": candidate.get("total_score"),
             "edge_vs_baseline": candidate.get("edge_vs_baseline"),
             "arena_verdict": candidate.get("arena_verdict") or (candidate.get("arena_match") or {}).get("verdict"),
             "atr_reference_timeframe": candidate.get("atr_reference_timeframe"),
-            "created_at": utcnow().isoformat(),
+            "created_at": created_at,
+            "event_created_at_utc": created_at,
             "is_live_signal": False,
             "is_execution": False,
-            "disclaimer": "READ_ONLY_SHADOW_FORWARD_TEST",
+            "disclaimer": "READ_ONLY_SHADOW_FORWARD_TEST" if lane == APPROVED_SHADOW else "LAB_ONLY_READ_ONLY_SHADOW_FORWARD_TEST",
         }
         plan = self.build_shadow_trade_plan(candidate, observation, direction)
         if plan["status"] != "OK":
@@ -196,7 +254,8 @@ class Phase7ForwardTestService:
             "trade_plan": {
                 "entry_reference_type": "CANDIDATE_15M_CLOSE",
                 "entry_reference_price": float(entry),
-                "entry_reference_time": entry_candle.close_time.isoformat(),
+                "entry_reference_time": iso_utc(entry_candle.close_time),
+                "entry_reference_time_utc": iso_utc(entry_candle.close_time),
                 "atr_reference_timeframe": atr_timeframe,
                 "atr_reference_value": float(atr),
                 "atr_mult": float(atr_mult),
@@ -206,7 +265,8 @@ class Phase7ForwardTestService:
                 "take_profit_reference_price": float(target),
                 "max_horizon_bars": bars,
                 "max_horizon_minutes": minutes,
-                "expiry_time": (observation + timedelta(minutes=minutes)).isoformat(),
+                "expiry_time": iso_utc(observation + timedelta(minutes=minutes)),
+                "expiry_time_utc": iso_utc(observation + timedelta(minutes=minutes)),
                 "invalidation_rule": "Forward-test expires at configured Strategy Arena horizon if TP/SL is not hit.",
                 "shadow_plan_type": "SHADOW_SIMULATION_LEVELS_NOT_LIVE_ORDER",
             },
@@ -275,33 +335,47 @@ class Phase7ForwardTestService:
         self,
         generated_at: str,
         approved: list[dict[str, Any]],
+        lab_candidates: list[dict[str, Any]],
         events: list[dict[str, Any]],
         results: list[dict[str, Any]],
         error_count: int,
     ) -> dict[str, Any]:
         active = [event for event in events if event.get("status") in ACTIVE_STATUSES]
         completed = [event for event in events if event.get("status") in COMPLETED_STATUSES]
-        if not approved and not active and not completed:
-            mode = "WAITING_FOR_APPROVED_CANDIDATE"
-            verdict = "PHASE7_INFRA_READY_WAITING"
-            reason = "No Phase 6 approved candidate yet."
-            next_action = "Rerun after Phase 6 produces approved candidate."
-        elif active:
-            mode = "ACTIVE_FORWARD_TEST"
-            verdict = "PHASE7_ACTIVE_FORWARD_TEST"
-            reason = "Approved shadow events are waiting for forward-test outcome."
+        approved_events = [event for event in events if event.get("lane") == APPROVED_SHADOW]
+        lab_events = [event for event in events if event.get("lane") == LAB_SHADOW]
+        if error_count:
+            mode = "ERROR"
+            verdict = "PHASE7_DUAL_LANE_ERROR"
+            reason = "Some Phase 7 shadow events could not be created."
+            next_action = "Inspect event create errors and rerun after references are available."
+        elif approved_events:
+            mode = "ACTIVE_APPROVED_SHADOW"
+            verdict = "PHASE7_DUAL_LANE_ACTIVE_APPROVED_SHADOW"
+            reason = "Strict approved shadow events are available for forward-test tracking."
             next_action = "Rerun Phase 7 forward test after more closed candles."
+        elif lab_events:
+            mode = "ACTIVE_LAB_SHADOW"
+            verdict = "PHASE7_DUAL_LANE_ACTIVE_LAB_SHADOW"
+            reason = "No approved shadow events yet; near-miss LAB_SHADOW candidates are being tracked for forward-test learning."
+            next_action = "Continue collecting forward-test outcomes; LAB_SHADOW is not a live signal."
         else:
-            mode = "FORWARD_TEST_COMPLETE"
-            verdict = "PHASE7_INFRA_READY_WAITING"
-            reason = "No active shadow event."
-            next_action = "Rerun after Phase 6 produces new approved candidate."
+            mode = "WAITING_FOR_CANDIDATE"
+            verdict = "PHASE7_DUAL_LANE_READY_WAITING"
+            reason = "No Phase 6 approved candidate and no LAB_SHADOW near-miss candidate yet."
+            next_action = "Rerun after Signal Factory and Phase 6 produce eligible candidates."
         return {
             "generated_at": generated_at,
+            "generated_at_utc": generated_at,
+            "last_run_at_utc": generated_at,
+            "display_timezone_hint": "browser_local_or_Asia/Jakarta",
             "phase": "PHASE_7_SHADOW_FORWARD_TEST",
             "mode": mode,
             "verdict": verdict,
             "approved_candidate_count": len(approved),
+            "approved_shadow_event_count": len(approved_events),
+            "lab_shadow_candidate_count": len(lab_candidates),
+            "lab_shadow_event_count": len(lab_events),
             "active_event_count": len(active),
             "completed_event_count": len(completed),
             "waiting_event_count": len(active),
@@ -313,23 +387,15 @@ class Phase7ForwardTestService:
         }
 
     def build_summary(self, generated_at: str, events: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, Any]:
-        completed = [result for result in results if result.get("result_status") in {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE", "EXPIRED"}]
-        realized = [Decimal(str(result["realized_R"])) for result in completed if result.get("realized_R") is not None]
-        tp = sum(1 for result in results if result.get("result_status") == "TP_HIT")
-        sl = sum(1 for result in results if result.get("result_status") == "SL_HIT")
+        total = lane_summary(events, results, None)
         return {
             "generated_at": generated_at,
-            "total_events": len(events),
-            "active_events": sum(1 for event in events if event.get("status") in ACTIVE_STATUSES),
-            "completed_events": len(completed),
-            "tp_hit": tp,
-            "sl_hit": sl,
-            "expired": sum(1 for result in results if result.get("result_status") == "EXPIRED"),
-            "unknown_forward_data": sum(1 for result in results if result.get("result_status") == "UNKNOWN_FORWARD_DATA"),
-            "ambiguous": sum(1 for result in results if result.get("ambiguous_same_candle")),
-            "win_rate": None if tp + sl == 0 else tp / (tp + sl),
-            "average_realized_R": float(sum(realized) / Decimal(len(realized))) if realized else None,
-            "median_realized_R": float(median(realized)) if realized else None,
+            "generated_at_utc": generated_at,
+            "last_run_at_utc": generated_at,
+            "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+            **total,
+            "approved_shadow_summary": lane_summary(events, results, APPROVED_SHADOW),
+            "lab_shadow_summary": lane_summary(events, results, LAB_SHADOW),
             "verdict": "WAITING_FOR_DATA" if not events else "FORWARD_TEST_TRACKING",
             "is_live_signal": False,
             "is_execution_enabled": False,
@@ -345,10 +411,16 @@ class Phase7ForwardTestService:
     def _missing_artifact_payload(self, generated_at: str, reason: str) -> dict[str, Any]:
         status = {
             "generated_at": generated_at,
+            "generated_at_utc": generated_at,
+            "last_run_at_utc": generated_at,
+            "display_timezone_hint": "browser_local_or_Asia/Jakarta",
             "phase": "PHASE_7_SHADOW_FORWARD_TEST",
-            "mode": "INPUT_ARTIFACT_MISSING",
-            "verdict": "PHASE7_BLOCKED_BY_ERROR",
+            "mode": "ERROR",
+            "verdict": "PHASE7_DUAL_LANE_ERROR",
             "approved_candidate_count": 0,
+            "approved_shadow_event_count": 0,
+            "lab_shadow_candidate_count": 0,
+            "lab_shadow_event_count": 0,
             "active_event_count": 0,
             "completed_event_count": 0,
             "waiting_event_count": 0,
@@ -360,8 +432,8 @@ class Phase7ForwardTestService:
         }
         return {
             "status": status,
-            "events": {"generated_at": generated_at, "events": []},
-            "results": {"generated_at": generated_at, "results": []},
+            "events": {"generated_at": generated_at, "generated_at_utc": generated_at, "events": []},
+            "results": {"generated_at": generated_at, "generated_at_utc": generated_at, "results": []},
             "summary": self.build_summary(generated_at, [], []),
         }
 
@@ -437,13 +509,13 @@ class Phase7ForwardTestArtifactService:
         return self._read_or_default("forward_test_status.json", default_status())
 
     def events(self) -> dict[str, Any]:
-        return self._read_or_default("forward_test_events.json", {"generated_at": None, "events": [], "read_only": True, "is_live_signal": False})
+        return self._read_or_default("forward_test_events.json", {"generated_at": None, "generated_at_utc": None, "events": [], "read_only": True, "is_live_signal": False})
 
     def results(self) -> dict[str, Any]:
-        return self._read_or_default("forward_test_results.json", {"generated_at": None, "results": [], "read_only": True, "is_live_signal": False})
+        return self._read_or_default("forward_test_results.json", {"generated_at": None, "generated_at_utc": None, "results": [], "read_only": True, "is_live_signal": False})
 
     def summary(self) -> dict[str, Any]:
-        return self._read_or_default("forward_test_summary.json", {"generated_at": None, "total_events": 0, "active_events": 0, "completed_events": 0, "verdict": "ARTIFACT_NOT_FOUND"})
+        return self._read_or_default("forward_test_summary.json", {"generated_at": None, "generated_at_utc": None, "total_events": 0, "active_events": 0, "completed_events": 0, "verdict": "ARTIFACT_NOT_FOUND"})
 
     def _read_or_default(self, filename: str, default: dict[str, Any]) -> dict[str, Any]:
         path = self.artifact_dir / filename
@@ -465,14 +537,32 @@ def is_phase7_approved(candidate: dict[str, Any]) -> bool:
     )
 
 
-def deterministic_event_id(candidate: dict[str, Any], observation: datetime, direction: str) -> str:
+def is_lab_shadow_candidate(candidate: dict[str, Any]) -> bool:
+    edge = decimal_or_none(candidate.get("edge_vs_baseline"))
+    arena = candidate.get("arena_match") or {}
+    arena_verdict = candidate.get("arena_verdict") or arena.get("verdict")
+    return (
+        candidate.get("candidate_status") == "SIGNAL_CANDIDATE"
+        and candidate.get("timeframe") == "15m"
+        and candidate.get("atr_reference_status") == "AVAILABLE"
+        and bool(candidate.get("arena_match"))
+        and bool(candidate.get("baseline_match"))
+        and candidate.get("conflict_status") != "CONFLICTED"
+        and edge is not None
+        and edge > LAB_SHADOW_EDGE_THRESHOLD_R
+        and arena_verdict not in LAB_REJECT_VERDICTS
+    )
+
+
+def deterministic_event_id(candidate: dict[str, Any], observation: datetime, direction: str, lane: str) -> str:
     raw = "|".join(
         [
             str(candidate.get("symbol")),
             str(candidate.get("timeframe")),
             str(candidate.get("mapped_setup_family") or candidate.get("setup_type")),
             direction,
-            observation.isoformat(),
+            iso_utc(observation),
+            lane,
         ]
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
@@ -502,13 +592,20 @@ def completed_result(
     mae: Decimal,
     ambiguous: bool,
 ) -> dict[str, Any]:
+    evaluated_at = iso_utc(utcnow())
     return {
         "event_id": event["event_id"],
         "symbol": event["symbol"],
         "setup": event.get("setup"),
         "direction": event.get("direction"),
+        "lane": event.get("lane", APPROVED_SHADOW),
+        "shadow_type": event.get("shadow_type"),
         "result_status": status,
-        "hit_time": hit_time.isoformat(),
+        "hit_time": iso_utc(hit_time),
+        "hit_time_utc": iso_utc(hit_time),
+        "expiry_time": event.get("expiry_time"),
+        "expiry_time_utc": event.get("expiry_time_utc") or event.get("expiry_time"),
+        "evaluated_at_utc": evaluated_at,
         "bars_to_result": bars,
         "minutes_to_result": bars * 15,
         "realized_R": float(realized_r) if realized_r is not None else None,
@@ -522,13 +619,20 @@ def completed_result(
 
 
 def unknown_result(event: dict[str, Any], reason: str) -> dict[str, Any]:
+    evaluated_at = iso_utc(utcnow())
     return {
         "event_id": event["event_id"],
         "symbol": event.get("symbol"),
         "setup": event.get("setup"),
         "direction": event.get("direction"),
+        "lane": event.get("lane", APPROVED_SHADOW),
+        "shadow_type": event.get("shadow_type"),
         "result_status": "UNKNOWN_FORWARD_DATA",
         "hit_time": None,
+        "hit_time_utc": None,
+        "expiry_time": event.get("expiry_time"),
+        "expiry_time_utc": event.get("expiry_time_utc") or event.get("expiry_time"),
+        "evaluated_at_utc": evaluated_at,
         "bars_to_result": None,
         "minutes_to_result": None,
         "realized_R": None,
@@ -551,10 +655,16 @@ def cannot_evaluate_result(event: dict[str, Any], reason: str) -> dict[str, Any]
 def default_status() -> dict[str, Any]:
     return {
         "generated_at": None,
+        "generated_at_utc": None,
+        "last_run_at_utc": None,
+        "display_timezone_hint": "browser_local_or_Asia/Jakarta",
         "phase": "PHASE_7_SHADOW_FORWARD_TEST",
         "mode": "ARTIFACT_NOT_FOUND",
-        "verdict": "PHASE7_BLOCKED_BY_ERROR",
+        "verdict": "PHASE7_DUAL_LANE_ERROR",
         "approved_candidate_count": 0,
+        "approved_shadow_event_count": 0,
+        "lab_shadow_candidate_count": 0,
+        "lab_shadow_event_count": 0,
         "active_event_count": 0,
         "completed_event_count": 0,
         "waiting_event_count": 0,
@@ -584,6 +694,10 @@ def parse_dt(value: Any) -> datetime:
     return dt.astimezone(UTC)
 
 
+def iso_utc(value: datetime) -> str:
+    return parse_dt(value).isoformat().replace("+00:00", "Z")
+
+
 def db_time(value: datetime) -> str:
     return value.replace(tzinfo=None).isoformat(sep=" ")
 
@@ -611,6 +725,33 @@ def candle_from_row(row: sqlite3.Row) -> Candle:
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def lane_summary(events: list[dict[str, Any]], results: list[dict[str, Any]], lane: str | None) -> dict[str, Any]:
+    lane_events = [event for event in events if lane is None or event.get("lane", APPROVED_SHADOW) == lane]
+    event_ids = {event["event_id"] for event in lane_events}
+    lane_results = [result for result in results if result.get("event_id") in event_ids]
+    completed = [result for result in lane_results if result.get("result_status") in {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE", "EXPIRED"}]
+    realized = [Decimal(str(result["realized_R"])) for result in completed if result.get("realized_R") is not None]
+    tp = sum(1 for result in lane_results if result.get("result_status") == "TP_HIT")
+    sl = sum(1 for result in lane_results if result.get("result_status") == "SL_HIT")
+    avg_r = float(sum(realized) / Decimal(len(realized))) if realized else None
+    median_r = float(median(realized)) if realized else None
+    return {
+        "total_events": len(lane_events),
+        "active_events": sum(1 for event in lane_events if event.get("status") in ACTIVE_STATUSES),
+        "completed_events": len(completed),
+        "tp_hit": tp,
+        "sl_hit": sl,
+        "expired": sum(1 for result in lane_results if result.get("result_status") == "EXPIRED"),
+        "unknown_forward_data": sum(1 for result in lane_results if result.get("result_status") == "UNKNOWN_FORWARD_DATA"),
+        "ambiguous": sum(1 for result in lane_results if result.get("ambiguous_same_candle")),
+        "win_rate": None if tp + sl == 0 else tp / (tp + sl),
+        "average_realized_R": avg_r,
+        "median_realized_R": median_r,
+        "avg_R": avg_r,
+        "median_R": median_r,
+    }
 
 
 def json_safe(value: Any) -> Any:

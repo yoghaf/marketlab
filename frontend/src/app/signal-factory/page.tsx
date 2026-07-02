@@ -11,10 +11,10 @@ import {
   CandidateNumericEvidenceItem,
   CandidateNumericEvidenceResponse,
   fetchJson,
-  fmtNumber,
-  fmtTime
+  fmtNumber
 } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
+import { formatLocalDateTime } from "@/lib/time";
 
 type SignalFactorySearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -62,7 +62,7 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
         title="Signal Factory"
         badge="TEST MODE - BUKAN SINYAL ENTRY LIVE"
         subtitle="Kandidat anomaly multi-timeframe read-only. Lihat setup utama di tabel; evidence teknis tetap tersedia di detail."
-        updatedAt={fmtTime(summary?.generated_at)}
+        updatedAt={formatLocalDateTime(summary?.generated_at)}
       />
 
       {error ? (

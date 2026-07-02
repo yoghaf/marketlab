@@ -12,10 +12,10 @@ import {
   CandidateNumericEvidenceItem,
   CandidateNumericEvidenceResponse,
   fetchJson,
-  fmtNumber,
-  fmtTime
+  fmtNumber
 } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
+import { formatLocalDateTime } from "@/lib/time";
 
 export default async function Phase6AuditPage() {
   let readiness: Phase6ReadinessResponse | null = null;
@@ -56,7 +56,7 @@ export default async function Phase6AuditPage() {
         title="Phase 6 Audit"
         badge="READ-ONLY - bukan sinyal entry live"
         subtitle="Gate keputusan sebelum Phase 7. Halaman ini menjawab apakah data dan bukti sudah cukup, bukan memberi instruksi trading."
-        updatedAt={fmtTime(readiness?.generated_at || blockerAudit?.generated_at)}
+        updatedAt={formatLocalDateTime(readiness?.generated_at || blockerAudit?.generated_at)}
       />
       <div className="flex flex-wrap gap-2 text-sm">
         <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/strategy-arena">Strategy Test</a>

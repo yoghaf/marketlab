@@ -601,10 +601,16 @@ export type CandidateNumericEvidenceResponse = {
 
 export type Phase7ForwardStatus = {
   generated_at?: string | null;
+  generated_at_utc?: string | null;
+  last_run_at_utc?: string | null;
+  display_timezone_hint?: string | null;
   phase: string;
   mode: string;
   verdict: string;
   approved_candidate_count: number;
+  approved_shadow_event_count?: number;
+  lab_shadow_candidate_count?: number;
+  lab_shadow_event_count?: number;
   active_event_count: number;
   completed_event_count: number;
   waiting_event_count: number;
@@ -622,12 +628,16 @@ export type Phase7ForwardEvent = {
   timeframe: string;
   setup: string;
   direction: "LONG" | "SHORT" | "MIXED";
+  lane?: "APPROVED_SHADOW" | "LAB_SHADOW";
+  shadow_type?: "STRICT_APPROVED" | "LAB_NEAR_MISS";
   confidence?: string | null;
   candidate_timestamp?: string | null;
   observation_timestamp?: string | null;
+  observation_timestamp_utc?: string | null;
   status: string;
   entry_reference_price?: number | null;
   entry_reference_time?: string | null;
+  entry_reference_time_utc?: string | null;
   atr_reference_timeframe?: string | null;
   atr_reference_value?: number | null;
   atr_mult?: number | null;
@@ -638,6 +648,8 @@ export type Phase7ForwardEvent = {
   max_horizon_bars?: number | null;
   max_horizon_minutes?: number | null;
   expiry_time?: string | null;
+  expiry_time_utc?: string | null;
+  event_created_at_utc?: string | null;
   phase6_score?: number | null;
   edge_vs_baseline?: number | null;
   arena_verdict?: string | null;
@@ -649,6 +661,8 @@ export type Phase7ForwardEvent = {
 
 export type Phase7ForwardEventsResponse = {
   generated_at?: string | null;
+  generated_at_utc?: string | null;
+  display_timezone_hint?: string | null;
   events: Phase7ForwardEvent[];
 };
 
@@ -657,8 +671,14 @@ export type Phase7ForwardResult = {
   symbol: string;
   setup?: string | null;
   direction?: string | null;
+  lane?: string | null;
+  shadow_type?: string | null;
   result_status: string;
   hit_time?: string | null;
+  hit_time_utc?: string | null;
+  expiry_time?: string | null;
+  expiry_time_utc?: string | null;
+  evaluated_at_utc?: string | null;
   bars_to_result?: number | null;
   minutes_to_result?: number | null;
   realized_R?: number | null;
@@ -673,11 +693,32 @@ export type Phase7ForwardResult = {
 
 export type Phase7ForwardResultsResponse = {
   generated_at?: string | null;
+  generated_at_utc?: string | null;
+  display_timezone_hint?: string | null;
   results: Phase7ForwardResult[];
+};
+
+export type Phase7LaneSummary = {
+  total_events: number;
+  active_events: number;
+  completed_events: number;
+  tp_hit: number;
+  sl_hit: number;
+  expired: number;
+  unknown_forward_data?: number;
+  ambiguous: number;
+  win_rate?: number | null;
+  average_realized_R?: number | null;
+  median_realized_R?: number | null;
+  avg_R?: number | null;
+  median_R?: number | null;
 };
 
 export type Phase7ForwardSummary = {
   generated_at?: string | null;
+  generated_at_utc?: string | null;
+  last_run_at_utc?: string | null;
+  display_timezone_hint?: string | null;
   total_events: number;
   active_events: number;
   completed_events: number;
@@ -689,6 +730,8 @@ export type Phase7ForwardSummary = {
   win_rate?: number | null;
   average_realized_R?: number | null;
   median_realized_R?: number | null;
+  approved_shadow_summary?: Phase7LaneSummary;
+  lab_shadow_summary?: Phase7LaneSummary;
   verdict: string;
   is_live_signal?: boolean;
   is_execution_enabled?: boolean;

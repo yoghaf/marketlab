@@ -21,7 +21,7 @@ export function PageHeader({
         {subtitle && <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{subtitle}</p>}
       </div>
       <div className="flex flex-col items-end gap-2">
-        {updatedAt && <div className="text-right text-xs text-slate-500">Updated: {updatedAt}</div>}
+        {updatedAt && <div className="text-right text-xs text-slate-500">Terakhir diperbarui: {updatedAt}</div>}
         <a className="rounded border border-line px-3 py-1.5 text-sm font-semibold hover:bg-field" href="">
           Refresh
         </a>
