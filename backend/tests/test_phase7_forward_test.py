@@ -34,6 +34,9 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
 
         self.assertEqual(payload["status"]["mode"], "WAITING_FOR_CANDIDATE")
         self.assertEqual(payload["status"]["approved_candidate_count"], 0)
+        self.assertEqual(payload["status"]["stale_after_minutes"], 20)
+        self.assertFalse(payload["status"]["is_stale"])
+        self.assertIsNone(payload["status"]["stale_reason"])
         self.assertEqual(payload["events"]["events"], [])
         self.assertTrue((self.artifact_dir / "forward_test_status.json").exists())
 
@@ -175,9 +178,28 @@ class Phase7ForwardTestServiceTest(unittest.TestCase):
         service = Phase7ForwardTestArtifactService(self.root / "missing_phase7")
 
         self.assertEqual(service.status()["mode"], "ARTIFACT_NOT_FOUND")
+        self.assertTrue(service.status()["is_stale"])
         self.assertEqual(service.events()["events"], [])
         self.assertEqual(service.results()["results"], [])
         self.assertEqual(service.summary()["total_events"], 0)
+
+    def test_artifact_reader_marks_old_status_stale(self) -> None:
+        old_run = datetime(2026, 1, 1, 12, 0, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+        self._write_json(
+            self.artifact_dir / "forward_test_status.json",
+            {
+                "generated_at": old_run,
+                "generated_at_utc": old_run,
+                "last_run_at_utc": old_run,
+                "stale_after_minutes": 20,
+                "mode": "ACTIVE_LAB_SHADOW",
+            },
+        )
+        status = Phase7ForwardTestArtifactService(self.artifact_dir).status()
+
+        self.assertTrue(status["is_stale"])
+        self.assertEqual(status["stale_reason"], "Phase 7 runner has not refreshed within expected 15m cadence.")
+        self.assertGreater(status["age_seconds"], 20 * 60)
 
     def _run_single_outcome(self, setup: str, direction: str, future_candles: list[tuple[datetime, str, str, str, str]]) -> dict:
         self._insert_reference_candles("AAAUSDT")

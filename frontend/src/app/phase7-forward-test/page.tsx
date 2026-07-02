@@ -45,6 +45,7 @@ export default async function Phase7ForwardTestPage() {
   const latestEventTime = latestTime(allEvents.map((event) => event.observation_timestamp_utc || event.observation_timestamp));
   const latestResultTime = latestTime(allResults.map((result) => result.hit_time_utc || result.evaluated_at_utc));
   const lastRun = status?.last_run_at_utc || status?.generated_at_utc || summary?.generated_at_utc || status?.generated_at;
+  const isStale = Boolean(status?.is_stale);
 
   return (
     <div className="space-y-5">
@@ -60,11 +61,13 @@ export default async function Phase7ForwardTestPage() {
       ) : (
         <>
           <DecisionBanner
-            title={status?.mode === "ACTIVE_LAB_SHADOW" ? "Phase 7 Lab Shadow aktif" : status?.mode === "ACTIVE_APPROVED_SHADOW" ? "Phase 7 Approved Shadow aktif" : "Status Phase 7"}
-            status={status?.mode}
-            tone={status?.mode === "ERROR" ? "bad" : status?.mode === "ACTIVE_APPROVED_SHADOW" ? "good" : status?.mode === "ACTIVE_LAB_SHADOW" ? "info" : "warn"}
+            title={isStale ? "Phase 7 belum diperbarui sesuai jadwal" : status?.mode === "ACTIVE_LAB_SHADOW" ? "Phase 7 Lab Shadow aktif" : status?.mode === "ACTIVE_APPROVED_SHADOW" ? "Phase 7 Approved Shadow aktif" : "Status Phase 7"}
+            status={isStale ? "STALE" : status?.mode}
+            tone={isStale ? "warn" : status?.mode === "ERROR" ? "bad" : status?.mode === "ACTIVE_APPROVED_SHADOW" ? "good" : status?.mode === "ACTIVE_LAB_SHADOW" ? "info" : "warn"}
             description={
-              status?.mode === "ACTIVE_LAB_SHADOW"
+              isStale
+                ? "Phase 7 belum diperbarui sesuai jadwal. Data terakhir lebih dari 20 menit lalu."
+                : status?.mode === "ACTIVE_LAB_SHADOW"
                 ? "Belum ada approved signal, tapi near-miss candidates sedang dikumpulkan untuk forward-test learning. LAB_SHADOW bukan live signal."
                 : status?.reason || "Menunggu artifact Phase 7."
             }

@@ -4,7 +4,7 @@ set -euo pipefail
 cd /var/www/marketlab/backend
 source .venv/bin/activate
 
-SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-300}"
+SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-900}"
 
 while true; do
   echo "[marketlab-loop] cycle start $(date -u)"
@@ -22,6 +22,9 @@ while true; do
   python scripts/run_psychology_labeler_15m.py --cycles 1
   python scripts/run_signal_candidate_classifier_readonly_15m.py --cycles 1
   python scripts/run_outcome_tracker_15m.py --cycles 1
+  if ! python scripts/run_marketlab_research_cycle.py; then
+    echo "[marketlab-loop] research cycle failed $(date -u)"
+  fi
 
   echo "[marketlab-loop] cycle end $(date -u)"
   sleep "$SLEEP_SECONDS"

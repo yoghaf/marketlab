@@ -604,6 +604,10 @@ export type Phase7ForwardStatus = {
   generated_at_utc?: string | null;
   last_run_at_utc?: string | null;
   display_timezone_hint?: string | null;
+  stale_after_minutes?: number;
+  is_stale?: boolean;
+  stale_reason?: string | null;
+  age_seconds?: number;
   phase: string;
   mode: string;
   verdict: string;

@@ -30,6 +30,7 @@ ACTIVE_STATUSES = {"WAITING_OUTCOME", "UNKNOWN_FORWARD_DATA"}
 COMPLETED_STATUSES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE", "EXPIRED", "INVALIDATED", "CANNOT_EVALUATE"}
 APPROVED_SHADOW = "APPROVED_SHADOW"
 LAB_SHADOW = "LAB_SHADOW"
+STALE_AFTER_MINUTES = 20
 
 
 @dataclass(frozen=True)
@@ -369,6 +370,9 @@ class Phase7ForwardTestService:
             "generated_at_utc": generated_at,
             "last_run_at_utc": generated_at,
             "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+            "stale_after_minutes": STALE_AFTER_MINUTES,
+            "is_stale": False,
+            "stale_reason": None,
             "phase": "PHASE_7_SHADOW_FORWARD_TEST",
             "mode": mode,
             "verdict": verdict,
@@ -414,6 +418,9 @@ class Phase7ForwardTestService:
             "generated_at_utc": generated_at,
             "last_run_at_utc": generated_at,
             "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+            "stale_after_minutes": STALE_AFTER_MINUTES,
+            "is_stale": False,
+            "stale_reason": None,
             "phase": "PHASE_7_SHADOW_FORWARD_TEST",
             "mode": "ERROR",
             "verdict": "PHASE7_DUAL_LANE_ERROR",
@@ -506,7 +513,7 @@ class Phase7ForwardTestArtifactService:
         self.artifact_dir = artifact_dir
 
     def status(self) -> dict[str, Any]:
-        return self._read_or_default("forward_test_status.json", default_status())
+        return apply_staleness(self._read_or_default("forward_test_status.json", default_status()))
 
     def events(self) -> dict[str, Any]:
         return self._read_or_default("forward_test_events.json", {"generated_at": None, "generated_at_utc": None, "events": [], "read_only": True, "is_live_signal": False})
@@ -658,6 +665,9 @@ def default_status() -> dict[str, Any]:
         "generated_at_utc": None,
         "last_run_at_utc": None,
         "display_timezone_hint": "browser_local_or_Asia/Jakarta",
+        "stale_after_minutes": STALE_AFTER_MINUTES,
+        "is_stale": True,
+        "stale_reason": "Phase 7 artifact not found. Run run_phase7_forward_test.py.",
         "phase": "PHASE_7_SHADOW_FORWARD_TEST",
         "mode": "ARTIFACT_NOT_FOUND",
         "verdict": "PHASE7_DUAL_LANE_ERROR",
@@ -680,6 +690,31 @@ def read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(str(path))
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def apply_staleness(status: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    payload = dict(status)
+    payload.setdefault("stale_after_minutes", STALE_AFTER_MINUTES)
+    last_run = payload.get("last_run_at_utc") or payload.get("generated_at_utc") or payload.get("generated_at")
+    if not last_run:
+        payload["is_stale"] = True
+        payload["stale_reason"] = "Phase 7 runner has not produced a valid last_run_at_utc."
+        return payload
+    try:
+        age_seconds = ((now or utcnow()) - parse_dt(last_run)).total_seconds()
+    except ValueError:
+        payload["is_stale"] = True
+        payload["stale_reason"] = "Phase 7 runner last_run_at_utc is not parseable."
+        return payload
+    threshold_seconds = int(payload["stale_after_minutes"]) * 60
+    payload["age_seconds"] = max(0, int(age_seconds))
+    if age_seconds > threshold_seconds:
+        payload["is_stale"] = True
+        payload["stale_reason"] = "Phase 7 runner has not refreshed within expected 15m cadence."
+    else:
+        payload["is_stale"] = False
+        payload["stale_reason"] = None
+    return payload
 
 
 def parse_dt(value: Any) -> datetime:
