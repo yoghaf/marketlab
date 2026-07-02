@@ -449,10 +449,10 @@ class Phase7ForwardTestService:
                 f"""
                 SELECT open_time, close_time, open, high, low, close
                 FROM {table}
-                WHERE symbol = ? AND close_time = ? AND aggregation_status = 'AGG_READY'
+                WHERE symbol = ? AND close_time IN (?, ?) AND aggregation_status = 'AGG_READY'
                 LIMIT 1
                 """,
-                (symbol, db_time(close_time)),
+                (symbol, db_time(close_time), db_time_no_microseconds(close_time)),
             ).fetchone()
         return candle_from_row(row) if row else None
 
@@ -482,7 +482,7 @@ class Phase7ForwardTestService:
                 ORDER BY open_time ASC
                 LIMIT ?
                 """,
-                (symbol, db_time(observation), bars),
+                (symbol, db_time_no_microseconds(observation), bars),
             ).fetchall()
         return [candle_from_row(row) for row in rows]
 
@@ -699,7 +699,11 @@ def iso_utc(value: datetime) -> str:
 
 
 def db_time(value: datetime) -> str:
-    return value.replace(tzinfo=None).isoformat(sep=" ")
+    return value.replace(tzinfo=None).isoformat(sep=" ", timespec="microseconds")
+
+
+def db_time_no_microseconds(value: datetime) -> str:
+    return value.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds")
 
 
 def dec(value: Any) -> Decimal:
