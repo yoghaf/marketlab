@@ -78,11 +78,30 @@ const styles: Record<string, string> = {
   REJECT_FOR_PHASE7: "border-stale text-stale bg-red-50",
   HAS_CANDIDATES: "border-ready text-ready bg-emerald-50",
   NO_PHASE7_CANDIDATE_YET: "border-warmup text-warmup bg-amber-50",
+  WAITING_FOR_APPROVED_CANDIDATE: "border-warmup text-warmup bg-amber-50",
+  ACTIVE_FORWARD_TEST: "border-blue-700 text-blue-700 bg-blue-50",
+  FORWARD_TEST_COMPLETE: "border-ready text-ready bg-emerald-50",
+  INPUT_ARTIFACT_MISSING: "border-stale text-stale bg-red-50",
+  PHASE7_INFRA_READY_WAITING: "border-warmup text-warmup bg-amber-50",
+  PHASE7_ACTIVE_FORWARD_TEST: "border-blue-700 text-blue-700 bg-blue-50",
+  PHASE7_BLOCKED_BY_ERROR: "border-stale text-stale bg-red-50",
+  WAITING_OUTCOME: "border-blue-700 text-blue-700 bg-blue-50",
+  TP_HIT: "border-ready text-ready bg-emerald-50",
+  SL_HIT: "border-stale text-stale bg-red-50",
+  BOTH_HIT_SAME_CANDLE: "border-warmup text-warmup bg-amber-50",
+  EXPIRED: "border-line text-slate-700 bg-slate-50",
+  UNKNOWN_FORWARD_DATA: "border-warmup text-warmup bg-amber-50",
+  CANNOT_EVALUATE: "border-stale text-stale bg-red-50",
+  CANNOT_CREATE_EVENT_MISSING_REFERENCE: "border-stale text-stale bg-red-50",
   MISSING_ARTIFACT: "border-stale text-stale bg-red-50",
   SUCCESS: "border-ready text-ready bg-emerald-50",
   PARTIAL: "border-warmup text-warmup bg-amber-50",
   ERROR: "border-stale text-stale bg-red-50",
-  RUNNING: "border-blue-700 text-blue-700 bg-blue-50"
+  RUNNING: "border-blue-700 text-blue-700 bg-blue-50",
+  PASS: "border-ready text-ready bg-emerald-50",
+  FAIL: "border-stale text-stale bg-red-50",
+  INFO: "border-blue-700 text-blue-700 bg-blue-50",
+  UNAVAILABLE: "border-missing text-missing bg-gray-50"
 };
 
 export function StatusBadge({ value }: { value?: string | null }) {

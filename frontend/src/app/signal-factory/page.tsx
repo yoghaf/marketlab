@@ -8,6 +8,8 @@ import {
   SignalFactoryCandidatesResponse,
   SignalFactoryCandidate,
   SignalFactorySummaryResponse,
+  CandidateNumericEvidenceItem,
+  CandidateNumericEvidenceResponse,
   fetchJson,
   fmtNumber,
   fmtTime
@@ -41,15 +43,18 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
 
   let summary: SignalFactorySummaryResponse | null = null;
   let candidates: SignalFactoryCandidatesResponse | null = null;
+  let evidence: CandidateNumericEvidenceResponse | null = null;
   let error: string | null = null;
   try {
-    [summary, candidates] = await Promise.all([
+    [summary, candidates, evidence] = await Promise.all([
       fetchJson<SignalFactorySummaryResponse>("/api/signal-factory/v1/summary", { revalidateSeconds: 20 }),
-      fetchJson<SignalFactoryCandidatesResponse>(`/api/signal-factory/v1/candidates?${query.toString()}`, { revalidateSeconds: 20 })
+      fetchJson<SignalFactoryCandidatesResponse>(`/api/signal-factory/v1/candidates?${query.toString()}`, { revalidateSeconds: 20 }),
+      fetchJson<CandidateNumericEvidenceResponse>(evidencePath(filters), { revalidateSeconds: 20 }).catch(() => null)
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Signal Factory artifact belum tersedia";
   }
+  const evidenceByKey = new Map((evidence?.items || []).map((item) => [candidateKey(item), item]));
 
   return (
     <div className="space-y-5">
@@ -103,7 +108,13 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
                   </tr>
                 </thead>
                 <tbody>
-                  {candidates?.items.map((item) => <CandidateRow key={`${item.symbol}-${item.timeframe}-${item.window_end}-${item.setup_type}`} item={item} />)}
+                  {candidates?.items.map((item) => (
+                    <CandidateRow
+                      key={`${item.symbol}-${item.timeframe}-${item.window_end}-${item.setup_type}`}
+                      item={item}
+                      evidence={evidenceByKey.get(candidateKey(item))}
+                    />
+                  ))}
                   {!candidates?.items.length && (
                     <tr>
                       <td colSpan={10}><EmptyState title="Tidak ada kandidat" detail="Coba ubah filter atau refresh artifact Signal Factory." /></td>
@@ -119,7 +130,7 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
   );
 }
 
-function CandidateRow({ item }: { item: SignalFactoryCandidate }) {
+function CandidateRow({ item, evidence }: { item: SignalFactoryCandidate; evidence?: CandidateNumericEvidenceItem }) {
   return (
     <tr>
       <td className="font-semibold">{item.symbol}</td>
@@ -131,13 +142,14 @@ function CandidateRow({ item }: { item: SignalFactoryCandidate }) {
       <td className="min-w-72">
         <div>{compactReason(item.reason)}</div>
         <details className="mt-1 text-xs text-slate-500">
-          <summary className="cursor-pointer font-semibold">Show technical labels</summary>
-          <div className="mt-2 space-y-1">
+          <summary className="cursor-pointer font-semibold">Detail angka</summary>
+          <div className="mt-2 space-y-3">
             <div>Raw setup: {item.setup_type}</div>
             <div>Feature status: {item.feature_status}</div>
             <div>Conflict: {item.conflict_status || "NONE"}</div>
             <div>Anomaly: {(item.evidence.anomalies || []).join(", ") || "-"}</div>
             <div>Reason: {item.reason}</div>
+            {evidence ? <EvidenceDetail evidence={evidence} /> : <div>Belum tersedia di artifact numeric evidence.</div>}
           </div>
         </details>
       </td>
@@ -148,6 +160,71 @@ function CandidateRow({ item }: { item: SignalFactoryCandidate }) {
         <div className="mt-1 text-xs text-slate-500">{labelFor(item.atr_reference_status)}</div>
       </td>
     </tr>
+  );
+}
+
+function EvidenceDetail({ evidence }: { evidence: CandidateNumericEvidenceItem }) {
+  return (
+    <div className="space-y-3 rounded border border-line bg-field p-3">
+      <div className="grid gap-1">
+        <div className="font-semibold text-ink">Decision summary</div>
+        <div>Final status: {labelFor(evidence.final_decision)}</div>
+        <div>READ-ONLY / NOT ENTRY SIGNAL: {String(evidence.not_live_signal)}</div>
+        <div>Main blockers: {evidence.blocking_reasons.map(labelFor).join(", ") || "-"}</div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[720px] text-xs">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Required</th>
+              <th>Actual</th>
+              <th>Result</th>
+              <th>Explanation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evidence.numeric_evidence.map((row) => (
+              <tr key={`${row.category}-${row.metric}-${row.label}`}>
+                <td>{row.label}</td>
+                <td>{requiredText(row.required_operator, row.required_value, row.unit)}</td>
+                <td>{row.actual_detail || String(row.actual_value ?? "Belum tersedia di artifact")}</td>
+                <td><StatusBadge value={row.result} /></td>
+                <td>{row.explanation}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[560px] text-xs">
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Required</th>
+              <th>Actual</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evidence.phase7_checklist.map((row) => (
+              <tr key={row.gate}>
+                <td>{row.gate}</td>
+                <td>{row.required}</td>
+                <td>{String(row.actual ?? "Belum tersedia di artifact")}</td>
+                <td><StatusBadge value={row.result} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div className="font-semibold text-ink">What needs to improve</div>
+        <ul className="mt-1 list-disc space-y-1 pl-4">
+          {evidence.what_needs_to_improve.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+    </div>
   );
 }
 
@@ -169,4 +246,21 @@ function normalizeNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value || fallback);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function candidateKey(item: { symbol: string; timeframe: string }) {
+  return `${item.symbol}-${item.timeframe}`;
+}
+
+function evidencePath(filters: { timeframe?: string; status?: string; limit: number }) {
+  const query = new URLSearchParams();
+  if (filters.timeframe) query.set("timeframe", filters.timeframe);
+  if (filters.status) query.set("status", filters.status);
+  query.set("limit", String(Math.max(filters.limit, 200)));
+  return `/api/phase7/candidate-evidence?${query.toString()}`;
+}
+
+function requiredText(operator: string, value: string | number | boolean | string[] | null, unit: string) {
+  const rendered = Array.isArray(value) ? value.join(", ") : String(value ?? "-");
+  return `${operator} ${rendered} ${unit}`.trim();
 }

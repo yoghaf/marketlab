@@ -9,6 +9,8 @@ import {
   Phase6ReadinessResponse,
   Phase7CandidateDecisionRow,
   Phase7FullBlockerAuditResponse,
+  CandidateNumericEvidenceItem,
+  CandidateNumericEvidenceResponse,
   fetchJson,
   fmtNumber,
   fmtTime
@@ -19,13 +21,15 @@ export default async function Phase6AuditPage() {
   let readiness: Phase6ReadinessResponse | null = null;
   let decision: Phase6DecisionResponse | null = null;
   let blockerAudit: Phase7FullBlockerAuditResponse | null = null;
+  let evidence: CandidateNumericEvidenceResponse | null = null;
   let error: string | null = null;
 
   try {
-    [readiness, decision, blockerAudit] = await Promise.all([
+    [readiness, decision, blockerAudit, evidence] = await Promise.all([
       fetchJson<Phase6ReadinessResponse>("/api/phase6/readiness", { revalidateSeconds: 20 }),
       fetchJson<Phase6DecisionResponse>("/api/phase6/phase7-decision", { revalidateSeconds: 20 }),
-      fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null)
+      fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null),
+      fetchJson<CandidateNumericEvidenceResponse>("/api/phase7/candidate-evidence?limit=300").catch(() => null)
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Phase 6 artifact belum tersedia";
@@ -44,6 +48,7 @@ export default async function Phase6AuditPage() {
   const edgeOver010 = edgeBucket(blockerAudit, "0.10");
   const atr4h = blockerAudit?.atr_readiness["4h"]?.available_symbols ?? 0;
   const atr24h = blockerAudit?.atr_readiness["24h"]?.available_symbols ?? 0;
+  const evidenceByKey = new Map((evidence?.items || []).map((item) => [candidateKey(item), item]));
 
   return (
     <div className="space-y-5">
@@ -127,7 +132,13 @@ export default async function Phase6AuditPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {candidateRows.map((row, index) => <CandidateRow key={`${row.symbol}-${row.timeframe}-${row.setup_type}-${index}`} row={row} />)}
+                  {candidateRows.map((row, index) => (
+                    <CandidateRow
+                      key={`${row.symbol}-${row.timeframe}-${row.setup_type}-${index}`}
+                      row={row}
+                      evidence={evidenceByKey.get(candidateKey(row))}
+                    />
+                  ))}
                   {!candidateRows.length && (
                     <tr>
                       <td colSpan={8}><EmptyState title="Belum ada candidate decision" detail="Jalankan Phase 6 readiness audit script." /></td>
@@ -143,7 +154,7 @@ export default async function Phase6AuditPage() {
   );
 }
 
-function CandidateRow({ row }: { row: Phase7CandidateDecisionRow }) {
+function CandidateRow({ row, evidence }: { row: Phase7CandidateDecisionRow; evidence?: CandidateNumericEvidenceItem }) {
   return (
     <tr>
       <td className="font-semibold">{row.symbol}</td>
@@ -157,16 +168,82 @@ function CandidateRow({ row }: { row: Phase7CandidateDecisionRow }) {
         <div>{decisionText(row.phase7_verdict)}</div>
         <div className="mt-1 text-xs text-slate-500">{compactReason(row.reason)}</div>
         <details className="mt-1 text-xs text-slate-500">
-          <summary className="cursor-pointer font-semibold">Show technical labels</summary>
-          <div className="mt-2 space-y-1">
+          <summary className="cursor-pointer font-semibold">Detail angka</summary>
+          <div className="mt-2 space-y-3">
             <div>Raw setup: {row.mapped_setup_family || row.setup_type}</div>
             <div>Direction: {row.direction}</div>
             <div>ATR/RR: {row.recommended_atr_mult ?? "-"}x / {row.recommended_rr ?? "-"} / {row.recommended_arena_horizon || "-"}</div>
             <div>Setup R: {fmtR(row.setup_pessR)} Baseline R: {fmtR(row.baseline_pessR)}</div>
+            {evidence ? <EvidenceDetail evidence={evidence} /> : <div>Belum tersedia di artifact numeric evidence.</div>}
           </div>
         </details>
       </td>
     </tr>
+  );
+}
+
+function EvidenceDetail({ evidence }: { evidence: CandidateNumericEvidenceItem }) {
+  return (
+    <div className="space-y-3 rounded border border-line bg-field p-3">
+      <div>
+        <div className="font-semibold text-ink">Decision summary</div>
+        <div>Final status: {labelFor(evidence.final_decision)}</div>
+        <div>READ-ONLY / NOT ENTRY SIGNAL: {String(evidence.not_live_signal)}</div>
+        <div>Main blockers: {evidence.blocking_reasons.map(labelFor).join(", ") || "-"}</div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[720px] text-xs">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Required</th>
+              <th>Actual</th>
+              <th>Result</th>
+              <th>Explanation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evidence.numeric_evidence.map((item) => (
+              <tr key={`${item.category}-${item.metric}-${item.label}`}>
+                <td>{item.label}</td>
+                <td>{requiredText(item.required_operator, item.required_value, item.unit)}</td>
+                <td>{item.actual_detail || String(item.actual_value ?? "Belum tersedia di artifact")}</td>
+                <td><StatusBadge value={item.result} /></td>
+                <td>{item.explanation}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[560px] text-xs">
+          <thead>
+            <tr>
+              <th>Gate</th>
+              <th>Required</th>
+              <th>Actual</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evidence.phase7_checklist.map((item) => (
+              <tr key={item.gate}>
+                <td>{item.gate}</td>
+                <td>{item.required}</td>
+                <td>{String(item.actual ?? "Belum tersedia di artifact")}</td>
+                <td><StatusBadge value={item.result} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <div className="font-semibold text-ink">What needs to improve</div>
+        <ul className="mt-1 list-disc space-y-1 pl-4">
+          {evidence.what_needs_to_improve.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+    </div>
   );
 }
 
@@ -192,4 +269,13 @@ function edgeBucket(data: Phase7FullBlockerAuditResponse | null, needle: string)
   const buckets = data?.edge.edge_buckets || {};
   const found = Object.entries(buckets).find(([key]) => key.includes(needle));
   return found?.[1] ?? 0;
+}
+
+function candidateKey(item: { symbol: string; timeframe: string }) {
+  return `${item.symbol}-${item.timeframe}`;
+}
+
+function requiredText(operator: string, value: string | number | boolean | string[] | null, unit: string) {
+  const rendered = Array.isArray(value) ? value.join(", ") : String(value ?? "-");
+  return `${operator} ${rendered} ${unit}`.trim();
 }

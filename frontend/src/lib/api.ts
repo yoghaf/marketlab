@@ -531,3 +531,165 @@ export type Phase7FullBlockerAuditResponse = {
     unlock_verdict?: string;
   };
 };
+
+export type CandidateNumericEvidenceMetric = {
+  category: string;
+  metric: string;
+  label: string;
+  required_operator: string;
+  required_value: string | number | boolean | string[] | null;
+  actual_value: string | number | boolean | null;
+  unit: string;
+  actual_detail: string;
+  result: "PASS" | "FAIL" | "UNAVAILABLE" | "INFO";
+  explanation: string;
+  source: string;
+};
+
+export type CandidatePhase7ChecklistItem = {
+  gate: string;
+  required: string;
+  actual: string | number | boolean | null;
+  result: "PASS" | "FAIL";
+};
+
+export type CandidateNumericEvidenceItem = {
+  symbol: string;
+  timeframe: string;
+  window_start?: string | null;
+  window_end?: string | null;
+  setup: string;
+  mapped_setup_family?: string | null;
+  candidate_status: string;
+  direction: string;
+  confidence: string;
+  final_decision: string;
+  is_phase7_ready: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  numeric_evidence: CandidateNumericEvidenceMetric[];
+  phase7_checklist: CandidatePhase7ChecklistItem[];
+  blocking_reasons: string[];
+  what_needs_to_improve: string[];
+  missing_evidence_fields: string[];
+  label_explanation: {
+    explanation: string[];
+    numeric_context: Record<string, string | number | boolean | null>;
+  };
+};
+
+export type CandidateNumericEvidenceResponse = {
+  generated_at?: string;
+  count: number;
+  total_matching: number;
+  aggregate: {
+    total_candidates?: number;
+    signal_candidate_count?: number;
+    numeric_evidence_complete_count?: number;
+    numeric_evidence_incomplete_count?: number;
+    top_failure_reasons?: Record<string, number>;
+    missing_evidence_fields?: Record<string, number>;
+    phase7_checklist_available?: boolean;
+    production_approved?: number;
+    phase7_decision?: string;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  items: CandidateNumericEvidenceItem[];
+};
+
+export type Phase7ForwardStatus = {
+  generated_at?: string | null;
+  phase: string;
+  mode: string;
+  verdict: string;
+  approved_candidate_count: number;
+  active_event_count: number;
+  completed_event_count: number;
+  waiting_event_count: number;
+  created_event_count?: number;
+  error_count: number;
+  reason: string;
+  is_live_signal: boolean;
+  is_execution_enabled: boolean;
+  next_action: string;
+};
+
+export type Phase7ForwardEvent = {
+  event_id: string;
+  symbol: string;
+  timeframe: string;
+  setup: string;
+  direction: "LONG" | "SHORT" | "MIXED";
+  confidence?: string | null;
+  candidate_timestamp?: string | null;
+  observation_timestamp?: string | null;
+  status: string;
+  entry_reference_price?: number | null;
+  entry_reference_time?: string | null;
+  atr_reference_timeframe?: string | null;
+  atr_reference_value?: number | null;
+  atr_mult?: number | null;
+  rr_target?: number | null;
+  risk_reference_value?: number | null;
+  stop_reference_price?: number | null;
+  take_profit_reference_price?: number | null;
+  max_horizon_bars?: number | null;
+  max_horizon_minutes?: number | null;
+  expiry_time?: string | null;
+  phase6_score?: number | null;
+  edge_vs_baseline?: number | null;
+  arena_verdict?: string | null;
+  cannot_create_reason?: string | null;
+  is_live_signal: boolean;
+  is_execution: boolean;
+  disclaimer: string;
+};
+
+export type Phase7ForwardEventsResponse = {
+  generated_at?: string | null;
+  events: Phase7ForwardEvent[];
+};
+
+export type Phase7ForwardResult = {
+  event_id: string;
+  symbol: string;
+  setup?: string | null;
+  direction?: string | null;
+  result_status: string;
+  hit_time?: string | null;
+  bars_to_result?: number | null;
+  minutes_to_result?: number | null;
+  realized_R?: number | null;
+  max_favorable_excursion_R?: number | null;
+  max_adverse_excursion_R?: number | null;
+  close_return_R_at_expiry?: number | null;
+  ambiguous_same_candle: boolean;
+  reason?: string | null;
+  is_live_signal: boolean;
+  is_execution: boolean;
+};
+
+export type Phase7ForwardResultsResponse = {
+  generated_at?: string | null;
+  results: Phase7ForwardResult[];
+};
+
+export type Phase7ForwardSummary = {
+  generated_at?: string | null;
+  total_events: number;
+  active_events: number;
+  completed_events: number;
+  tp_hit?: number;
+  sl_hit?: number;
+  expired?: number;
+  unknown_forward_data?: number;
+  ambiguous?: number;
+  win_rate?: number | null;
+  average_realized_R?: number | null;
+  median_realized_R?: number | null;
+  verdict: string;
+  is_live_signal?: boolean;
+  is_execution_enabled?: boolean;
+};

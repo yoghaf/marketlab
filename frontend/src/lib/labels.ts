@@ -15,6 +15,21 @@ const labels: Record<string, string> = {
   WATCHLIST_FOR_MORE_DATA: "Pantau dulu",
   PHASE7_READY: "Siap diuji Phase 7",
   REJECT_FOR_PHASE7: "Ditolak untuk Phase 7",
+  WAITING_FOR_APPROVED_CANDIDATE: "Menunggu kandidat approved",
+  ACTIVE_FORWARD_TEST: "Forward-test aktif",
+  FORWARD_TEST_COMPLETE: "Forward-test selesai",
+  INPUT_ARTIFACT_MISSING: "Artifact belum lengkap",
+  PHASE7_INFRA_READY_WAITING: "Infra siap, menunggu",
+  PHASE7_ACTIVE_FORWARD_TEST: "Shadow test aktif",
+  PHASE7_BLOCKED_BY_ERROR: "Phase 7 blocked",
+  WAITING_OUTCOME: "Menunggu outcome",
+  TP_HIT: "Target referensi tersentuh",
+  SL_HIT: "Stop referensi tersentuh",
+  BOTH_HIT_SAME_CANDLE: "Target dan stop satu candle",
+  EXPIRED: "Expired",
+  UNKNOWN_FORWARD_DATA: "Data forward belum cukup",
+  CANNOT_EVALUATE: "Tidak bisa dievaluasi",
+  CANNOT_CREATE_EVENT_MISSING_REFERENCE: "Referensi belum lengkap",
   NOISY: "Masih noise",
   MONITOR_MORE: "Pantau lagi",
   PROMISING_FOR_FORWARD_TEST: "Menarik, belum final",
@@ -71,7 +86,11 @@ const labels: Record<string, string> = {
   ACTIVE: "Aktif",
   NOT_ACTIVE: "Tidak aktif",
   FULL_ACTIVE: "Full active",
-  LIGHT_WATCH: "Light watch"
+  LIGHT_WATCH: "Light watch",
+  PASS: "Pass",
+  FAIL: "Fail",
+  INFO: "Info",
+  UNAVAILABLE: "Belum tersedia"
 };
 
 export function labelFor(value?: string | null): string {

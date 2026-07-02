@@ -35,9 +35,11 @@ from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mS
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
 from app.services.paper_signal_evaluator import PaperSignalEvaluatorService
 from app.services.phase6_readiness_audit import DEFAULT_PHASE6_DIR, Phase6ArtifactService
+from app.services.phase7_forward_test import Phase7ForwardTestArtifactService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
 from app.services.anomaly_signal_factory import SignalFactoryArtifactService
+from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_arena import StrategyArenaArtifactService
@@ -438,6 +440,46 @@ def phase7_full_blocker_audit():
         return json_safe(json.loads(path.read_text()))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Phase 7 full blocker audit artifact not found. Run full blocker audit script first.") from exc
+
+
+@router.get("/api/phase7/candidate-evidence")
+def phase7_candidate_evidence(
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+):
+    try:
+        return json_safe(
+            CandidateNumericEvidenceArtifactService().read(
+                symbol=symbol,
+                timeframe=timeframe,
+                status=status,
+                limit=limit,
+            )
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Candidate numeric evidence artifact not found. Run candidate numeric evidence audit script first.") from exc
+
+
+@router.get("/api/phase7/status")
+def phase7_forward_status():
+    return json_safe(Phase7ForwardTestArtifactService().status())
+
+
+@router.get("/api/phase7/events")
+def phase7_forward_events():
+    return json_safe(Phase7ForwardTestArtifactService().events())
+
+
+@router.get("/api/phase7/results")
+def phase7_forward_results():
+    return json_safe(Phase7ForwardTestArtifactService().results())
+
+
+@router.get("/api/phase7/summary")
+def phase7_forward_summary():
+    return json_safe(Phase7ForwardTestArtifactService().summary())
 
 
 @router.get("/api/rich-futures/status")
