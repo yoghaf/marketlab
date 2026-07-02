@@ -479,6 +479,8 @@ def evaluate_rr_path(
     max_adverse_r = (min_low - entry) / risk if direction == "LONG" else (entry - max_high) / risk
     outcome = "NEITHER"
     realized_r = (candles[-1].close - entry) / risk if direction == "LONG" else (entry - candles[-1].close) / risk
+    result_time = candles[-1].close_time
+    result_price = candles[-1].close
     for candle in candles:
         if direction == "LONG":
             tp_hit = candle.high >= target
@@ -489,29 +491,46 @@ def evaluate_rr_path(
         if tp_hit and sl_hit:
             outcome = "BOTH_SAME_CANDLE"
             realized_r = 0.0
+            result_time = candle.close_time
+            result_price = candle.close
             break
         if tp_hit:
             outcome = "TP_FIRST"
             realized_r = rr
+            result_time = candle.close_time
+            result_price = target
             break
         if sl_hit:
             outcome = "SL_FIRST"
             realized_r = -1.0
+            result_time = candle.close_time
+            result_price = stop
             break
     return {
         "symbol": row.symbol,
+        "setup_window_open_time": row.window_open_time.isoformat(),
         "window_close_time": row.window_close_time.isoformat(),
         "direction": direction,
-        "entry_reference": entry,
+        "entry_price": entry,
+        "entry_reference": "candidate_15m_close",
+        "stop_loss_reference": stop,
+        "take_profit_reference": target,
         "atr_1h": row.atr_1h,
         "atr_1h_pct": row.atr_1h_pct,
         "risk_atr_mult": risk_atr_mult,
+        "risk_distance": risk,
         "rr": rr,
         "horizon_bars": horizon_bars,
+        "horizon_minutes": horizon_bars * 15,
         "outcome": outcome,
+        "result_time": result_time.isoformat(),
+        "result_price_reference": result_price,
+        "future_close_at_horizon": candles[-1].close,
         "realized_r": realized_r,
         "max_favorable_r": max_favorable_r,
         "max_adverse_r": max_adverse_r,
+        "max_high_during_horizon": max_high,
+        "min_low_during_horizon": min_low,
         "price_return_pct": row.price_return_pct,
         "volume_spike_ratio_20": row.volume_spike_ratio_20,
         "range_spike_ratio_20": row.range_spike_ratio_20,
@@ -522,6 +541,8 @@ def evaluate_rr_path(
         "is_fresh_impulse": row.is_fresh_impulse,
         "spot_support_status": row.spot_support_status,
         "price_return_pct_1h": row.price_return_pct_1h,
+        "universe_rank": row.universe_rank,
+        "collection_tier": row.collection_tier,
         "not_live_signal": True,
         "not_execution_instruction": True,
     }
@@ -697,6 +718,35 @@ def render_markdown(payload: dict[str, Any]) -> str:
             "- MID v0 is defined as continuation: 1h direction supports the 15m move, moderate volume/range participation, and limited ATR extension.",
             "- These v0 thresholds are intentionally diagnostic seeds; the next research step should optimize normalized features only after this layer is measured.",
             "",
+            "## Token-Level Paper Event Fields",
+            "",
+            "`token_results.json` contains concrete paper events with `symbol`, `setup_window_open_time`, `window_close_time`, `direction`, `entry_price`, `stop_loss_reference`, `take_profit_reference`, `atr_1h`, `risk_distance`, `rr`, `outcome`, `result_time`, `result_price_reference`, `realized_r`, `max_favorable_r`, and `max_adverse_r`.",
+            "",
+            "## Sample Paper Events",
+            "",
+        ]
+    )
+    for setup, rows in payload["token_results"].items():
+        lines.append(f"### {setup}")
+        if not rows:
+            lines.extend(["", "No token-level events.", ""])
+            continue
+        lines.extend(
+            [
+                "",
+                "| symbol | time | dir | entry | SL ref | TP ref | outcome | R | result time |",
+                "|---|---|---|---:|---:|---:|---|---:|---|",
+            ]
+        )
+        for row in rows[:20]:
+            lines.append(
+                f"| {row['symbol']} | {row['window_close_time']} | {row['direction']} | "
+                f"{fmt(row['entry_price'])} | {fmt(row['stop_loss_reference'])} | {fmt(row['take_profit_reference'])} | "
+                f"{row['outcome']} | {fmt(row['realized_r'])} | {row['result_time']} |"
+            )
+        lines.append("")
+    lines.extend(
+        [
             "## Guardrails",
             "",
             "- No production rule changed.",

@@ -102,6 +102,10 @@ def test_evaluate_rr_path_long_tp_first() -> None:
     assert result is not None
     assert result["outcome"] == "TP_FIRST"
     assert result["realized_r"] == 1.5
+    assert result["entry_price"] == 100.0
+    assert result["stop_loss_reference"] == 98.0
+    assert result["take_profit_reference"] == 103.0
+    assert result["result_price_reference"] == 103.0
 
 
 def test_evaluate_rr_path_short_sl_first() -> None:
@@ -119,3 +123,7 @@ def test_evaluate_rr_path_short_sl_first() -> None:
     assert result is not None
     assert result["outcome"] == "SL_FIRST"
     assert result["realized_r"] == -1.0
+    assert result["entry_price"] == 100.0
+    assert result["stop_loss_reference"] == 102.0
+    assert result["take_profit_reference"] == 97.0
+    assert result["result_price_reference"] == 102.0
