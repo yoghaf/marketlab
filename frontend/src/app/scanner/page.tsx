@@ -6,12 +6,12 @@ import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtTime } from "@/lib/api";
+import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
 
 type ScannerSearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-const tierOptions = ["WATCHLIST_CONTEXT", "RADAR_ONLY", "RISK_CONTEXT", "BASELINE_CONTEXT", "BLOCKED"];
+const tierOptions = ["SIGNAL_CANDIDATE", "WATCHLIST_CONTEXT", "RADAR_ONLY", "RISK_CONTEXT", "BASELINE_CONTEXT", "BLOCKED"];
 const candidateTypeOptions = [
   "MID_SHORT_CONTEXT_READONLY",
   "MID_LONG_CONTEXT_READONLY",
@@ -48,8 +48,8 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
     <div className="space-y-5">
       <PageHeader
         title="Radar Market"
-        badge="READ-ONLY - bukan sinyal entry live"
-        subtitle="Pantauan market read-only. Tidak ada sinyal entry live di halaman ini."
+        badge="READ-ONLY - bukan auto execution"
+        subtitle="Signal Candidate adalah final signal read-only untuk scanner/paper-test. Tidak ada order otomatis."
       />
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar Market</Link>
@@ -57,10 +57,10 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       </div>
 
       <section className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Signal Candidate" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone="good" />
         <MetricCard label="Watchlist" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Perlu dicek, bukan entry" tone="info" />
         <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Ada risiko/campuran" tone="warn" />
         <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
-        <MetricCard label="Blocked" value={tierCounts.BLOCKED || 0} helper="Data belum cukup" tone={tierCounts.BLOCKED ? "warn" : "neutral"} />
       </section>
 
       <FilterBar>
@@ -97,6 +97,8 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                   <th>Setup</th>
                   <th>Arah</th>
                   <th>Confidence</th>
+                  <th>Entry/Risk</th>
+                  <th>Quality</th>
                   <th>Alasan</th>
                   <th>Update</th>
                   <th>Detail</th>
@@ -106,7 +108,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 {visibleItems.map((item) => <ScannerRow key={`${item.symbol}-${item.window_open_time}-${item.scanner_tier}`} item={item} />)}
                 {!visibleItems.length && (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={10}>
                       <EmptyState title="Belum ada radar yang lolos" detail="Data 4h/24h belum cukup dan edge masih lemah." />
                     </td>
                   </tr>
@@ -131,6 +133,28 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
       <td className="max-w-56">{labelFor(item.candidate_type)}</td>
       <td><StatusBadge value={item.candidate_direction} /></td>
       <td>{labelFor(item.confidence)}</td>
+      <td className="min-w-56">
+        {item.signal_status === "SIGNAL_CANDIDATE" ? (
+          <div className="space-y-1 text-xs">
+            <div className="font-semibold">Futures: {fmtNumber(item.entry_price)}</div>
+            <div>SL: {fmtNumber(item.stop_loss_reference)}</div>
+            <div>TP: {fmtNumber(item.take_profit_reference)}</div>
+            <div>RR: {fmtNumber(item.rr)}R / Timeout: {item.timeout_minutes ?? "-"}m</div>
+          </div>
+        ) : (
+          <span className="text-xs text-slate-400">Belum final</span>
+        )}
+      </td>
+      <td>
+        {item.quality_score !== null && item.quality_score !== undefined ? (
+          <div className="space-y-1 text-xs">
+            <StatusBadge value={item.quality_bucket || "QUALITY"} />
+            <div className="font-semibold">{item.quality_score}/10</div>
+          </div>
+        ) : (
+          <span className="text-xs text-slate-400">-</span>
+        )}
+      </td>
       <td className="min-w-72">
         <div>{compactReason(userReason(item))}</div>
         {item.using_fallback_usable_row && (
@@ -147,6 +171,12 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
             <div>Raw type: {item.candidate_type}</div>
             <div>Raw status: {item.classifier_status}</div>
             <div>Raw direction: {item.candidate_direction}</div>
+            <div>Signal status: {item.signal_status || "-"}</div>
+            <div>Signal reason: {item.signal_reason || "-"}</div>
+            <div>Entry source: {item.entry_price_source || "-"}</div>
+            <div>ATR ref: {item.atr_reference_timeframe || "-"} {fmtNumber(item.atr_reference_value)}</div>
+            <div>Position lock: {item.position_lock_mode || "-"}</div>
+            <div>Not auto execution: {String(item.not_execution_instruction ?? true)}</div>
             <div>Visibility: {item.scanner_visibility_reason}</div>
             <div>Warning: {item.warning_reason || "No scanner warning"}</div>
             <div>Latest actual: {item.latest_actual_status || "-"} at {fmtTime(item.latest_actual_observation_timestamp)}</div>

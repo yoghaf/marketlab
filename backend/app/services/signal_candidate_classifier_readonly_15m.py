@@ -12,6 +12,7 @@ from app.models.market import (
     MarketSignalCandidateReadonly15m,
     MarketlabActiveUniverse,
 )
+from app.services.early_signal_quality import evaluate_early_signal_quality
 from app.services.utils import json_safe, utcnow
 
 CLASSIFIER_STATUSES = ("CLASSIFIER_READY", "CLASSIFIER_PARTIAL", "CLASSIFIER_BLOCKED")
@@ -186,6 +187,24 @@ class SignalCandidateClassifierReadonly15mService:
         one_hour_strong_bearish = _lt(context.price_return_pct_1h, -self.config.strong_context_threshold)
         one_hour_strong_bullish = _gt(context.price_return_pct_1h, self.config.strong_context_threshold)
         spot_supporting = context.spot_support_status_15m == "SPOT_SUPPORTING"
+        early_long_quality = evaluate_early_signal_quality(
+            price_return_pct=context.price_return_pct_15m,
+            close_position=context.close_position_15m,
+            taker_buy_ratio=context.kline_taker_buy_ratio_15m,
+            oi_change_pct=context.oi_change_pct_15m,
+            spot_support_status=context.spot_support_status_15m,
+            one_hour_return_pct=context.price_return_pct_1h,
+            direction_hint="LONG",
+        )
+        early_short_quality = evaluate_early_signal_quality(
+            price_return_pct=context.price_return_pct_15m,
+            close_position=context.close_position_15m,
+            taker_buy_ratio=context.kline_taker_buy_ratio_15m,
+            oi_change_pct=context.oi_change_pct_15m,
+            spot_support_status=context.spot_support_status_15m,
+            one_hour_return_pct=context.price_return_pct_1h,
+            direction_hint="SHORT",
+        )
 
         if labels & TRAP_LABELS:
             return "TRAP_RISK_CONTEXT_READONLY", "MIXED_CONTEXT", "trap risk label is present; kept as context only"
@@ -208,16 +227,30 @@ class SignalCandidateClassifierReadonly15mService:
             and bullish
             and (_positive(context.oi_change_pct_15m) or spot_supporting)
             and not one_hour_strong_bearish
+            and early_long_quality.is_early_long
+            and early_long_quality.quality_score >= 4
         ):
-            return "EARLY_LONG_CANDIDATE_READONLY", "BULLISH_CONTEXT", "15m bullish pressure with OI or spot support"
+            return (
+                "EARLY_LONG_CANDIDATE_READONLY",
+                "BULLISH_CONTEXT",
+                f"normalized early long quality {early_long_quality.quality_score}/10: "
+                + "; ".join(early_long_quality.reasons),
+            )
 
         if (
             labels & BEARISH_LABELS
             and bearish
             and (_positive(context.oi_change_pct_15m) or "LONG_TRAP_RISK" in labels)
             and not one_hour_strong_bullish
+            and early_short_quality.is_early_short
+            and early_short_quality.quality_score >= 4
         ):
-            return "EARLY_SHORT_CANDIDATE_READONLY", "BEARISH_CONTEXT", "15m bearish pressure with OI or trap context"
+            return (
+                "EARLY_SHORT_CANDIDATE_READONLY",
+                "BEARISH_CONTEXT",
+                f"normalized early short quality {early_short_quality.quality_score}/10: "
+                + "; ".join(early_short_quality.reasons),
+            )
 
         return "NO_SIGNAL_CONTEXT", "MIXED_CONTEXT", "context evidence is mixed or below readonly classifier thresholds"
 
@@ -309,6 +342,27 @@ class SignalCandidateClassifierReadonly15mService:
         labels: set[str],
     ) -> dict[str, Any]:
         label_evidence = label.evidence or {}
+        early_long_quality = None
+        early_short_quality = None
+        if context is not None:
+            early_long_quality = evaluate_early_signal_quality(
+                price_return_pct=context.price_return_pct_15m,
+                close_position=context.close_position_15m,
+                taker_buy_ratio=context.kline_taker_buy_ratio_15m,
+                oi_change_pct=context.oi_change_pct_15m,
+                spot_support_status=context.spot_support_status_15m,
+                one_hour_return_pct=context.price_return_pct_1h,
+                direction_hint="LONG",
+            )
+            early_short_quality = evaluate_early_signal_quality(
+                price_return_pct=context.price_return_pct_15m,
+                close_position=context.close_position_15m,
+                taker_buy_ratio=context.kline_taker_buy_ratio_15m,
+                oi_change_pct=context.oi_change_pct_15m,
+                spot_support_status=context.spot_support_status_15m,
+                one_hour_return_pct=context.price_return_pct_1h,
+                direction_hint="SHORT",
+            )
         return {
             "source": "market_psychology_labels_15m + market_feature_context_15m_1h",
             "not_entry_signal": True,
@@ -347,6 +401,16 @@ class SignalCandidateClassifierReadonly15mService:
             "spot_missing_flag_15m": _context_or_evidence(context, label_evidence, "spot_missing_flag_15m"),
             "futures_led_score_15m": _context_or_evidence(context, label_evidence, "futures_led_score_15m"),
             "spot_support_score_15m": _context_or_evidence(context, label_evidence, "spot_support_score_15m"),
+            "early_signal_logic_version": early_long_quality.logic_version if early_long_quality else None,
+            "early_long_quality_score": early_long_quality.quality_score if early_long_quality else None,
+            "early_long_quality_bucket": early_long_quality.quality_bucket if early_long_quality else None,
+            "early_long_quality_reasons": early_long_quality.reasons if early_long_quality else [],
+            "early_short_quality_score": early_short_quality.quality_score if early_short_quality else None,
+            "early_short_quality_bucket": early_short_quality.quality_bucket if early_short_quality else None,
+            "early_short_quality_reasons": early_short_quality.reasons if early_short_quality else [],
+            "entry_market": "futures",
+            "entry_price_source": "futures_klines_15m.close",
+            "spot_usage": "filter/evidence_only",
         }
 
     def _psychology_rows(self, symbol: str, limit_windows: int | None) -> list[MarketPsychologyLabel15m]:

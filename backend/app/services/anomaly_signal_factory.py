@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from app.services.early_signal_quality import evaluate_early_signal_quality
 from app.services.multitimeframe_features import DEFAULT_DB_PATH, REPO_ROOT, MultiTimeframeFeatureService, json_safe
 
 
@@ -84,8 +85,53 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         futures_led = "FUTURES_LED" in anomalies
         close_high = "CLOSE_NEAR_HIGH" in anomalies
         close_low = "CLOSE_NEAR_LOW" in anomalies
+        atr_extension = _atr_extension(feature)
+        early_long_quality = evaluate_early_signal_quality(
+            price_return_pct=feature.get("price_return"),
+            close_position=feature.get("close_position_in_range"),
+            taker_buy_ratio=None,
+            oi_change_pct=feature.get("oi_change_pct"),
+            volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
+            range_ratio_vs_baseline=None,
+            atr_extension=atr_extension,
+            spot_context=feature.get("spot_context"),
+            one_hour_return_pct=None,
+            funding_rate=feature.get("funding_rate"),
+            direction_hint="LONG",
+        )
+        early_short_quality = evaluate_early_signal_quality(
+            price_return_pct=feature.get("price_return"),
+            close_position=feature.get("close_position_in_range"),
+            taker_buy_ratio=None,
+            oi_change_pct=feature.get("oi_change_pct"),
+            volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
+            range_ratio_vs_baseline=None,
+            atr_extension=atr_extension,
+            spot_context=feature.get("spot_context"),
+            one_hour_return_pct=None,
+            funding_rate=feature.get("funding_rate"),
+            direction_hint="SHORT",
+        )
 
-        if down and oi_expansion:
+        if timeframe == "15m" and early_short_quality.is_early_short and early_short_quality.quality_score >= 6:
+            setup_type = "EARLY_SHORT"
+            direction = "BEARISH_CONTEXT"
+            candidate_status = "SIGNAL_CANDIDATE"
+            confidence = "MEDIUM"
+            reason = (
+                f"Normalized early short quality {early_short_quality.quality_score}/10 "
+                f"({early_short_quality.quality_bucket})"
+            )
+        elif timeframe == "15m" and early_long_quality.is_early_long and early_long_quality.quality_score >= 6:
+            setup_type = "EARLY_LONG"
+            direction = "BULLISH_CONTEXT"
+            candidate_status = "SIGNAL_CANDIDATE"
+            confidence = "MEDIUM"
+            reason = (
+                f"Normalized early long quality {early_long_quality.quality_score}/10 "
+                f"({early_long_quality.quality_bucket})"
+            )
+        elif down and oi_expansion:
             setup_type = "MID_SHORT"
             direction = "BEARISH_CONTEXT"
             candidate_status = "SIGNAL_CANDIDATE"
@@ -102,13 +148,19 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
             direction = "BEARISH_CONTEXT"
             candidate_status = "RADAR_ONLY"
             confidence = "LOW"
-            reason = "Early bearish impulse without full expansion confirmation"
+            reason = (
+                f"Normalized early short quality {early_short_quality.quality_score}/10 "
+                f"({early_short_quality.quality_bucket})"
+            )
         elif up and close_high:
             setup_type = "EARLY_LONG"
             direction = "BULLISH_CONTEXT"
             candidate_status = "RADAR_ONLY"
             confidence = "LOW"
-            reason = "Early bullish impulse without full expansion confirmation"
+            reason = (
+                f"Normalized early long quality {early_long_quality.quality_score}/10 "
+                f"({early_long_quality.quality_bucket})"
+            )
         elif up and oi_contraction:
             setup_type = "SQUEEZE"
             direction = "MIXED_CONTEXT"
@@ -138,7 +190,30 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         "spot_led_flag": feature.get("spot_led_flag"),
         "feature_status": feature_status,
         "status_reasons": feature.get("status_reasons") or [],
+        "entry_market": "futures",
+        "entry_price_source": "futures_klines_15m.close",
+        "spot_usage": "filter/evidence_only",
     }
+    if setup_type == "EARLY_LONG":
+        evidence.update(
+            {
+                "early_signal_logic_version": early_long_quality.logic_version,
+                "early_quality_score": early_long_quality.quality_score,
+                "early_quality_bucket": early_long_quality.quality_bucket,
+                "early_quality_reasons": early_long_quality.reasons,
+                "atr_extension": atr_extension,
+            }
+        )
+    if setup_type == "EARLY_SHORT":
+        evidence.update(
+            {
+                "early_signal_logic_version": early_short_quality.logic_version,
+                "early_quality_score": early_short_quality.quality_score,
+                "early_quality_bucket": early_short_quality.quality_bucket,
+                "early_quality_reasons": early_short_quality.reasons,
+                "atr_extension": atr_extension,
+            }
+        )
     return {
         "symbol": feature["symbol"],
         "timeframe": timeframe,
@@ -335,3 +410,11 @@ def _decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
+
+
+def _atr_extension(feature: dict[str, Any]) -> Decimal | None:
+    price_return_abs = _decimal(feature.get("price_return_abs"))
+    atr_pct = _decimal(feature.get("atr_pct"))
+    if price_return_abs is None or atr_pct is None or atr_pct == 0:
+        return None
+    return price_return_abs / atr_pct

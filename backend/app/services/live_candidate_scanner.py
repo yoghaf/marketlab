@@ -6,9 +6,10 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
-from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
+from app.models.market import FuturesKline15m, FuturesKline1h, MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
 from app.services.utils import json_safe
 
+SIGNAL_CANDIDATE_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READONLY"}
 WATCHLIST_CONTEXT_TYPES = {"MID_SHORT_CONTEXT_READONLY", "MID_LONG_CONTEXT_READONLY"}
 RADAR_ONLY_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READONLY"}
 RISK_CONTEXT_TYPES = {"SQUEEZE_RISK_CONTEXT_READONLY", "TRAP_RISK_CONTEXT_READONLY"}
@@ -194,6 +195,13 @@ class LiveCandidateScannerService:
     ) -> dict[str, Any]:
         tier = scanner_tier_for(candidate.candidate_type, candidate.classifier_status)
         outcome = self._matching_outcome(candidate)
+        signal_plan = self._signal_candidate_plan(candidate)
+        if signal_plan["signal_status"] == "SIGNAL_CANDIDATE":
+            tier = ScannerTier(
+                tier="SIGNAL_CANDIDATE",
+                reason="final read-only signal candidate with futures entry reference and risk references",
+                warning="read-only signal candidate; not an execution instruction",
+            )
         is_active = bool(universe and universe.is_active)
         inactive_warning = None if is_active else "Symbol is not in active universe"
         warning_reason = tier.warning or "No scanner warning"
@@ -233,11 +241,154 @@ class LiveCandidateScannerService:
                 "tier_reason": tier.reason,
                 "warning_reason": warning_reason,
                 "evidence_summary": _evidence_summary(candidate.evidence or {}),
+                "signal_status": signal_plan["signal_status"],
+                "signal_reason": signal_plan["signal_reason"],
+                "entry_market": signal_plan["entry_market"],
+                "entry_price_source": signal_plan["entry_price_source"],
+                "entry_price": signal_plan["entry_price"],
+                "stop_loss_reference": signal_plan["stop_loss_reference"],
+                "take_profit_reference": signal_plan["take_profit_reference"],
+                "rr": signal_plan["rr"],
+                "timeout_minutes": signal_plan["timeout_minutes"],
+                "atr_reference_timeframe": signal_plan["atr_reference_timeframe"],
+                "atr_reference_value": signal_plan["atr_reference_value"],
+                "quality_score": signal_plan["quality_score"],
+                "quality_bucket": signal_plan["quality_bucket"],
+                "quality_reasons": signal_plan["quality_reasons"],
+                "position_lock_mode": "LOCK_BY_SYMBOL",
+                "not_execution_instruction": True,
                 "latest_outcome_status": outcome.outcome_status if outcome else None,
                 "latest_outcome_update": outcome.updated_at if outcome else None,
                 "not_entry_signal": True,
             }
         )
+
+    def _signal_candidate_plan(self, candidate: MarketSignalCandidateReadonly15m) -> dict[str, Any]:
+        empty = {
+            "signal_status": "RADAR_OR_CONTEXT_ONLY",
+            "signal_reason": "row is not final signal candidate",
+            "entry_market": "futures",
+            "entry_price_source": "futures_klines_15m.close",
+            "entry_price": None,
+            "stop_loss_reference": None,
+            "take_profit_reference": None,
+            "rr": None,
+            "timeout_minutes": None,
+            "atr_reference_timeframe": "1h",
+            "atr_reference_value": None,
+            "quality_score": None,
+            "quality_bucket": None,
+            "quality_reasons": [],
+        }
+        if candidate.candidate_type not in SIGNAL_CANDIDATE_TYPES:
+            return empty
+        evidence = candidate.evidence or {}
+        quality_score = _early_quality_score(candidate)
+        quality_bucket = _early_quality_bucket(candidate)
+        quality_reasons = _early_quality_reasons(candidate)
+        if quality_score is None or quality_score < 6:
+            return {
+                **empty,
+                "signal_status": "CANDIDATE_NEEDS_QUALITY",
+                "signal_reason": "early candidate quality score is below final signal threshold",
+                "quality_score": quality_score,
+                "quality_bucket": quality_bucket,
+                "quality_reasons": quality_reasons,
+            }
+        entry_candle = self.db.scalar(
+            select(FuturesKline15m).where(
+                FuturesKline15m.symbol == candidate.symbol,
+                FuturesKline15m.open_time == candidate.window_open_time,
+                FuturesKline15m.aggregation_status == "AGG_READY",
+            )
+        )
+        if entry_candle is None or entry_candle.close is None:
+            return {
+                **empty,
+                "signal_status": "CANDIDATE_MISSING_ENTRY_REFERENCE",
+                "signal_reason": "missing futures 15m entry close",
+                "quality_score": quality_score,
+                "quality_bucket": quality_bucket,
+                "quality_reasons": quality_reasons,
+            }
+        atr = self._atr_1h(candidate.symbol, candidate.window_close_time)
+        if atr is None or atr <= 0:
+            return {
+                **empty,
+                "signal_status": "CANDIDATE_MISSING_ATR_REFERENCE",
+                "signal_reason": "missing closed 1h ATR reference",
+                "entry_price": entry_candle.close,
+                "quality_score": quality_score,
+                "quality_bucket": quality_bucket,
+                "quality_reasons": quality_reasons,
+            }
+        entry = Decimal(str(entry_candle.close))
+        risk = Decimal(str(atr))
+        rr = Decimal("1.5")
+        if candidate.candidate_direction == "BULLISH_CONTEXT":
+            stop = entry - risk
+            target = entry + risk * rr
+        elif candidate.candidate_direction == "BEARISH_CONTEXT":
+            stop = entry + risk
+            target = entry - risk * rr
+        else:
+            return {
+                **empty,
+                "signal_status": "CANDIDATE_UNSUPPORTED_DIRECTION",
+                "signal_reason": "candidate direction is not bullish/bearish",
+                "entry_price": entry,
+                "atr_reference_value": atr,
+                "quality_score": quality_score,
+                "quality_bucket": quality_bucket,
+                "quality_reasons": quality_reasons,
+            }
+        return {
+            "signal_status": "SIGNAL_CANDIDATE",
+            "signal_reason": evidence.get("early_signal_logic_version") or "normalized_impulse_early_v1",
+            "entry_market": "futures",
+            "entry_price_source": "futures_klines_15m.close",
+            "entry_price": entry,
+            "stop_loss_reference": stop,
+            "take_profit_reference": target,
+            "rr": rr,
+            "timeout_minutes": 60,
+            "atr_reference_timeframe": "1h",
+            "atr_reference_value": atr,
+            "quality_score": quality_score,
+            "quality_bucket": quality_bucket,
+            "quality_reasons": quality_reasons,
+        }
+
+    def _atr_1h(self, symbol: str, signal_close_time: Any, period: int = 14) -> Decimal | None:
+        rows = list(
+            self.db.scalars(
+                select(FuturesKline1h)
+                .where(
+                    FuturesKline1h.symbol == symbol,
+                    FuturesKline1h.close_time <= signal_close_time,
+                    FuturesKline1h.aggregation_status == "AGG_READY",
+                )
+                .order_by(desc(FuturesKline1h.close_time))
+                .limit(period + 1)
+            ).all()
+        )
+        rows.reverse()
+        if len(rows) < period + 1:
+            return None
+        ranges: list[Decimal] = []
+        for index in range(1, len(rows)):
+            candle = rows[index]
+            previous = rows[index - 1]
+            if candle.high is None or candle.low is None or previous.close is None:
+                return None
+            ranges.append(
+                max(
+                    Decimal(str(candle.high)) - Decimal(str(candle.low)),
+                    abs(Decimal(str(candle.high)) - Decimal(str(previous.close))),
+                    abs(Decimal(str(candle.low)) - Decimal(str(previous.close))),
+                )
+            )
+        return sum(ranges, Decimal("0")) / Decimal(period)
 
     def _matching_outcome(self, candidate: MarketSignalCandidateReadonly15m) -> MarketCandidateOutcome15m | None:
         return self.db.scalar(
@@ -265,6 +416,14 @@ def _evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
         "top_trader_position_ratio_15m",
         "funding_status_15m",
         "spot_support_status_15m",
+        "early_signal_logic_version",
+        "early_long_quality_score",
+        "early_long_quality_bucket",
+        "early_short_quality_score",
+        "early_short_quality_bucket",
+        "entry_market",
+        "entry_price_source",
+        "spot_usage",
     )
     return {
         key: _decimal_to_plain(evidence.get(key))
@@ -283,6 +442,40 @@ def _decimal_to_plain(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _decimal_to_plain(item) for key, item in value.items()}
     return value
+
+
+def _early_quality_score(candidate: MarketSignalCandidateReadonly15m) -> int | None:
+    evidence = candidate.evidence or {}
+    if candidate.candidate_type == "EARLY_LONG_CANDIDATE_READONLY":
+        return _int_or_none(evidence.get("early_long_quality_score") or evidence.get("early_quality_score"))
+    if candidate.candidate_type == "EARLY_SHORT_CANDIDATE_READONLY":
+        return _int_or_none(evidence.get("early_short_quality_score") or evidence.get("early_quality_score"))
+    return None
+
+
+def _early_quality_bucket(candidate: MarketSignalCandidateReadonly15m) -> str | None:
+    evidence = candidate.evidence or {}
+    if candidate.candidate_type == "EARLY_LONG_CANDIDATE_READONLY":
+        return evidence.get("early_long_quality_bucket") or evidence.get("early_quality_bucket")
+    if candidate.candidate_type == "EARLY_SHORT_CANDIDATE_READONLY":
+        return evidence.get("early_short_quality_bucket") or evidence.get("early_quality_bucket")
+    return None
+
+
+def _early_quality_reasons(candidate: MarketSignalCandidateReadonly15m) -> list[Any]:
+    evidence = candidate.evidence or {}
+    if candidate.candidate_type == "EARLY_LONG_CANDIDATE_READONLY":
+        return evidence.get("early_long_quality_reasons") or evidence.get("early_quality_reasons") or []
+    if candidate.candidate_type == "EARLY_SHORT_CANDIDATE_READONLY":
+        return evidence.get("early_short_quality_reasons") or evidence.get("early_quality_reasons") or []
+    return []
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _usable_candidate_filter(model) -> Any:

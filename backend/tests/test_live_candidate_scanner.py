@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.market import MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
+from app.models.market import FuturesKline15m, FuturesKline1h, MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
 from app.services.live_candidate_scanner import LiveCandidateScannerService, scanner_tier_for
 
 
@@ -46,6 +46,45 @@ class LiveCandidateScannerTest(unittest.TestCase):
             "RISK_CONTEXT",
         )
         self.assertEqual(scanner_tier_for("DATA_BLOCKED", "CLASSIFIER_BLOCKED").tier, "BLOCKED")
+
+    def test_early_signal_candidate_payload_includes_futures_entry_plan(self) -> None:
+        open_time = self.window_open
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_candidate(
+            "AAAUSDT",
+            open_time,
+            "EARLY_LONG_CANDIDATE_READONLY",
+            "BULLISH_CONTEXT",
+            evidence={
+                "early_long_quality_score": 7,
+                "early_long_quality_bucket": "MEDIUM_QUALITY",
+                "early_long_quality_reasons": ["volume spike", "spot supports long impulse"],
+                "early_signal_logic_version": "normalized_impulse_early_v1",
+                "entry_market": "futures",
+                "entry_price_source": "futures_klines_15m.close",
+                "spot_usage": "filter/evidence_only",
+            },
+        )
+        self._insert_futures_15m("AAAUSDT", open_time, close=Decimal("100"))
+        self._insert_futures_1h_history("AAAUSDT", open_time + timedelta(minutes=15))
+        self.db.commit()
+
+        items = LiveCandidateScannerService(self.db).list_live()
+
+        self.assertEqual(len(items), 1)
+        item = items[0]
+        self.assertEqual(item["scanner_tier"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["signal_status"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["entry_market"], "futures")
+        self.assertEqual(item["entry_price_source"], "futures_klines_15m.close")
+        self.assertEqual(item["entry_price"], "100.000000000000000000")
+        self.assertEqual(item["rr"], "1.5")
+        self.assertEqual(item["timeout_minutes"], 60)
+        self.assertEqual(item["quality_score"], 7)
+        self.assertEqual(item["position_lock_mode"], "LOCK_BY_SYMBOL")
+        self.assertTrue(item["not_execution_instruction"])
+        self.assertIsNotNone(item["stop_loss_reference"])
+        self.assertIsNotNone(item["take_profit_reference"])
 
     def test_live_scanner_returns_latest_per_symbol_and_matching_outcome(self) -> None:
         old_open = self.window_open
@@ -259,7 +298,18 @@ class LiveCandidateScannerTest(unittest.TestCase):
         candidate_type: str,
         direction: str,
         classifier_status: str = "CLASSIFIER_PARTIAL",
+        evidence: dict | None = None,
     ) -> None:
+        default_evidence = {
+            "supporting_psychology_labels": ["BEARISH_PRESSURE"],
+            "context_status": "CONTEXT_READY",
+            "feature_15m_status": "FEATURE_PARTIAL",
+            "feature_1h_status": "FEATURE_PARTIAL",
+            "price_return_pct_15m": "0.12",
+            "oi_change_pct_15m": "-0.34",
+        }
+        if evidence:
+            default_evidence.update(evidence)
         self.db.add(
             MarketSignalCandidateReadonly15m(
                 symbol=symbol,
@@ -270,20 +320,71 @@ class LiveCandidateScannerTest(unittest.TestCase):
                 candidate_direction=direction,
                 confidence_level="MEDIUM",
                 confidence_score=Decimal("0.50"),
-                evidence={
-                    "supporting_psychology_labels": ["BEARISH_PRESSURE"],
-                    "context_status": "CONTEXT_READY",
-                    "feature_15m_status": "FEATURE_PARTIAL",
-                    "feature_1h_status": "FEATURE_PARTIAL",
-                    "price_return_pct_15m": "0.12",
-                    "oi_change_pct_15m": "-0.34",
-                },
+                evidence=default_evidence,
                 block_reason=None,
                 not_entry_signal=True,
                 created_at=self.now,
                 updated_at=self.now,
             )
         )
+
+    def _insert_futures_15m(self, symbol: str, open_time: datetime, close: Decimal) -> None:
+        self.db.add(
+            FuturesKline15m(
+                symbol=symbol,
+                open_time=open_time,
+                close_time=open_time + timedelta(minutes=15),
+                open=close,
+                high=close + Decimal("1"),
+                low=close - Decimal("1"),
+                close=close,
+                volume=Decimal("1000"),
+                quote_volume=Decimal("100000"),
+                number_of_trades=100,
+                taker_buy_base_volume=Decimal("500"),
+                taker_buy_quote_volume=Decimal("50000"),
+                taker_sell_base_volume=Decimal("500"),
+                taker_sell_quote_volume=Decimal("50000"),
+                source_interval="15m",
+                expected_1m_count=15,
+                actual_1m_count=15,
+                missing_1m_count=0,
+                aggregation_status="AGG_READY",
+                created_at=self.now,
+                updated_at=self.now,
+            )
+        )
+
+    def _insert_futures_1h_history(self, symbol: str, signal_close_time: datetime) -> None:
+        start = signal_close_time - timedelta(hours=15)
+        for index in range(15):
+            open_time = start + timedelta(hours=index)
+            close = Decimal("100") + Decimal(index)
+            self.db.add(
+                FuturesKline1h(
+                    symbol=symbol,
+                    open_time=open_time,
+                    close_time=open_time + timedelta(hours=1),
+                    open=close,
+                    high=close + Decimal("2"),
+                    low=close - Decimal("1"),
+                    close=close + Decimal("1"),
+                    volume=Decimal("1000"),
+                    quote_volume=Decimal("100000"),
+                    number_of_trades=100,
+                    taker_buy_base_volume=Decimal("500"),
+                    taker_buy_quote_volume=Decimal("50000"),
+                    taker_sell_base_volume=Decimal("500"),
+                    taker_sell_quote_volume=Decimal("50000"),
+                    source_interval="1h",
+                    expected_1m_count=60,
+                    actual_1m_count=60,
+                    missing_1m_count=0,
+                    aggregation_status="AGG_READY",
+                    created_at=self.now,
+                    updated_at=self.now,
+                )
+            )
 
     def _insert_outcome(self, symbol: str, window_open: datetime, candidate_type: str, direction: str) -> None:
         self.db.add(

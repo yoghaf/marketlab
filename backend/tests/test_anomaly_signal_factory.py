@@ -19,7 +19,7 @@ from app.services.anomaly_signal_factory import (
 
 class AnomalySignalFactoryTest(unittest.TestCase):
     def test_mid_short_candidate_mapping_is_read_only(self) -> None:
-        feature = self._feature(price_return=-0.8, oi_change_pct=0.4, futures_led=True, close_position=0.15)
+        feature = self._feature(price_return=-0.8, oi_change_pct=0.4, futures_led=True, close_position=0.45)
 
         candidate = classify_candidate(feature, atr_reference_status="AVAILABLE")
 
@@ -36,6 +36,41 @@ class AnomalySignalFactoryTest(unittest.TestCase):
 
         candidate = classify_candidate(feature, atr_reference_status="MISSING_ATR_REFERENCE")
 
+        self.assertEqual(candidate["candidate_status"], "RADAR_ONLY")
+        self.assertEqual(candidate["atr_reference_status"], "MISSING_ATR_REFERENCE")
+
+    def test_early_long_quality_can_be_readonly_signal_candidate(self) -> None:
+        feature = self._feature(
+            price_return=0.55,
+            oi_change_pct=0.05,
+            close_position=0.78,
+            volume_ratio=2.2,
+            atr_pct=1.0,
+            spot_context="SPOT_SUPPORTING",
+        )
+
+        candidate = classify_candidate(feature, atr_reference_status="AVAILABLE")
+
+        self.assertEqual(candidate["setup_type"], "EARLY_LONG")
+        self.assertEqual(candidate["candidate_status"], "SIGNAL_CANDIDATE")
+        self.assertEqual(candidate["direction"], "BULLISH_CONTEXT")
+        self.assertEqual(candidate["evidence"]["entry_market"], "futures")
+        self.assertEqual(candidate["evidence"]["spot_usage"], "filter/evidence_only")
+        self.assertGreaterEqual(candidate["evidence"]["early_quality_score"], 6)
+
+    def test_early_short_quality_missing_atr_stays_radar_only(self) -> None:
+        feature = self._feature(
+            price_return=-0.55,
+            oi_change_pct=0.05,
+            close_position=0.20,
+            volume_ratio=2.2,
+            atr_pct=1.0,
+            spot_context="WEAK_SPOT_SUPPORT",
+        )
+
+        candidate = classify_candidate(feature, atr_reference_status="MISSING_ATR_REFERENCE")
+
+        self.assertEqual(candidate["setup_type"], "EARLY_SHORT")
         self.assertEqual(candidate["candidate_status"], "RADAR_ONLY")
         self.assertEqual(candidate["atr_reference_status"], "MISSING_ATR_REFERENCE")
 
@@ -80,6 +115,9 @@ class AnomalySignalFactoryTest(unittest.TestCase):
         oi_change_pct: float = 0.0,
         futures_led: bool = False,
         close_position: float = 0.5,
+        volume_ratio: float = 1.0,
+        atr_pct: float = 1.0,
+        spot_context: str = "INLINE_SPOT_CONTEXT",
     ) -> dict:
         return {
             "symbol": symbol,
@@ -87,13 +125,18 @@ class AnomalySignalFactoryTest(unittest.TestCase):
             "window_start": "2026-01-01T00:00:00+00:00",
             "window_end": "2026-01-01T00:15:00+00:00",
             "price_return": price_return,
+            "price_return_abs": abs(price_return),
             "volume_spike": futures_led,
+            "volume_ratio_vs_lookback": volume_ratio,
             "oi_change_pct": oi_change_pct,
+            "funding_rate": 0.0,
             "funding_pressure": "NEUTRAL",
             "close_position_in_range": close_position,
+            "atr_pct": atr_pct,
             "relative_strength": "INLINE_WITH_MARKET",
             "futures_led_flag": futures_led,
             "spot_led_flag": False,
+            "spot_context": spot_context,
             "feature_status": "READY",
             "status_reasons": [],
         }
