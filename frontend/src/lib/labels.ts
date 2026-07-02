@@ -11,7 +11,7 @@ const labels: Record<string, string> = {
   RISK_CONTEXT: "Konteks risiko",
   RADAR_ONLY: "Pantauan saja",
   SIGNAL_CANDIDATE: "Calon sinyal",
-  WATCHLIST_CONTEXT: "Watchlist",
+  WATCHLIST_CONTEXT: "Candidate",
   WATCHLIST_FOR_MORE_DATA: "Pantau dulu",
   PHASE7_READY: "Siap diuji Phase 7",
   REJECT_FOR_PHASE7: "Ditolak untuk Phase 7",

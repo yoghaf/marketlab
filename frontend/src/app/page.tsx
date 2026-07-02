@@ -10,6 +10,7 @@ import {
   CollectorRun,
   Phase6ReadinessResponse,
   Phase7FullBlockerAuditResponse,
+  LiveScannerResponse,
   fetchJson,
   fmtTime
 } from "@/lib/api";
@@ -25,12 +26,13 @@ type CollectorResponse = {
 };
 
 export default async function OverviewPage() {
-  const [health, collectors, aggregation, phase6, audit] = await Promise.all([
+  const [health, collectors, aggregation, phase6, audit, scanner] = await Promise.all([
     fetchJson<HealthResponse>("/api/data-health"),
     fetchJson<CollectorResponse>("/api/collectors/status"),
     fetchJson<AggregationStatus>("/api/aggregation/status"),
     fetchJson<Phase6ReadinessResponse>("/api/phase6/readiness", { revalidateSeconds: 20 }).catch(() => null),
-    fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null)
+    fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null),
+    fetchJson<LiveScannerResponse>("/api/scanner/live?limit=200", { revalidateSeconds: 20 }).catch(() => null)
   ]);
 
   const lastRun = collectors.collectors[0];
@@ -42,40 +44,47 @@ export default async function OverviewPage() {
   const atr24 = audit?.atr_readiness["24h"]?.available_symbols ?? 0;
   const edgeOver010 = edgeBucket(audit, "0.10");
   const scoreGe7 = audit?.phase6_scoring.score_ge_7_count ?? 0;
+  const scannerCounts = scanner?.tier_counts || {};
+  const radarCount = scannerCounts.RADAR_ONLY || 0;
+  const candidateCount = scannerCounts.WATCHLIST_CONTEXT || 0;
+  const signalCandidateCount = scannerCounts.SIGNAL_CANDIDATE || 0;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Overview"
         badge="READ-ONLY - bukan sinyal entry live"
-        subtitle="Ringkasan keputusan MarketLab: apakah ada sinyal siap pakai, kenapa belum siap, dan data apa yang harus ditunggu."
+        subtitle="Ringkasan hirarki MarketLab: radar, candidate, signal candidate, dan alasan kenapa belum jadi eksekusi."
         updatedAt={fmtTime(phase6?.generated_at || audit?.generated_at || health.latest.latest_futures_candle_time)}
       />
 
       <DecisionBanner
-        title={phase7Decision === "HAS_CANDIDATES" ? "Ada kandidat yang siap diuji" : "Belum ada sinyal siap pakai"}
-        status={`Approved: ${approvedCount}`}
+        title={signalCandidateCount > 0 ? "Ada Signal Candidate read-only" : candidateCount > 0 ? "Ada Candidate untuk dipantau" : "Belum ada Signal Candidate"}
+        status={`Signal Candidate: ${signalCandidateCount}`}
         tone={phase7Decision === "HAS_CANDIDATES" ? "good" : "warn"}
         description={
-          phase7Decision === "HAS_CANDIDATES"
-            ? "Kandidat tetap read-only dan belum menjadi sinyal entry live."
-            : "Phase 7 belum aktif karena data 4h/24h belum cukup dan edge kandidat masih belum kuat."
+          signalCandidateCount > 0
+            ? "Signal Candidate tetap read-only: ada entry futures reference, risk reference, dan tidak ada order otomatis."
+            : "Radar/Candidate bisa ada walau Signal Candidate masih kosong. Itu berarti setup terpantau, tapi belum lolos quality gate final."
         }
       />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <MetricCard label="Sinyal Siap" value={approvedCount} helper="Belum ada yang approved" tone={approvedCount ? "good" : "warn"} />
-        <MetricCard label="Watchlist" value={watchlistCount} helper="Pantauan, bukan entry" tone="info" />
+        <MetricCard label="Radar" value={radarCount} helper="Pantauan awal" tone="info" />
+        <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
+        <MetricCard label="Signal Candidate" value={signalCandidateCount} helper="Final read-only, bukan order" tone={signalCandidateCount ? "good" : "warn"} />
+        <MetricCard label="Phase 7 Approved" value={approvedCount} helper="Shadow-test approved" tone={approvedCount ? "good" : "warn"} />
         <MetricCard label="Data 4h" value={atr4 > 0 ? "Mulai siap" : "Belum cukup"} helper={`ATR ${atr4}/75 symbol`} tone={atr4 > 0 ? "warn" : "bad"} />
-        <MetricCard label="Data 24h" value={atr24 > 0 ? "Mulai siap" : "Belum cukup"} helper={`ATR ${atr24}/75 symbol`} tone={atr24 > 0 ? "warn" : "bad"} />
         <MetricCard label="Edge" value={edgeOver010 > 0 ? "Mulai kuat" : "Belum kuat"} helper={`edge > 0.10R: ${edgeOver010}`} tone={edgeOver010 > 0 ? "info" : "warn"} />
-        <MetricCard label="Aksi Berikutnya" value="Backfill data" helper="atau tunggu 4h/24h matang" tone="info" />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
         <SectionCard title="Yang penting sekarang" description="Keputusan utama tanpa label teknis.">
           <div className="space-y-3 p-4 text-sm leading-6">
-            <ReasonRow label="Sinyal siap pakai" value={String(approvedCount)} />
+            <ReasonRow label="Radar" value={`${radarCount} token`} />
+            <ReasonRow label="Candidate" value={`${candidateCount} token`} />
+            <ReasonRow label="Signal Candidate" value={`${signalCandidateCount} token`} />
+            <ReasonRow label="Phase 7 approved" value={String(approvedCount)} />
             <ReasonRow label="Data 4h/24h" value="Belum cukup untuk ATR" />
             <ReasonRow label="Aksi" value="Backfill data atau tunggu data 4h/24h matang." />
             <div className="flex flex-wrap gap-2 pt-2">

@@ -49,7 +49,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       <PageHeader
         title="Radar Market"
         badge="READ-ONLY - bukan auto execution"
-        subtitle="Signal Candidate adalah final signal read-only untuk scanner/paper-test. Tidak ada order otomatis."
+        subtitle="Alur baca: Radar -> Candidate -> Signal Candidate. Semuanya read-only, tidak ada order otomatis."
       />
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar Market</Link>
@@ -58,7 +58,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
 
       <section className="grid gap-3 md:grid-cols-4">
         <MetricCard label="Signal Candidate" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone="good" />
-        <MetricCard label="Watchlist" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Perlu dicek, bukan entry" tone="info" />
+        <MetricCard label="Candidate" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Perlu dipantau, belum final" tone="info" />
         <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Ada risiko/campuran" tone="warn" />
         <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
       </section>
