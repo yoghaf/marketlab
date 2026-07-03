@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from statistics import median
@@ -10,10 +11,11 @@ from typing import Any
 from app.services.multitimeframe_features import REPO_ROOT, json_safe
 
 
-DEFAULT_EARLY_BACKTEST_DIR = REPO_ROOT / "backend" / "artifacts" / "signal_factory" / "v2_backtest"
+DEFAULT_EARLY_BACKTEST_DIR = REPO_ROOT / "backend" / "artifacts" / "threshold_research" / "normalized_impulse_v1"
 RESULTS_FILE = "results.json"
 EVENTS_FILE = "events.json"
 EARLY_STAGES = {"EARLY_LONG", "EARLY_SHORT"}
+NORMALIZED_EARLY_SETUPS = {"EARLY_LONG_V0": "EARLY_LONG", "EARLY_SHORT_V0": "EARLY_SHORT"}
 HORIZONS = ("15m", "1h", "4h", "24h")
 
 
@@ -24,14 +26,16 @@ class EarlyBacktestLabArtifactService:
     def summary(self) -> dict[str, Any]:
         payload = self._results_payload()
         events = self._early_events(payload)
+        metadata = self._metadata(payload)
         return json_safe(
             {
-                "metadata": payload.get("metadata") or {},
+                "metadata": metadata,
                 "source": {
                     "artifact_dir": str(self.artifact_dir),
                     "results_file": RESULTS_FILE,
                     "events_file": EVENTS_FILE,
                     "filter": "stage in EARLY_LONG, EARLY_SHORT",
+                    "artifact_type": metadata.get("artifact_type"),
                 },
                 "guardrails": {
                     "read_only": True,
@@ -79,11 +83,104 @@ class EarlyBacktestLabArtifactService:
         return json.loads(path.read_text())
 
     def _early_events(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if "token_results" in payload:
+            return self._normalized_impulse_events(payload)
         events = payload.get("events")
         if events is None:
             events_path = self.artifact_dir / EVENTS_FILE
             events = json.loads(events_path.read_text()) if events_path.exists() else []
         return [event for event in events if event.get("stage") in EARLY_STAGES]
+
+    def _metadata(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if "token_results" in payload:
+            coverage = payload.get("coverage") or {}
+            return {
+                "generated_at_utc": payload.get("generated_at"),
+                "epoch": "NORMALIZED_IMPULSE_RESEARCH_V1",
+                "artifact_type": "historical_normalized_impulse_backtest",
+                "signals_loaded": sum(
+                    len((payload.get("token_results") or {}).get(setup, []))
+                    for setup in NORMALIZED_EARLY_SETUPS
+                ),
+                "events_evaluated": sum(
+                    len((payload.get("token_results") or {}).get(setup, []))
+                    for setup in NORMALIZED_EARLY_SETUPS
+                ),
+                "source_candidate_count": sum(
+                    ((payload.get("setup_results") or {}).get(setup, {}) or {}).get("source_candidate_count", 0)
+                    for setup in NORMALIZED_EARLY_SETUPS
+                ),
+                "position_lock_mode": ((payload.get("parameters") or {}).get("position_lock_mode")),
+                "feature_rows": coverage.get("feature_rows"),
+                "candles_15m": coverage.get("candles_15m"),
+                "candles_1h": coverage.get("candles_1h"),
+                "entry_market": "futures",
+                "spot_usage": "evidence/filter only",
+            }
+        metadata = payload.get("metadata") or {}
+        metadata.setdefault("artifact_type", "forward_log_backtest")
+        return metadata
+
+    def _normalized_impulse_events(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        token_results = payload.get("token_results") or {}
+        for setup, stage in NORMALIZED_EARLY_SETUPS.items():
+            direction = "LONG" if stage == "EARLY_LONG" else "SHORT"
+            for row in token_results.get(setup, []):
+                outcome = row.get("outcome") or "UNKNOWN"
+                signal_time = row.get("window_close_time") or row.get("setup_window_open_time")
+                result_time = row.get("result_time")
+                rows.append(
+                    {
+                        "signal_id": f"{setup}:{row.get('symbol')}:{row.get('window_close_time')}",
+                        "symbol": row.get("symbol"),
+                        "timeframe": row.get("timeframe") or "15m",
+                        "signal_time_utc": signal_time,
+                        "signal_time_wib": _to_wib_string(signal_time),
+                        "stage": stage,
+                        "direction": direction,
+                        "confidence_tier": row.get("quality_bucket") or "RESEARCH_V0",
+                        "core_score": None,
+                        "evidence_score": None,
+                        "evidence_data_completeness": None,
+                        "execution_flag": "RESEARCH_BACKTEST",
+                        "entry_market": row.get("entry_market") or "futures",
+                        "entry_price_source": row.get("entry_price_source") or "futures_klines_15m.close",
+                        "entry": row.get("entry_price"),
+                        "stop": row.get("stop_loss_reference"),
+                        "target": row.get("take_profit_reference"),
+                        "risk": row.get("risk_distance"),
+                        "horizons": {
+                            "15m": {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None},
+                            "1h": {
+                                "status": "READY",
+                                "outcome": outcome,
+                                "realized_r": row.get("realized_r"),
+                                "mfe_r": row.get("max_favorable_r"),
+                                "mae_r": row.get("max_adverse_r"),
+                                "result_time_utc": result_time,
+                                "result_time_wib": _to_wib_string(result_time),
+                            },
+                            "4h": {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None},
+                            "24h": {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None},
+                        },
+                        "evidence": {
+                            "price_return_pct": row.get("price_return_pct"),
+                            "volume_spike_ratio_20": row.get("volume_spike_ratio_20"),
+                            "range_spike_ratio_20": row.get("range_spike_ratio_20"),
+                            "oi_spike_ratio_20": row.get("oi_spike_ratio_20"),
+                            "oi_change_pct": row.get("oi_change_pct"),
+                            "price_move_atr_1h": row.get("price_move_atr_1h"),
+                            "spot_support_status": row.get("spot_support_status"),
+                            "price_return_pct_1h": row.get("price_return_pct_1h"),
+                            "universe_rank": row.get("universe_rank"),
+                            "position_lock_status": row.get("position_lock_status"),
+                        },
+                        "not_live_signal": True,
+                        "not_execution_instruction": True,
+                    }
+                )
+        return rows
 
     def _summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         by_stage = Counter(str(event.get("stage") or "UNKNOWN") for event in events)
@@ -108,6 +205,8 @@ class EarlyBacktestLabArtifactService:
             outcome = str(result.get("outcome") or status or "UNKNOWN")
             outcomes[outcome] += 1
             realized = _dec(result.get("realized_r"))
+            if status == "NOT_EVALUATED":
+                continue
             if realized is None:
                 waiting += 1
                 continue
@@ -120,7 +219,7 @@ class EarlyBacktestLabArtifactService:
             "tp": outcomes.get("TP_FIRST", 0),
             "sl": outcomes.get("SL_FIRST", 0),
             "both": outcomes.get("BOTH_HIT_SAME_CANDLE", 0),
-            "neither": outcomes.get("NEITHER_CLOSE_AT_HORIZON", 0),
+            "neither": outcomes.get("NEITHER_CLOSE_AT_HORIZON", 0) + outcomes.get("NEITHER", 0),
             "outcomes": dict(outcomes),
             "avg_r": _avg(values),
             "median_r": median(values) if values else None,
@@ -182,6 +281,7 @@ class EarlyBacktestLabArtifactService:
                     "mae_r": result.get("mae_r"),
                     "result_time_utc": result.get("result_time_utc"),
                     "result_time_wib": result.get("result_time_wib"),
+                    "evidence": event.get("evidence") or {},
                     "not_live_signal": True,
                     "not_execution_instruction": True,
                 }
@@ -203,3 +303,16 @@ def _avg(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
     return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _to_wib_string(value: Any) -> str | None:
+    if not value:
+        return None
+    try:
+        raw = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=7))).strftime("%Y-%m-%d %H:%M:%S WIB")
+    except Exception:
+        return str(value)

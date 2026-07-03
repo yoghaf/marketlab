@@ -26,7 +26,7 @@ export default async function EarlyBacktestLabPage({ searchParams }: { searchPar
   const params = await searchParams;
   const filters = {
     stage: firstParam(params.stage),
-    horizon: firstParam(params.horizon) || "4h",
+    horizon: firstParam(params.horizon) || "1h",
     outcome: firstParam(params.outcome),
     limit: normalizeNumber(firstParam(params.limit), 200)
   };
@@ -55,7 +55,7 @@ export default async function EarlyBacktestLabPage({ searchParams }: { searchPar
       <PageHeader
         title="Early Backtest Lab"
         badge="READ-ONLY BACKTEST - bukan live signal"
-        subtitle="Lab untuk menguji apakah identifikasi EARLY_LONG / EARLY_SHORT menghasilkan RR yang masuk akal memakai entry futures dan data historis yang sudah direplay."
+        subtitle="Lab historis untuk menguji identifikasi EARLY_LONG / EARLY_SHORT memakai entry futures, ATR 1h, position lock per symbol, dan data candle yang sudah ada di DB."
         updatedAt={fmtTime(summary?.metadata.generated_at_utc)}
       />
 
@@ -70,7 +70,7 @@ export default async function EarlyBacktestLabPage({ searchParams }: { searchPar
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="Early Events" value={summary?.summary.total_events || 0} helper={`Epoch ${summary?.metadata.epoch || "-"}`} tone="info" />
+            <MetricCard label="Early Events" value={summary?.summary.total_events || 0} helper={`Source ${summary?.metadata.epoch || "-"}`} tone="info" />
             <MetricCard label="EARLY_LONG" value={earlyLong} helper="Candidate long awal" tone="info" />
             <MetricCard label="EARLY_SHORT" value={earlyShort} helper="Candidate short awal" tone="warn" />
             <MetricCard label={`${filters.horizon} Ready`} value={selectedHorizon?.ready || 0} helper={`Waiting ${selectedHorizon?.waiting || 0}`} />
@@ -125,11 +125,11 @@ export default async function EarlyBacktestLabPage({ searchParams }: { searchPar
             </div>
           </SectionCard>
 
-          <SectionCard title="Event list" description="Daftar entry futures hasil replay. Filter default memakai horizon 4h karena early sering butuh waktu untuk bergerak.">
+          <SectionCard title="Event list" description="Daftar entry futures hasil replay historis. Filter default 1h karena early V0 diuji dengan horizon 4 candle 15m.">
             <div className="space-y-4 p-4">
               <FilterBar>
                 <SelectFilter label="Stage" name="stage" value={filters.stage || ""} options={stages} emptyLabel="All early" />
-                <SelectFilter label="Horizon" name="horizon" value={filters.horizon} options={horizons} emptyLabel="4h" />
+                <SelectFilter label="Horizon" name="horizon" value={filters.horizon} options={horizons} emptyLabel="1h" />
                 <SelectFilter label="Outcome" name="outcome" value={filters.outcome || ""} options={outcomes} emptyLabel="All outcome" />
                 <label className="grid gap-1 text-sm">
                   <span className="font-semibold text-slate-600">Limit</span>

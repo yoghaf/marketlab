@@ -37,6 +37,7 @@ const labels: Record<string, string> = {
   WAITING_OUTCOME: "Menunggu outcome",
   TP_FIRST: "TP duluan",
   SL_FIRST: "SL duluan",
+  NEITHER: "Belum kena TP/SL",
   NEITHER_CLOSE_AT_HORIZON: "Close di horizon",
   TP_HIT: "Target referensi tersentuh",
   SL_HIT: "Stop referensi tersentuh",

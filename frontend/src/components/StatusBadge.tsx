@@ -100,6 +100,7 @@ const styles: Record<string, string> = {
   WAITING_OUTCOME: "border-blue-700 text-blue-700 bg-blue-50",
   TP_FIRST: "border-ready text-ready bg-emerald-50",
   SL_FIRST: "border-stale text-stale bg-red-50",
+  NEITHER: "border-line text-slate-700 bg-slate-50",
   NEITHER_CLOSE_AT_HORIZON: "border-line text-slate-700 bg-slate-50",
   TP_HIT: "border-ready text-ready bg-emerald-50",
   SL_HIT: "border-stale text-stale bg-red-50",
