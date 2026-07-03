@@ -72,6 +72,26 @@ class MultiTimeframeFeaturesTest(unittest.TestCase):
         self.assertIsNotNone(feature.atr)
         self.assertEqual(feature.relative_strength, "INLINE_WITH_MARKET")
 
+    def test_latest_15m_volume_ratio_uses_30_prior_candles(self) -> None:
+        self._insert_symbol("BTCUSDT")
+        candles = self._candles(31, minutes=15)
+        for index, candle in enumerate(candles):
+            if index == 30:
+                volume = Decimal("300")
+            elif index < 15:
+                volume = Decimal("50")
+            else:
+                volume = Decimal("100")
+            self._insert_kline("futures_klines_15m", candle, volume=volume)
+            self._insert_kline("spot_klines_15m", candle, volume=Decimal("100"))
+            self._insert_oi("BTCUSDT", candle.open_time, Decimal("1000") + Decimal(index))
+            self._insert_oi("BTCUSDT", candle.close_time, Decimal("1001") + Decimal(index))
+        self._insert_funding("BTCUSDT", candles[-1].close_time, Decimal("0.0001"))
+
+        feature = MultiTimeframeFeatureService(self.db_path).latest_feature_snapshot("BTCUSDT", "15m")
+
+        self.assertEqual(feature.volume_ratio_vs_lookback, Decimal("4"))
+
     def test_latest_feature_snapshot_reads_rich_and_state_with_sqlite_microseconds(self) -> None:
         self._insert_symbol("BTCUSDT")
         candles = self._candles(17, minutes=15)

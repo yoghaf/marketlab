@@ -179,21 +179,33 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
               <div>OI change: {fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))}</div>
               <div>OI z-score: {fmtNumber(evidenceNumber(item, "oi_zscore"))}</div>
               <div>Volume vs avg: {fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))}</div>
+              <div>Volume baseline: {String(item.evidence_summary.timeframe || "15m") === "15m" ? "30 candle terakhir" : "Lookback TF aktif"}</div>
               <div>Range vs ATR: {fmtRatioX(evidenceNumber(item, "range_ratio_vs_atr"))}</div>
+              <div>ATR extension: {fmtRatioX(evidenceNumber(item, "atr_extension_normalized"))}</div>
+              <div>Price / ATR: {fmtRatioX(evidenceNumber(item, "price_atr_multiple"))}</div>
               <div>Taker buy: {fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))}</div>
               <div>Taker sell: {fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))}</div>
               <div>Close position: {fmtRatioPercent(evidenceNumber(item, "close_position_in_range", "close_position_15m"))}</div>
               <div>1h return: {fmtSignedPercent(evidenceNumber(item, "one_hour_return_pct", "price_return_pct_1h"))}</div>
+              <div>Funding rate: {fmtDecimalRatePercent(evidenceNumber(item, "funding_rate"))}</div>
               <div>Funding percentile: {fmtRatioPercentFromPercent(evidenceNumber(item, "funding_percentile_30d"))}</div>
+              <div>Funding pressure/status: {String(item.evidence_summary.funding_pressure ?? item.evidence_summary.funding_status_15m ?? "-")}</div>
               <div>Global L/S: {fmtNumber(evidenceNumber(item, "global_long_short_ratio", "global_long_short_ratio_15m"))}</div>
               <div>Top trader position: {fmtNumber(evidenceNumber(item, "top_trader_position_ratio", "top_trader_position_ratio_15m"))}</div>
+              <div>Top trader account: {fmtNumber(evidenceNumber(item, "top_trader_account_ratio", "top_trader_account_ratio_15m"))}</div>
+              <div>Rich status: {String(item.evidence_summary.rich_alignment_status ?? "-")}</div>
               <div>Futures spread: {fmtSignedPercent(evidenceNumber(item, "futures_spread_pct"))}</div>
+              <div>Spot spread: {fmtSignedPercent(evidenceNumber(item, "spot_spread_pct"))}</div>
               <div>Core score: {fmtNumber(evidenceNumber(item, "core_score"))}/{fmtNumber(evidenceNumber(item, "core_score_max"))}</div>
+              <div>Core reasons: {formatList(item.evidence_summary.core_reasons)}</div>
               <div>Evidence score: {fmtNumber(evidenceNumber(item, "evidence_score"))}</div>
               <div>Evidence completeness: {fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4</div>
               <div>Evidence flags: {formatList(item.evidence_summary.evidence_flags)}</div>
+              <div>Evidence reasons: {formatList(item.evidence_summary.evidence_reasons)}</div>
+              <div>Risk status: {String(item.evidence_summary.execution_risk_status ?? "-")}</div>
+              <div>Risk reasons: {formatList(item.evidence_summary.execution_risk_reasons)}</div>
               <div>Futures led: {String(item.evidence_summary.futures_led_flag ?? "-")}</div>
-              <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? "-")}</div>
+              <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? item.evidence_summary.spot_context ?? "-")}</div>
             </div>
             <div>Entry source: {item.entry_price_source || "-"}</div>
             <div>ATR ref: {item.atr_reference_timeframe || "-"} {fmtNumber(item.atr_reference_value)}</div>
@@ -265,6 +277,13 @@ function fmtRatioPercent(value: number | null): string {
 function fmtRatioPercentFromPercent(value: number | null): string {
   if (value === null) return "-";
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function fmtDecimalRatePercent(value: number | null): string {
+  if (value === null) return "-";
+  const pct = value * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(pct)}%`;
 }
 
 function fmtRatioX(value: number | null): string {

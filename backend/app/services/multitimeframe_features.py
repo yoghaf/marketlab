@@ -14,7 +14,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = REPO_ROOT / "data" / "marketlab.db"
 TIMEFRAME_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "24h": 1440}
-LOOKBACKS = {"15m": 16, "1h": 24, "4h": 14, "24h": 14}
+LOOKBACKS = {"15m": 30, "1h": 24, "4h": 14, "24h": 14}
 MIN_LOOKBACKS = {"15m": 4, "1h": 4, "4h": 3, "24h": 3}
 FEATURE_STATUSES = {"READY", "PARTIAL_DATA", "MISSING_CANDLES", "MISSING_OI", "MISSING_ATR", "STALE_DATA"}
 AGG_TABLES = {
