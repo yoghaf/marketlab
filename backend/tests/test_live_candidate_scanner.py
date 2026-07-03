@@ -1,5 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from fastapi.testclient import TestClient
@@ -85,6 +88,77 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertTrue(item["not_execution_instruction"])
         self.assertIsNotNone(item["stop_loss_reference"])
         self.assertIsNotNone(item["take_profit_reference"])
+
+    def test_signal_factory_candidate_is_visible_when_db_classifier_has_no_signal(self) -> None:
+        open_time = self.window_open
+        self._insert_universe("AAAUSDT", rank=1)
+        self._insert_candidate(
+            "AAAUSDT",
+            open_time,
+            "DATA_BLOCKED",
+            "BLOCKED_CONTEXT",
+            classifier_status="CLASSIFIER_BLOCKED",
+        )
+        self._insert_futures_15m("AAAUSDT", open_time, close=Decimal("100"))
+        self._insert_futures_1h_history("AAAUSDT", open_time + timedelta(minutes=15))
+        self.db.commit()
+
+        with TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            (artifact_dir / "candidates.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-01-01T00:20:00+00:00",
+                        "items": [
+                            {
+                                "symbol": "AAAUSDT",
+                                "timeframe": "15m",
+                                "window_start": "2026-01-01T00:00:00",
+                                "window_end": "2026-01-01T00:15:00",
+                                "setup_type": "EARLY_LONG",
+                                "direction": "BULLISH_CONTEXT",
+                                "confidence": "MEDIUM",
+                                "reason": "Normalized early long quality 6/10 (MEDIUM_QUALITY)",
+                                "candidate_status": "SIGNAL_CANDIDATE",
+                                "atr_reference_timeframe": "1h",
+                                "atr_reference_status": "AVAILABLE",
+                                "not_live_signal": True,
+                                "not_execution_instruction": True,
+                                "evidence": {
+                                    "price_return": "0.8",
+                                    "oi_change_pct": "0.2",
+                                    "entry_market": "futures",
+                                    "entry_price_source": "futures_klines_15m.close",
+                                    "spot_usage": "filter/evidence_only",
+                                    "early_quality_score": 6,
+                                    "early_quality_bucket": "MEDIUM_QUALITY",
+                                    "early_quality_reasons": ["volume spike"],
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            items = LiveCandidateScannerService(self.db, signal_factory_artifact_dir=artifact_dir).list_live()
+            signal_items = LiveCandidateScannerService(
+                self.db,
+                signal_factory_artifact_dir=artifact_dir,
+            ).list_live(tier="SIGNAL_CANDIDATE")
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(len(signal_items), 1)
+        item = signal_items[0]
+        self.assertEqual(item["symbol"], "AAAUSDT")
+        self.assertEqual(item["scanner_tier"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["candidate_type"], "EARLY_LONG_CANDIDATE_READONLY")
+        self.assertEqual(item["signal_status"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["entry_market"], "futures")
+        self.assertEqual(item["entry_price"], "100.000000000000000000")
+        self.assertEqual(item["quality_score"], 6)
+        self.assertEqual(item["evidence_summary"]["source"], "signal_factory_v1")
+        self.assertTrue(item["not_entry_signal"])
+        self.assertTrue(item["not_execution_instruction"])
 
     def test_live_scanner_returns_latest_per_symbol_and_matching_outcome(self) -> None:
         old_open = self.window_open

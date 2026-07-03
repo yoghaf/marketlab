@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+import json
+from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import desc, func, or_, select
@@ -69,8 +72,9 @@ def scanner_tier_for(candidate_type: str, classifier_status: str) -> ScannerTier
 
 
 class LiveCandidateScannerService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, signal_factory_artifact_dir: Path | None = None) -> None:
         self.db = db
+        self.signal_factory_artifact_dir = signal_factory_artifact_dir
 
     def list_live(
         self,
@@ -84,18 +88,24 @@ class LiveCandidateScannerService:
             include_blocked=include_blocked,
             include_inactive=include_inactive,
         )
-        items: list[dict[str, Any]] = []
+        raw_items: list[dict[str, Any]] = []
         normalized_tier = tier.upper() if tier else None
         normalized_type = candidate_type.upper() if candidate_type else None
         for row, latest_actual_row, universe in rows:
-            item = self._candidate_payload(
-                row,
-                latest_actual_row,
-                universe,
-                include_blocked=include_blocked,
-                include_inactive=include_inactive,
+            raw_items.append(
+                self._candidate_payload(
+                    row,
+                    latest_actual_row,
+                    universe,
+                    include_blocked=include_blocked,
+                    include_inactive=include_inactive,
+                )
             )
-            if normalized_type and row.candidate_type != normalized_type:
+        raw_items.extend(self._signal_factory_signal_items(include_inactive=include_inactive))
+
+        items: list[dict[str, Any]] = []
+        for item in sorted(_dedupe_by_symbol(raw_items), key=_item_sort_key, reverse=True):
+            if normalized_type and item["candidate_type"] != normalized_type:
                 continue
             if normalized_tier and item["scanner_tier"] != normalized_tier:
                 continue
@@ -105,6 +115,123 @@ class LiveCandidateScannerService:
             if len(items) >= min(max(limit, 1), 500):
                 break
         return items
+
+    def _signal_factory_signal_items(self, include_inactive: bool) -> list[dict[str, Any]]:
+        artifact_dir = self.signal_factory_artifact_dir
+        if artifact_dir is None:
+            return []
+        path = artifact_dir / "candidates.json"
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        universe_by_symbol = self._universe_by_symbol(include_inactive=include_inactive)
+        items: list[dict[str, Any]] = []
+        for candidate in payload.get("items", []):
+            if candidate.get("candidate_status") != "SIGNAL_CANDIDATE":
+                continue
+            if candidate.get("timeframe") != "15m":
+                continue
+            symbol = str(candidate.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            universe = universe_by_symbol.get(symbol)
+            if not include_inactive and not (universe and universe.is_active):
+                continue
+            item = self._signal_factory_payload(candidate, universe, include_inactive=include_inactive)
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _signal_factory_payload(
+        self,
+        candidate: dict[str, Any],
+        universe: MarketlabActiveUniverse | None,
+        include_inactive: bool,
+    ) -> dict[str, Any] | None:
+        symbol = str(candidate.get("symbol") or "").upper()
+        window_open = _parse_dt(candidate.get("window_start"))
+        window_close = _parse_dt(candidate.get("window_end"))
+        if window_open is None or window_close is None:
+            return None
+        evidence = candidate.get("evidence") or {}
+        direction = candidate.get("direction") or "MIXED_CONTEXT"
+        entry_candle = self.db.scalar(
+            select(FuturesKline15m).where(
+                FuturesKline15m.symbol == symbol,
+                FuturesKline15m.open_time == window_open,
+                FuturesKline15m.aggregation_status == "AGG_READY",
+            )
+        )
+        atr = self._atr_1h(symbol, window_close)
+        entry = Decimal(str(entry_candle.close)) if entry_candle is not None and entry_candle.close is not None else None
+        risk = Decimal(str(atr)) if atr is not None and atr > 0 else None
+        rr = Decimal("1.5")
+        stop = None
+        target = None
+        if entry is not None and risk is not None:
+            if direction == "BULLISH_CONTEXT":
+                stop = entry - risk
+                target = entry + risk * rr
+            elif direction == "BEARISH_CONTEXT":
+                stop = entry + risk
+                target = entry - risk * rr
+        is_active = bool(universe and universe.is_active)
+        inactive_warning = None if is_active else "Symbol is not in active universe"
+        warning_reason = inactive_warning or "read-only signal candidate; not an execution instruction"
+        return json_safe(
+            {
+                "symbol": symbol,
+                "is_active": is_active,
+                "collection_tier": universe.collection_tier if universe else "NOT_ACTIVE",
+                "universe_rank": universe.rank if universe else None,
+                "inactive_warning": inactive_warning if include_inactive else None,
+                "scanner_visibility_reason": "signal factory final read-only candidate",
+                "latest_actual_status": candidate.get("candidate_status"),
+                "latest_actual_observation_timestamp": window_close,
+                "using_fallback_usable_row": False,
+                "fallback_reason": None,
+                "observation_time": window_close,
+                "window_open_time": window_open,
+                "window_close_time": window_close,
+                "candidate_type": _factory_candidate_type(candidate.get("setup_type")),
+                "candidate_direction": direction,
+                "classifier_status": candidate.get("candidate_status"),
+                "confidence": candidate.get("confidence") or "MEDIUM",
+                "confidence_score": None,
+                "scanner_tier": "SIGNAL_CANDIDATE",
+                "tier_reason": candidate.get("reason") or "signal factory final read-only candidate",
+                "warning_reason": warning_reason,
+                "evidence_summary": _factory_evidence_summary(candidate),
+                "signal_status": "SIGNAL_CANDIDATE",
+                "signal_reason": candidate.get("reason") or evidence.get("early_signal_logic_version") or "signal_factory_v1",
+                "entry_market": "futures",
+                "entry_price_source": "futures_klines_15m.close",
+                "entry_price": entry,
+                "stop_loss_reference": stop,
+                "take_profit_reference": target,
+                "rr": rr,
+                "timeout_minutes": 60,
+                "atr_reference_timeframe": candidate.get("atr_reference_timeframe") or "1h",
+                "atr_reference_value": atr,
+                "quality_score": evidence.get("early_quality_score"),
+                "quality_bucket": evidence.get("early_quality_bucket"),
+                "quality_reasons": evidence.get("early_quality_reasons") or [],
+                "position_lock_mode": "LOCK_BY_SYMBOL",
+                "not_execution_instruction": True,
+                "latest_outcome_status": None,
+                "latest_outcome_update": None,
+                "not_entry_signal": True,
+            }
+        )
+
+    def _universe_by_symbol(self, include_inactive: bool) -> dict[str, MarketlabActiveUniverse]:
+        query = select(MarketlabActiveUniverse)
+        if not include_inactive:
+            query = query.where(MarketlabActiveUniverse.is_active.is_(True))
+        return {row.symbol: row for row in self.db.scalars(query).all()}
 
     def _latest_candidate_rows(
         self,
@@ -499,3 +626,99 @@ def _visibility_reason(
     if scanner_tier == "BLOCKED" and include_blocked:
         return "shown because include_blocked=true"
     return "active universe latest non-blocked scanner row"
+
+
+def _dedupe_by_symbol(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected: dict[str, dict[str, Any]] = {}
+    for item in items:
+        symbol = item.get("symbol")
+        if not symbol:
+            continue
+        current = selected.get(symbol)
+        if current is None or _item_priority(item) > _item_priority(current):
+            selected[symbol] = item
+            continue
+        if _item_priority(item) == _item_priority(current) and _item_sort_key(item) > _item_sort_key(current):
+            selected[symbol] = item
+    return list(selected.values())
+
+
+def _item_priority(item: dict[str, Any]) -> int:
+    tier = item.get("scanner_tier")
+    priorities = {
+        "SIGNAL_CANDIDATE": 6,
+        "WATCHLIST_CONTEXT": 5,
+        "RADAR_ONLY": 4,
+        "RISK_CONTEXT": 3,
+        "BASELINE_CONTEXT": 2,
+        "BLOCKED": 1,
+    }
+    return priorities.get(tier, 0)
+
+
+def _item_sort_key(item: dict[str, Any]) -> tuple[str, int, str]:
+    return (
+        str(item.get("window_close_time") or item.get("observation_time") or ""),
+        _item_priority(item),
+        str(item.get("symbol") or ""),
+    )
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _factory_candidate_type(setup_type: Any) -> str:
+    mapping = {
+        "EARLY_LONG": "EARLY_LONG_CANDIDATE_READONLY",
+        "EARLY_SHORT": "EARLY_SHORT_CANDIDATE_READONLY",
+        "MID_LONG": "MID_LONG_CONTEXT_READONLY",
+        "MID_SHORT": "MID_SHORT_CONTEXT_READONLY",
+        "SQUEEZE": "SQUEEZE_RISK_CONTEXT_READONLY",
+        "TRAP_FADE": "TRAP_RISK_CONTEXT_READONLY",
+        "NO_SETUP": "NO_SIGNAL_CONTEXT",
+        "BLOCKED_DATA": "DATA_BLOCKED",
+    }
+    return mapping.get(str(setup_type or ""), str(setup_type or "NO_SIGNAL_CONTEXT"))
+
+
+def _factory_evidence_summary(candidate: dict[str, Any]) -> dict[str, Any]:
+    evidence = candidate.get("evidence") or {}
+    keys = (
+        "anomalies",
+        "price_return",
+        "volume_spike",
+        "oi_change_pct",
+        "funding_pressure",
+        "relative_strength",
+        "futures_led_flag",
+        "spot_led_flag",
+        "feature_status",
+        "status_reasons",
+        "entry_market",
+        "entry_price_source",
+        "spot_usage",
+        "early_signal_logic_version",
+        "early_quality_score",
+        "early_quality_bucket",
+        "early_quality_reasons",
+        "atr_extension",
+    )
+    summary = {
+        key: _decimal_to_plain(evidence.get(key))
+        for key in keys
+        if key in evidence
+    }
+    summary["source"] = "signal_factory_v1"
+    summary["timeframe"] = candidate.get("timeframe")
+    summary["setup_type"] = candidate.get("setup_type")
+    summary["candidate_status"] = candidate.get("candidate_status")
+    summary["atr_reference_status"] = candidate.get("atr_reference_status")
+    return summary

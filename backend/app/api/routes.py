@@ -38,7 +38,7 @@ from app.services.phase6_readiness_audit import DEFAULT_PHASE6_DIR, Phase6Artifa
 from app.services.phase7_forward_test import Phase7ForwardTestArtifactService
 from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
-from app.services.anomaly_signal_factory import SignalFactoryArtifactService
+from app.services.anomaly_signal_factory import DEFAULT_SIGNAL_FACTORY_DIR, SignalFactoryArtifactService
 from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
@@ -303,7 +303,7 @@ def scanner_live(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
 ):
-    items = LiveCandidateScannerService(db).list_live(
+    items = LiveCandidateScannerService(db, signal_factory_artifact_dir=DEFAULT_SIGNAL_FACTORY_DIR).list_live(
         tier=tier,
         candidate_type=candidate_type,
         limit=limit,
