@@ -177,10 +177,20 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
               <div className="mb-1 font-semibold text-ink">Evidence angka</div>
               <div>Price 15m: {fmtSignedPercent(evidenceNumber(item, "price_return", "price_return_pct_15m"))}</div>
               <div>OI change: {fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))}</div>
+              <div>OI z-score: {fmtNumber(evidenceNumber(item, "oi_zscore"))}</div>
               <div>Volume vs avg: {fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))}</div>
+              <div>Range vs ATR: {fmtRatioX(evidenceNumber(item, "range_ratio_vs_atr"))}</div>
               <div>Taker buy: {fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))}</div>
               <div>Taker sell: {fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))}</div>
               <div>Close position: {fmtRatioPercent(evidenceNumber(item, "close_position_in_range", "close_position_15m"))}</div>
+              <div>1h return: {fmtSignedPercent(evidenceNumber(item, "one_hour_return_pct", "price_return_pct_1h"))}</div>
+              <div>Funding percentile: {fmtRatioPercentFromPercent(evidenceNumber(item, "funding_percentile_30d"))}</div>
+              <div>Global L/S: {fmtNumber(evidenceNumber(item, "global_long_short_ratio", "global_long_short_ratio_15m"))}</div>
+              <div>Top trader position: {fmtNumber(evidenceNumber(item, "top_trader_position_ratio", "top_trader_position_ratio_15m"))}</div>
+              <div>Futures spread: {fmtSignedPercent(evidenceNumber(item, "futures_spread_pct"))}</div>
+              <div>Core score: {fmtNumber(evidenceNumber(item, "core_score"))}/{fmtNumber(evidenceNumber(item, "core_score_max"))}</div>
+              <div>Evidence score: {fmtNumber(evidenceNumber(item, "evidence_score"))}</div>
+              <div>Evidence flags: {formatList(item.evidence_summary.evidence_flags)}</div>
               <div>Futures led: {String(item.evidence_summary.futures_led_flag ?? "-")}</div>
               <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? "-")}</div>
             </div>
@@ -251,9 +261,20 @@ function fmtRatioPercent(value: number | null): string {
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value * 100)}%`;
 }
 
+function fmtRatioPercentFromPercent(value: number | null): string {
+  if (value === null) return "-";
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
 function fmtRatioX(value: number | null): string {
   if (value === null) return "-";
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}x`;
+}
+
+function formatList(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
+  if (typeof value === "string" && value) return value;
+  return "-";
 }
 
 function scannerApiPath({

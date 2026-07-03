@@ -10,6 +10,16 @@ from typing import Any
 
 from app.services.early_signal_quality import evaluate_early_signal_quality
 from app.services.multitimeframe_features import DEFAULT_DB_PATH, REPO_ROOT, MultiTimeframeFeatureService, json_safe
+from app.services.signal_factory_v2_scoring import (
+    EARLY_SIGNAL_THRESHOLD,
+    SIGNAL_FACTORY_V2_VERSION,
+    calculate_core_score,
+    calculate_entry_sl_tp,
+    calculate_evidence_score,
+    check_execution_risk,
+    is_mid_trigger,
+    to_payload,
+)
 
 
 DEFAULT_SIGNAL_FACTORY_DIR = REPO_ROOT / "backend" / "artifacts" / "signal_factory" / "v1"
@@ -63,7 +73,15 @@ def detect_anomalies(feature: dict[str, Any]) -> list[str]:
     return anomalies
 
 
-def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None = None) -> dict[str, Any]:
+def classify_candidate(
+    feature: dict[str, Any],
+    atr_reference_status: str | None = None,
+    atr_reference_feature: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if atr_reference_feature:
+        feature = dict(feature)
+        feature["atr_reference_pct"] = atr_reference_feature.get("atr_pct")
+        feature["atr_reference_timeframe"] = atr_reference_feature.get("timeframe")
     anomalies = detect_anomalies(feature)
     feature_status = feature["feature_status"]
     timeframe = feature["timeframe"]
@@ -86,16 +104,18 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         close_high = "CLOSE_NEAR_HIGH" in anomalies
         close_low = "CLOSE_NEAR_LOW" in anomalies
         atr_extension = _atr_extension(feature)
+        early_long_core = calculate_core_score(feature, "LONG", feature.get("atr_reference_pct"))
+        early_short_core = calculate_core_score(feature, "SHORT", feature.get("atr_reference_pct"))
         early_long_quality = evaluate_early_signal_quality(
             price_return_pct=feature.get("price_return"),
             close_position=feature.get("close_position_in_range"),
             taker_buy_ratio=feature.get("kline_taker_buy_ratio"),
             oi_change_pct=feature.get("oi_change_pct"),
             volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
-            range_ratio_vs_baseline=None,
-            atr_extension=atr_extension,
+            range_ratio_vs_baseline=feature.get("range_ratio_vs_atr"),
+            atr_extension=early_long_core.atr_extension_normalized or atr_extension,
             spot_context=feature.get("spot_context"),
-            one_hour_return_pct=None,
+            one_hour_return_pct=feature.get("one_hour_return_pct"),
             funding_rate=feature.get("funding_rate"),
             direction_hint="LONG",
         )
@@ -105,44 +125,42 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
             taker_buy_ratio=feature.get("kline_taker_buy_ratio"),
             oi_change_pct=feature.get("oi_change_pct"),
             volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
-            range_ratio_vs_baseline=None,
-            atr_extension=atr_extension,
+            range_ratio_vs_baseline=feature.get("range_ratio_vs_atr"),
+            atr_extension=early_short_core.atr_extension_normalized or atr_extension,
             spot_context=feature.get("spot_context"),
-            one_hour_return_pct=None,
+            one_hour_return_pct=feature.get("one_hour_return_pct"),
             funding_rate=feature.get("funding_rate"),
             direction_hint="SHORT",
         )
 
-        if timeframe == "15m" and early_short_quality.is_early_short and early_short_quality.quality_score >= 6:
+        if timeframe == "15m" and early_short_core.base_trigger and early_short_core.score >= EARLY_SIGNAL_THRESHOLD:
             setup_type = "EARLY_SHORT"
             direction = "BEARISH_CONTEXT"
             candidate_status = "SIGNAL_CANDIDATE"
             confidence = "MEDIUM"
             reason = (
-                f"Normalized early short quality {early_short_quality.quality_score}/10 "
-                f"({early_short_quality.quality_bucket})"
+                f"Signal Factory V2 early short core score {early_short_core.score}/13"
             )
-        elif timeframe == "15m" and early_long_quality.is_early_long and early_long_quality.quality_score >= 6:
+        elif timeframe == "15m" and early_long_core.base_trigger and early_long_core.score >= EARLY_SIGNAL_THRESHOLD:
             setup_type = "EARLY_LONG"
             direction = "BULLISH_CONTEXT"
             candidate_status = "SIGNAL_CANDIDATE"
             confidence = "MEDIUM"
             reason = (
-                f"Normalized early long quality {early_long_quality.quality_score}/10 "
-                f"({early_long_quality.quality_bucket})"
+                f"Signal Factory V2 early long core score {early_long_core.score}/13"
             )
-        elif down and oi_expansion:
+        elif is_mid_trigger(feature, "SHORT"):
             setup_type = "MID_SHORT"
             direction = "BEARISH_CONTEXT"
             candidate_status = "SIGNAL_CANDIDATE"
             confidence = "HIGH" if futures_led and feature_status == "READY" else "MEDIUM"
-            reason = "Price down impulse with open interest expansion"
-        elif up and oi_expansion:
+            reason = "Signal Factory V2 normalized bearish impulse with OI expansion"
+        elif is_mid_trigger(feature, "LONG"):
             setup_type = "MID_LONG"
             direction = "BULLISH_CONTEXT"
             candidate_status = "SIGNAL_CANDIDATE"
             confidence = "MEDIUM" if feature_status == "READY" else "LOW"
-            reason = "Price up impulse with open interest expansion"
+            reason = "Signal Factory V2 normalized bullish impulse with OI expansion"
         elif down and close_low:
             setup_type = "EARLY_SHORT"
             direction = "BEARISH_CONTEXT"
@@ -178,27 +196,61 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         candidate_status = "RADAR_ONLY"
         confidence = "MEDIUM" if confidence == "HIGH" else confidence
 
+    scoring_direction = None
+    if direction == "BULLISH_CONTEXT":
+        scoring_direction = "LONG"
+    elif direction == "BEARISH_CONTEXT":
+        scoring_direction = "SHORT"
+    if scoring_direction:
+        v2_core = calculate_core_score(feature, scoring_direction, feature.get("atr_reference_pct"))
+        v2_evidence = calculate_evidence_score(feature, scoring_direction)
+        v2_risk = check_execution_risk(feature)
+        v2_entry = calculate_entry_sl_tp(feature, scoring_direction, setup_type, v2_evidence.confidence_tier)
+        if candidate_status in {"SIGNAL_CANDIDATE", "RADAR_ONLY"}:
+            confidence = _legacy_confidence(v2_evidence.confidence_tier, confidence)
+    else:
+        v2_core = calculate_core_score(feature, "LONG", feature.get("atr_reference_pct"))
+        v2_evidence = calculate_evidence_score(feature, "LONG")
+        v2_risk = check_execution_risk(feature)
+        v2_entry = calculate_entry_sl_tp(feature, "LONG", setup_type, v2_evidence.confidence_tier)
+
     setup_family = f"{setup_type}_{timeframe.upper().replace('M', 'M').replace('H', 'H')}"
+    v2_payload = to_payload(v2_core, v2_evidence, v2_risk, v2_entry)
     evidence = {
         "anomalies": anomalies,
+        "signal_factory_logic_version": SIGNAL_FACTORY_V2_VERSION,
         "price_return": feature.get("price_return"),
         "close_position_in_range": feature.get("close_position_in_range"),
         "volume_spike": feature.get("volume_spike"),
         "volume_ratio_vs_lookback": feature.get("volume_ratio_vs_lookback"),
+        "range_ratio_vs_atr": feature.get("range_ratio_vs_atr"),
         "kline_taker_buy_ratio": feature.get("kline_taker_buy_ratio"),
         "kline_taker_sell_ratio": feature.get("kline_taker_sell_ratio"),
         "kline_taker_buy_base": feature.get("kline_taker_buy_base"),
         "kline_taker_sell_base": feature.get("kline_taker_sell_base"),
         "oi_change_pct": feature.get("oi_change_pct"),
+        "oi_zscore": feature.get("oi_zscore"),
+        "oi_change_mean_30d": feature.get("oi_change_mean_30d"),
+        "oi_change_std_30d": feature.get("oi_change_std_30d"),
         "funding_pressure": feature.get("funding_pressure"),
+        "funding_percentile_30d": feature.get("funding_percentile_30d"),
         "relative_strength": feature.get("relative_strength"),
+        "one_hour_return_pct": feature.get("one_hour_return_pct"),
         "futures_led_flag": feature.get("futures_led_flag"),
         "spot_led_flag": feature.get("spot_led_flag"),
+        "global_long_short_ratio": feature.get("global_long_short_ratio"),
+        "top_trader_position_ratio": feature.get("top_trader_position_ratio"),
+        "top_trader_account_ratio": feature.get("top_trader_account_ratio"),
+        "rich_alignment_status": feature.get("rich_alignment_status"),
+        "futures_spread_pct": feature.get("futures_spread_pct"),
+        "spot_spread_pct": feature.get("spot_spread_pct"),
+        "snapshot_alignment_status": feature.get("snapshot_alignment_status"),
         "feature_status": feature_status,
         "status_reasons": feature.get("status_reasons") or [],
         "entry_market": "futures",
         "entry_price_source": "futures_klines_15m.close",
         "spot_usage": "filter/evidence_only",
+        **v2_payload,
     }
     if setup_type == "EARLY_LONG":
         evidence.update(
@@ -220,7 +272,7 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
                 "atr_extension": atr_extension,
             }
         )
-    return {
+    candidate = {
         "symbol": feature["symbol"],
         "timeframe": timeframe,
         "window_start": feature.get("window_start"),
@@ -232,6 +284,18 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         "confidence": confidence,
         "reason": reason,
         "evidence": evidence,
+        "signal_factory_version": SIGNAL_FACTORY_V2_VERSION,
+        "core_score": v2_payload["core_score"],
+        "core_score_max": v2_payload["core_score_max"],
+        "evidence_score": v2_payload["evidence_score"],
+        "evidence_confidence_tier": v2_payload["evidence_confidence_tier"],
+        "execution_risk_status": v2_payload["execution_risk_status"],
+        "entry_mode": v2_payload["entry_mode"],
+        "entry_price": v2_payload["entry_price"],
+        "stop_loss_reference": v2_payload["stop_loss_reference"],
+        "take_profit_reference": v2_payload["take_profit_reference"],
+        "rr": v2_payload["rr"],
+        "timeout_minutes": v2_payload["timeout_minutes"],
         "feature_status": feature_status,
         "candidate_status": candidate_status,
         "atr_reference_timeframe": ATR_REFERENCE_TIMEFRAME[timeframe],
@@ -239,6 +303,7 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         "not_live_signal": True,
         "not_execution_instruction": True,
     }
+    return json_safe(candidate)
 
 
 class SignalFactoryRunner:
@@ -265,7 +330,7 @@ class SignalFactoryRunner:
             atr_status = None
             if not atr_feature or atr_feature.get("atr") is None:
                 atr_status = "MISSING_ATR_REFERENCE"
-            candidates.append(classify_candidate(feature, atr_status))
+            candidates.append(classify_candidate(feature, atr_status, atr_feature))
 
         candidates = _apply_conflict_markers(candidates)
         generated_at = datetime.now(UTC).isoformat()
@@ -424,3 +489,13 @@ def _atr_extension(feature: dict[str, Any]) -> Decimal | None:
     if price_return_abs is None or atr_pct is None or atr_pct == 0:
         return None
     return price_return_abs / atr_pct
+
+
+def _legacy_confidence(v2_tier: str, fallback: str) -> str:
+    if v2_tier == "HIGH_CONF":
+        return "HIGH"
+    if v2_tier == "LOW_CONF":
+        return "LOW"
+    if v2_tier == "CONFLICT":
+        return "LOW"
+    return fallback

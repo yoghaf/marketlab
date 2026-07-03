@@ -49,6 +49,7 @@ class FeatureSnapshot:
     window_end: datetime | None
     price_return: Decimal | None
     price_return_abs: Decimal | None
+    entry_price: Decimal | None
     volume_sum: Decimal | None
     volume_ratio_vs_lookback: Decimal | None
     volume_spike: bool
@@ -62,9 +63,14 @@ class FeatureSnapshot:
     funding_pressure: str
     high_low_range: Decimal | None
     range_pct: Decimal | None
+    range_ratio_vs_atr: Decimal | None
     close_position_in_range: Decimal | None
     atr: Decimal | None
     atr_pct: Decimal | None
+    oi_change_mean_30d: Decimal | None
+    oi_change_std_30d: Decimal | None
+    oi_zscore: Decimal | None
+    funding_percentile_30d: Decimal | None
     futures_volume_spike: bool
     spot_volume_spike: bool | None
     oi_expansion: bool
@@ -77,6 +83,14 @@ class FeatureSnapshot:
     symbol_return: Decimal | None
     relative_return: Decimal | None
     relative_strength: str
+    one_hour_return_pct: Decimal | None
+    global_long_short_ratio: Decimal | None
+    top_trader_position_ratio: Decimal | None
+    top_trader_account_ratio: Decimal | None
+    rich_alignment_status: str | None
+    futures_spread_pct: Decimal | None
+    spot_spread_pct: Decimal | None
+    snapshot_alignment_status: str | None
     feature_status: str
     status_reasons: list[str]
 
@@ -229,6 +243,7 @@ class MultiTimeframeFeatureService:
             close_position = (current.close - current.low) / high_low_range if high_low_range else None
             atr = calculate_atr(history)
             atr_pct = atr / current.close * Decimal("100") if atr and current.close else None
+            range_ratio_vs_atr = range_pct / atr_pct if range_pct is not None and atr_pct and atr_pct > 0 else None
             if atr is None:
                 feature_status = _worse_feature_status(feature_status, "MISSING_ATR")
                 status_reasons.append("missing ATR lookback")
@@ -236,10 +251,13 @@ class MultiTimeframeFeatureService:
             oi_end = self._open_interest_near(conn, symbol, current.close_time)
             oi_change = (oi_end - oi_start) if oi_start is not None and oi_end is not None else None
             oi_change_pct = oi_change / oi_start * Decimal("100") if oi_change is not None and oi_start else None
+            oi_stats = self._oi_change_stats_30d(conn, symbol, current.close_time)
+            oi_zscore = _zscore(oi_change_pct, oi_stats["mean"], oi_stats["std"])
             if oi_change is None:
                 feature_status = _worse_feature_status(feature_status, "MISSING_OI")
                 status_reasons.append("missing OI")
             funding_rate = self._funding_near(conn, symbol, current.close_time)
+            funding_percentile = self._funding_percentile_30d(conn, symbol, current.close_time, funding_rate)
             funding_pressure = _funding_pressure(funding_rate)
             if funding_rate is None:
                 feature_status = _worse_feature_status(feature_status, "PARTIAL_DATA")
@@ -257,6 +275,9 @@ class MultiTimeframeFeatureService:
             if benchmark_return is None:
                 feature_status = _worse_feature_status(feature_status, "PARTIAL_DATA")
                 status_reasons.append("missing benchmark return")
+            one_hour_return = self._closed_context_return(conn, symbol, "1h", current.close_time) if timeframe == "15m" else None
+            rich = self._rich_alignment(conn, symbol, timeframe, current.open_time, current.close_time)
+            state = self._market_state_alignment(conn, symbol, timeframe, current.open_time, current.close_time)
             return FeatureSnapshot(
                 symbol=symbol,
                 timeframe=timeframe,
@@ -264,6 +285,7 @@ class MultiTimeframeFeatureService:
                 window_end=current.close_time,
                 price_return=price_return,
                 price_return_abs=abs(price_return) if price_return is not None else None,
+                entry_price=current.close,
                 volume_sum=current.volume,
                 volume_ratio_vs_lookback=volume_ratio,
                 volume_spike=volume_spike,
@@ -277,9 +299,14 @@ class MultiTimeframeFeatureService:
                 funding_pressure=funding_pressure,
                 high_low_range=high_low_range,
                 range_pct=range_pct,
+                range_ratio_vs_atr=range_ratio_vs_atr,
                 close_position_in_range=close_position,
                 atr=atr,
                 atr_pct=atr_pct,
+                oi_change_mean_30d=oi_stats["mean"],
+                oi_change_std_30d=oi_stats["std"],
+                oi_zscore=oi_zscore,
+                funding_percentile_30d=funding_percentile,
                 futures_volume_spike=volume_spike,
                 spot_volume_spike=spot_snapshot["spot_volume_spike"],
                 oi_expansion=oi_change_pct is not None and oi_change_pct > 0,
@@ -292,6 +319,14 @@ class MultiTimeframeFeatureService:
                 symbol_return=price_return,
                 relative_return=relative_return,
                 relative_strength=relative_strength,
+                one_hour_return_pct=one_hour_return,
+                global_long_short_ratio=rich.get("global_long_short_ratio_avg"),
+                top_trader_position_ratio=rich.get("top_trader_position_ratio_avg"),
+                top_trader_account_ratio=rich.get("top_trader_account_ratio_avg"),
+                rich_alignment_status=rich.get("alignment_status"),
+                futures_spread_pct=state.get("futures_spread_pct"),
+                spot_spread_pct=state.get("spot_spread_pct"),
+                snapshot_alignment_status=state.get("snapshot_alignment_status"),
                 feature_status=feature_status,
                 status_reasons=status_reasons,
             )
@@ -386,6 +421,131 @@ class MultiTimeframeFeatureService:
         ).fetchone()
         return dec(row["funding_rate"]) if row and row["funding_rate"] is not None else None
 
+    def _oi_change_stats_30d(self, conn: sqlite3.Connection, symbol: str, when: datetime) -> dict[str, Decimal | None]:
+        if not self._has_table(conn, "futures_open_interest_history"):
+            return {"mean": None, "std": None}
+        start = when - timedelta(days=30)
+        rows = conn.execute(
+            """
+            SELECT timestamp, sum_open_interest
+            FROM futures_open_interest_history
+            WHERE symbol = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+            """,
+            (symbol, start.isoformat(sep=" "), when.isoformat(sep=" ")),
+        ).fetchall()
+        changes: list[Decimal] = []
+        previous: Decimal | None = None
+        for row in rows:
+            current = dec(row["sum_open_interest"]) if row["sum_open_interest"] is not None else None
+            if previous and current is not None and previous > 0:
+                changes.append((current - previous) / previous * Decimal("100"))
+            previous = current
+        if len(changes) < 2:
+            return {"mean": None, "std": None}
+        mean = sum(changes, Decimal("0")) / Decimal(len(changes))
+        variance = sum(((item - mean) ** 2 for item in changes), Decimal("0")) / Decimal(len(changes))
+        std = Decimal(str(float(variance) ** 0.5))
+        return {"mean": mean, "std": std if std > 0 else None}
+
+    def _funding_percentile_30d(
+        self,
+        conn: sqlite3.Connection,
+        symbol: str,
+        when: datetime,
+        current_funding: Decimal | None,
+    ) -> Decimal | None:
+        if current_funding is None or not self._has_table(conn, "futures_funding_history"):
+            return None
+        start = when - timedelta(days=30)
+        rows = conn.execute(
+            """
+            SELECT funding_rate
+            FROM futures_funding_history
+            WHERE symbol = ? AND funding_time >= ? AND funding_time <= ? AND funding_rate IS NOT NULL
+            ORDER BY funding_time ASC
+            """,
+            (symbol, start.isoformat(sep=" "), when.isoformat(sep=" ")),
+        ).fetchall()
+        rates = [dec(row["funding_rate"]) for row in rows]
+        if not rates:
+            return None
+        less_or_equal = sum(1 for rate in rates if rate <= current_funding)
+        return Decimal(less_or_equal) / Decimal(len(rates)) * Decimal("100")
+
+    def _closed_context_return(self, conn: sqlite3.Connection, symbol: str, timeframe: str, when: datetime) -> Decimal | None:
+        rows = self._load_aggregate(conn, symbol, timeframe, None, when, "futures")
+        if not rows:
+            return None
+        candle = rows[-1]
+        return _pct_change(candle.open, candle.close)
+
+    def _rich_alignment(
+        self,
+        conn: sqlite3.Connection,
+        symbol: str,
+        timeframe: str,
+        open_time: datetime,
+        close_time: datetime,
+    ) -> dict[str, Decimal | str | None]:
+        output = {
+            "alignment_status": None,
+            "global_long_short_ratio_avg": None,
+            "top_trader_position_ratio_avg": None,
+            "top_trader_account_ratio_avg": None,
+        }
+        if not self._has_table(conn, "rich_futures_5m_alignment"):
+            return output
+        row = conn.execute(
+            """
+            SELECT alignment_status, global_long_short_ratio_avg, top_trader_position_ratio_avg, top_trader_account_ratio_avg
+            FROM rich_futures_5m_alignment
+            WHERE symbol = ? AND timeframe = ? AND window_open_time = ? AND window_close_time = ?
+            LIMIT 1
+            """,
+            (symbol, timeframe, open_time.isoformat(sep=" "), close_time.isoformat(sep=" ")),
+        ).fetchone()
+        if not row:
+            return output
+        return {
+            "alignment_status": row["alignment_status"],
+            "global_long_short_ratio_avg": dec(row["global_long_short_ratio_avg"]) if row["global_long_short_ratio_avg"] is not None else None,
+            "top_trader_position_ratio_avg": dec(row["top_trader_position_ratio_avg"]) if row["top_trader_position_ratio_avg"] is not None else None,
+            "top_trader_account_ratio_avg": dec(row["top_trader_account_ratio_avg"]) if row["top_trader_account_ratio_avg"] is not None else None,
+        }
+
+    def _market_state_alignment(
+        self,
+        conn: sqlite3.Connection,
+        symbol: str,
+        timeframe: str,
+        open_time: datetime,
+        close_time: datetime,
+    ) -> dict[str, Decimal | str | None]:
+        output = {"snapshot_alignment_status": None, "futures_spread_pct": None, "spot_spread_pct": None}
+        if not self._has_table(conn, "market_state_alignment"):
+            return output
+        row = conn.execute(
+            """
+            SELECT snapshot_alignment_status, futures_spread_pct, spot_spread_pct
+            FROM market_state_alignment
+            WHERE symbol = ? AND timeframe = ? AND window_open_time = ? AND window_close_time = ?
+            LIMIT 1
+            """,
+            (symbol, timeframe, open_time.isoformat(sep=" "), close_time.isoformat(sep=" ")),
+        ).fetchone()
+        if not row:
+            return output
+        return {
+            "snapshot_alignment_status": row["snapshot_alignment_status"],
+            "futures_spread_pct": dec(row["futures_spread_pct"]) if row["futures_spread_pct"] is not None else None,
+            "spot_spread_pct": dec(row["spot_spread_pct"]) if row["spot_spread_pct"] is not None else None,
+        }
+
+    def _has_table(self, conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        return row is not None
+
     def _spot_context(
         self,
         conn: sqlite3.Connection,
@@ -440,6 +600,7 @@ def empty_snapshot(symbol: str, timeframe: str, status: str) -> FeatureSnapshot:
         window_end=None,
         price_return=None,
         price_return_abs=None,
+        entry_price=None,
         volume_sum=None,
         volume_ratio_vs_lookback=None,
         volume_spike=False,
@@ -453,9 +614,14 @@ def empty_snapshot(symbol: str, timeframe: str, status: str) -> FeatureSnapshot:
         funding_pressure="UNKNOWN",
         high_low_range=None,
         range_pct=None,
+        range_ratio_vs_atr=None,
         close_position_in_range=None,
         atr=None,
         atr_pct=None,
+        oi_change_mean_30d=None,
+        oi_change_std_30d=None,
+        oi_zscore=None,
+        funding_percentile_30d=None,
         futures_volume_spike=False,
         spot_volume_spike=None,
         oi_expansion=False,
@@ -468,6 +634,14 @@ def empty_snapshot(symbol: str, timeframe: str, status: str) -> FeatureSnapshot:
         symbol_return=None,
         relative_return=None,
         relative_strength="UNKNOWN",
+        one_hour_return_pct=None,
+        global_long_short_ratio=None,
+        top_trader_position_ratio=None,
+        top_trader_account_ratio=None,
+        rich_alignment_status=None,
+        futures_spread_pct=None,
+        spot_spread_pct=None,
+        snapshot_alignment_status=None,
         feature_status=status,
         status_reasons=[status.lower()],
     )
@@ -497,6 +671,12 @@ def _relative_strength(relative_return: Decimal | None) -> str:
     if relative_return <= Decimal("-0.5"):
         return "UNDERPERFORMING"
     return "INLINE_WITH_MARKET"
+
+
+def _zscore(value: Decimal | None, mean: Decimal | None, std: Decimal | None) -> Decimal | None:
+    if value is None or mean is None or std is None or std == 0:
+        return None
+    return (value - mean) / std
 
 
 def _worse_feature_status(current: str, candidate: str) -> str:
