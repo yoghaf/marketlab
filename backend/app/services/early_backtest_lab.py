@@ -158,14 +158,20 @@ class EarlyBacktestLabArtifactService:
                         "stop": row.get("stop_loss_reference"),
                         "target": row.get("take_profit_reference"),
                         "risk": row.get("risk_distance"),
+                        "rr": row.get("rr"),
+                        "target_return_pct": row.get("target_return_pct"),
+                        "stop_return_pct": row.get("stop_return_pct"),
                         "horizons": {
                             "15m": {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None},
                             "1h": {
                                 "status": "READY",
                                 "outcome": outcome,
                                 "realized_r": row.get("realized_r"),
+                                "realized_return_pct": row.get("realized_return_pct"),
                                 "mfe_r": row.get("max_favorable_r"),
                                 "mae_r": row.get("max_adverse_r"),
+                                "max_favorable_return_pct": row.get("max_favorable_return_pct"),
+                                "max_adverse_return_pct": row.get("max_adverse_return_pct"),
                                 "result_time_utc": result_time,
                                 "result_time_wib": _to_wib_string(result_time),
                             },
@@ -221,6 +227,9 @@ class EarlyBacktestLabArtifactService:
                             "stop": row.get("stop_loss_reference"),
                             "target": row.get("take_profit_reference"),
                             "risk": row.get("risk_distance"),
+                            "rr": row.get("rr"),
+                            "target_return_pct": row.get("target_return_pct"),
+                            "stop_return_pct": row.get("stop_return_pct"),
                             "horizons": {
                                 item: {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None}
                                 for item in HORIZONS
@@ -235,8 +244,11 @@ class EarlyBacktestLabArtifactService:
                         "status": "READY",
                         "outcome": row.get("outcome") or "UNKNOWN",
                         "realized_r": row.get("realized_r"),
+                        "realized_return_pct": row.get("realized_return_pct"),
                         "mfe_r": row.get("max_favorable_r"),
                         "mae_r": row.get("max_adverse_r"),
+                        "max_favorable_return_pct": row.get("max_favorable_return_pct"),
+                        "max_adverse_return_pct": row.get("max_adverse_return_pct"),
                         "result_time_utc": result_time,
                         "result_time_wib": _to_wib_string(result_time),
                     }
@@ -257,6 +269,8 @@ class EarlyBacktestLabArtifactService:
     def _horizon_summary(self, events: list[dict[str, Any]], horizon: str) -> dict[str, Any]:
         outcomes: Counter[str] = Counter()
         values: list[Decimal] = []
+        return_values: list[Decimal] = []
+        rr_values: list[Decimal] = []
         ready = 0
         waiting = 0
         for event in events:
@@ -272,6 +286,12 @@ class EarlyBacktestLabArtifactService:
                 continue
             ready += 1
             values.append(realized)
+            realized_return = _dec(result.get("realized_return_pct"))
+            if realized_return is not None:
+                return_values.append(realized_return)
+            rr_value = _dec(event.get("rr"))
+            if rr_value is not None:
+                rr_values.append(rr_value)
         return {
             "events": ready + waiting,
             "ready": ready,
@@ -283,6 +303,9 @@ class EarlyBacktestLabArtifactService:
             "outcomes": dict(outcomes),
             "avg_r": _avg(values),
             "median_r": median(values) if values else None,
+            "avg_return_pct": _avg(return_values),
+            "median_return_pct": median(return_values) if return_values else None,
+            "planned_rr": median(rr_values) if rr_values else None,
             "best_r": max(values) if values else None,
             "worst_r": min(values) if values else None,
         }
@@ -335,12 +358,18 @@ class EarlyBacktestLabArtifactService:
                     "stop": event.get("stop"),
                     "target": event.get("target"),
                     "risk": event.get("risk"),
+                    "rr": event.get("rr"),
+                    "target_return_pct": event.get("target_return_pct"),
+                    "stop_return_pct": event.get("stop_return_pct"),
                     "horizon": horizon,
                     "outcome": row_outcome,
                     "status": result.get("status"),
                     "realized_r": result.get("realized_r"),
+                    "realized_return_pct": result.get("realized_return_pct"),
                     "mfe_r": result.get("mfe_r"),
                     "mae_r": result.get("mae_r"),
+                    "max_favorable_return_pct": result.get("max_favorable_return_pct"),
+                    "max_adverse_return_pct": result.get("max_adverse_return_pct"),
                     "result_time_utc": result.get("result_time_utc"),
                     "result_time_wib": result.get("result_time_wib"),
                     "evidence": event.get("evidence") or {},

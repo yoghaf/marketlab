@@ -355,6 +355,9 @@ export type EarlyBacktestHorizonSummary = {
   outcomes: Record<string, number>;
   avg_r?: number | null;
   median_r?: number | null;
+  avg_return_pct?: number | null;
+  median_return_pct?: number | null;
+  planned_rr?: number | null;
   best_r?: number | null;
   worst_r?: number | null;
 };
@@ -378,12 +381,18 @@ export type EarlyBacktestEvent = {
   stop?: string | number | null;
   target?: string | number | null;
   risk?: string | number | null;
+  rr?: string | number | null;
+  target_return_pct?: string | number | null;
+  stop_return_pct?: string | number | null;
   horizon: string;
   outcome: string;
   status?: string | null;
   realized_r?: string | number | null;
+  realized_return_pct?: string | number | null;
   mfe_r?: string | number | null;
   mae_r?: string | number | null;
+  max_favorable_return_pct?: string | number | null;
+  max_adverse_return_pct?: string | number | null;
   result_time_utc?: string | null;
   result_time_wib?: string | null;
   evidence?: Record<string, string | number | boolean | null | undefined>;

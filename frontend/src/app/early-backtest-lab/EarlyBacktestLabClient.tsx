@@ -71,7 +71,8 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
             <MetricCard label="EARLY_LONG" value={earlyLong} helper="Long awal historis" tone="info" />
             <MetricCard label="EARLY_SHORT" value={earlyShort} helper="Short awal historis" tone="warn" />
             <MetricCard label={`${horizon} Ready`} value={selectedHorizon?.ready || 0} helper={`Waiting ${selectedHorizon?.waiting || 0}`} />
-            <MetricCard label={`${horizon} Median R`} value={fmtR(selectedHorizon?.median_r)} helper={`Avg ${fmtR(selectedHorizon?.avg_r)}`} tone={(selectedHorizon?.median_r || 0) > 0 ? "good" : "warn"} />
+            <MetricCard label="Planned RR" value={fmtRR(selectedHorizon?.planned_rr)} helper="Target dibanding risk" tone="info" />
+            <MetricCard label={`${horizon} Median Return`} value={fmtPct(selectedHorizon?.median_return_pct)} helper={`Median R ${fmtR(selectedHorizon?.median_r)}`} tone={(selectedHorizon?.median_return_pct || 0) > 0 ? "good" : "warn"} />
             <MetricCard label="Candles" value={summary?.metadata.candles_15m || 0} helper="Futures 15m di artifact" />
           </section>
 
@@ -94,8 +95,10 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
                     <th>TP</th>
                     <th>SL</th>
                     <th>Neither</th>
-                    <th>Avg R</th>
-                    <th>Median R</th>
+                    <th>RR Plan</th>
+                    <th>Avg Return</th>
+                    <th>Median Return</th>
+                    <th>Avg / Median R</th>
                     <th>Best/Worst</th>
                   </tr>
                 </thead>
@@ -109,8 +112,10 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
                         <td>{row?.tp ?? 0}</td>
                         <td>{row?.sl ?? 0}</td>
                         <td>{row?.neither ?? 0}</td>
-                        <td>{fmtR(row?.avg_r)}</td>
-                        <td>{fmtR(row?.median_r)}</td>
+                        <td>{fmtRR(row?.planned_rr)}</td>
+                        <td>{fmtPct(row?.avg_return_pct)}</td>
+                        <td>{fmtPct(row?.median_return_pct)}</td>
+                        <td>{fmtR(row?.avg_r)} / {fmtR(row?.median_r)}</td>
                         <td>{fmtR(row?.best_r)} / {fmtR(row?.worst_r)}</td>
                       </tr>
                     );
@@ -159,7 +164,7 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
                     <th>Setup</th>
                     <th>Entry Plan Futures</th>
                     <th>Outcome</th>
-                    <th>R / MFE / MAE</th>
+                    <th>Return / R</th>
                     <th>Trigger Evidence</th>
                   </tr>
                 </thead>
@@ -198,12 +203,16 @@ function EventRow({ item }: { item: EarlyBacktestEvent }) {
         <div>Entry: <span className="font-semibold">{fmtPrice(item.entry)}</span></div>
         <div>SL: {fmtPrice(item.stop)}</div>
         <div>TP: {fmtPrice(item.target)}</div>
+        <div>RR: <span className="font-semibold">{fmtRR(item.rr)}</span></div>
+        <div className="text-xs text-slate-500">TP {fmtPct(item.target_return_pct)} / SL {fmtPct(item.stop_return_pct)}</div>
         <div className="text-xs text-slate-500">{item.entry_price_source || "futures_klines_15m.close"}</div>
       </td>
       <td><StatusBadge value={item.outcome} /></td>
       <td>
-        <div className="font-semibold">{fmtR(item.realized_r)}</div>
-        <div className="text-xs text-slate-500">{fmtR(item.mfe_r)} / {fmtR(item.mae_r)}</div>
+        <div className="font-semibold">{fmtPct(item.realized_return_pct)}</div>
+        <div className="text-xs text-slate-500">R {fmtR(item.realized_r)}</div>
+        <div className="text-xs text-slate-500">MFE {fmtR(item.mfe_r)} / MAE {fmtR(item.mae_r)}</div>
+        <div className="text-xs text-slate-500">MFE {fmtPct(item.max_favorable_return_pct)} / MAE {fmtPct(item.max_adverse_return_pct)}</div>
       </td>
       <td><EvidenceSummary item={item} /></td>
     </tr>
@@ -277,6 +286,13 @@ function fmtPrice(value?: string | number | null): string {
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 8 }).format(num);
+}
+
+function fmtRR(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return `1:${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}`;
 }
 
 function numericEvidence(value: string | number | boolean | null | undefined): string | number | null | undefined {

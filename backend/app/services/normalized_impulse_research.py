@@ -543,6 +543,8 @@ def evaluate_rr_path(
     min_low = min(candle.low for candle in candles)
     max_favorable_r = (max_high - entry) / risk if direction == "LONG" else (entry - min_low) / risk
     max_adverse_r = (min_low - entry) / risk if direction == "LONG" else (entry - max_high) / risk
+    target_return_pct = directional_return_pct(entry, target, direction)
+    stop_return_pct = directional_return_pct(entry, stop, direction)
     outcome = "NEITHER"
     realized_r = (candles[-1].close - entry) / risk if direction == "LONG" else (entry - candles[-1].close) / risk
     result_time = candles[-1].close_time
@@ -594,6 +596,8 @@ def evaluate_rr_path(
         "risk_atr_mult": risk_atr_mult,
         "risk_distance": risk,
         "rr": rr,
+        "target_return_pct": target_return_pct,
+        "stop_return_pct": stop_return_pct,
         "horizon_bars": horizon_bars,
         "horizon_minutes": horizon_bars * 15,
         "outcome": outcome,
@@ -601,8 +605,11 @@ def evaluate_rr_path(
         "result_price_reference": result_price,
         "future_close_at_horizon": candles[-1].close,
         "realized_r": realized_r,
+        "realized_return_pct": directional_return_pct(entry, result_price, direction),
         "max_favorable_r": max_favorable_r,
         "max_adverse_r": max_adverse_r,
+        "max_favorable_return_pct": max_favorable_r * risk / entry * 100.0,
+        "max_adverse_return_pct": max_adverse_r * risk / entry * 100.0,
         "max_high_during_horizon": max_high,
         "min_low_during_horizon": min_low,
         "price_return_pct": row.price_return_pct,
@@ -771,6 +778,8 @@ CSV_FIELDNAMES = [
     "risk_distance",
     "risk_atr_mult",
     "rr",
+    "target_return_pct",
+    "stop_return_pct",
     "horizon_bars",
     "horizon_minutes",
     "outcome",
@@ -778,8 +787,11 @@ CSV_FIELDNAMES = [
     "result_price_reference",
     "future_close_at_horizon",
     "realized_r",
+    "realized_return_pct",
     "max_favorable_r",
     "max_adverse_r",
+    "max_favorable_return_pct",
+    "max_adverse_return_pct",
     "max_high_during_horizon",
     "min_low_during_horizon",
     "price_return_pct",
@@ -815,6 +827,7 @@ def summarize_setup(
 ) -> dict[str, Any]:
     outcomes = Counter(row["outcome"] for row in evaluated)
     realized = [row["realized_r"] for row in evaluated if row["realized_r"] is not None]
+    realized_return_pct = [row["realized_return_pct"] for row in evaluated if row.get("realized_return_pct") is not None]
     favorable = [row["max_favorable_r"] for row in evaluated if row["max_favorable_r"] is not None]
     adverse = [row["max_adverse_r"] for row in evaluated if row["max_adverse_r"] is not None]
     symbols = Counter(row["symbol"] for row in evaluated)
@@ -834,6 +847,8 @@ def summarize_setup(
         "neither_share": share(outcomes.get("NEITHER", 0), len(evaluated)),
         "median_realized_r": robust_median(realized),
         "avg_realized_r": sum(realized) / len(realized) if realized else None,
+        "median_realized_return_pct": robust_median(realized_return_pct),
+        "avg_realized_return_pct": sum(realized_return_pct) / len(realized_return_pct) if realized_return_pct else None,
         "median_max_favorable_r": robust_median(favorable),
         "median_max_adverse_r": robust_median(adverse),
         "top_symbols": symbols.most_common(15),
@@ -886,6 +901,14 @@ def future_candles(candles: list[Candle], signal_close_time: datetime, expected_
 
 def row_to_entry_price(row: NormalizedImpulseRow) -> float:
     return row.price_close
+
+
+def directional_return_pct(entry: float, price: float, direction: str) -> float:
+    if not entry:
+        return 0.0
+    if direction == "LONG":
+        return (price - entry) / entry * 100.0
+    return (entry - price) / entry * 100.0
 
 
 def spot_not_weak(row: FeatureRow) -> bool:
