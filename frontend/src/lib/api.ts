@@ -353,8 +353,10 @@ export type EarlyBacktestHorizonSummary = {
   both: number;
   neither: number;
   outcomes: Record<string, number>;
+  total_r?: number | null;
   avg_r?: number | null;
   median_r?: number | null;
+  total_return_pct?: number | null;
   avg_return_pct?: number | null;
   median_return_pct?: number | null;
   planned_rr?: number | null;
