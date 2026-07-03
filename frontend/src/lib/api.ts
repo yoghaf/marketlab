@@ -386,6 +386,7 @@ export type EarlyBacktestEvent = {
   mae_r?: string | number | null;
   result_time_utc?: string | null;
   result_time_wib?: string | null;
+  evidence?: Record<string, string | number | boolean | null | undefined>;
   not_live_signal: boolean;
   not_execution_instruction: boolean;
 };
@@ -396,6 +397,12 @@ export type EarlyBacktestSummaryResponse = {
     epoch?: string | null;
     signals_loaded?: number;
     events_evaluated?: number;
+    source_candidate_count?: number;
+    position_lock_mode?: string | null;
+    artifact_type?: string | null;
+    feature_rows?: number | null;
+    candles_15m?: number | null;
+    candles_1h?: number | null;
     include_watch_only?: boolean;
     entry_market?: string;
     spot_usage?: string;
