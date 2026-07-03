@@ -72,6 +72,28 @@ class MultiTimeframeFeaturesTest(unittest.TestCase):
         self.assertIsNotNone(feature.atr)
         self.assertEqual(feature.relative_strength, "INLINE_WITH_MARKET")
 
+    def test_latest_feature_snapshot_reads_rich_and_state_with_sqlite_microseconds(self) -> None:
+        self._insert_symbol("BTCUSDT")
+        candles = self._candles(17, minutes=15)
+        for index, candle in enumerate(candles):
+            self._insert_kline("futures_klines_15m", candle, volume=Decimal("100"))
+            self._insert_kline("spot_klines_15m", candle, volume=Decimal("100"))
+            self._insert_oi("BTCUSDT", candle.open_time, Decimal("1000") + Decimal(index))
+            self._insert_oi("BTCUSDT", candle.close_time, Decimal("1001") + Decimal(index))
+        self._insert_funding("BTCUSDT", candles[-1].close_time, Decimal("0.0001"))
+        self._insert_rich_alignment("BTCUSDT", candles[-1].open_time, candles[-1].close_time)
+        self._insert_market_state("BTCUSDT", candles[-1].open_time, candles[-1].close_time)
+
+        feature = MultiTimeframeFeatureService(self.db_path).latest_feature_snapshot("BTCUSDT", "15m")
+
+        self.assertEqual(feature.rich_alignment_status, "ALIGNED")
+        self.assertEqual(feature.global_long_short_ratio, Decimal("1.23"))
+        self.assertEqual(feature.top_trader_position_ratio, Decimal("0.91"))
+        self.assertEqual(feature.top_trader_account_ratio, Decimal("1.11"))
+        self.assertEqual(feature.snapshot_alignment_status, "FRESH")
+        self.assertEqual(feature.futures_spread_pct, Decimal("0.02"))
+        self.assertEqual(feature.spot_spread_pct, Decimal("0.03"))
+
     def test_missing_candles_status_is_not_ready(self) -> None:
         self._insert_symbol("AAAUSDT")
 
@@ -103,6 +125,33 @@ class MultiTimeframeFeaturesTest(unittest.TestCase):
                 )
         conn.execute("CREATE TABLE futures_open_interest_history (symbol TEXT, timestamp TEXT, sum_open_interest TEXT)")
         conn.execute("CREATE TABLE futures_funding_history (symbol TEXT, funding_time TEXT, funding_rate TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE rich_futures_5m_alignment (
+                symbol TEXT,
+                timeframe TEXT,
+                window_open_time TEXT,
+                window_close_time TEXT,
+                alignment_status TEXT,
+                global_long_short_ratio_avg TEXT,
+                top_trader_position_ratio_avg TEXT,
+                top_trader_account_ratio_avg TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE market_state_alignment (
+                symbol TEXT,
+                timeframe TEXT,
+                window_open_time TEXT,
+                window_close_time TEXT,
+                snapshot_alignment_status TEXT,
+                futures_spread_pct TEXT,
+                spot_spread_pct TEXT
+            )
+            """
+        )
         conn.commit()
         conn.close()
 
@@ -144,6 +193,39 @@ class MultiTimeframeFeaturesTest(unittest.TestCase):
             conn.execute(
                 "INSERT INTO futures_funding_history VALUES (?, ?, ?)",
                 (symbol, when.isoformat(sep=" "), str(value)),
+            )
+            conn.commit()
+
+    def _insert_rich_alignment(self, symbol: str, open_time: datetime, close_time: datetime) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO rich_futures_5m_alignment VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    symbol,
+                    "15m",
+                    open_time.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    close_time.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    "ALIGNED",
+                    "1.23",
+                    "0.91",
+                    "1.11",
+                ),
+            )
+            conn.commit()
+
+    def _insert_market_state(self, symbol: str, open_time: datetime, close_time: datetime) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO market_state_alignment VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    symbol,
+                    "15m",
+                    open_time.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    close_time.strftime("%Y-%m-%d %H:%M:%S.%f"),
+                    "FRESH",
+                    "0.02",
+                    "0.03",
+                ),
             )
             conn.commit()
 

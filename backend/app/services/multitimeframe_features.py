@@ -104,6 +104,12 @@ def parse_dt(value: str | datetime) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def sql_dt(value: datetime) -> str:
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def dec(value: Any) -> Decimal:
     return Decimal(str(value))
 
@@ -347,11 +353,11 @@ class MultiTimeframeFeatureService:
         params: list[Any] = [symbol]
         where = ["symbol = ?", "aggregation_status = 'AGG_READY'"]
         if start is not None:
-            where.append("open_time >= ?")
-            params.append(start.isoformat(sep=" "))
+            where.append("datetime(open_time) >= datetime(?)")
+            params.append(sql_dt(start))
         if end is not None:
-            where.append("close_time <= ?")
-            params.append(end.isoformat(sep=" "))
+            where.append("datetime(close_time) <= datetime(?)")
+            params.append(sql_dt(end))
         columns = self._table_columns(conn, table)
         taker_selects = [
             column if column in columns else f"NULL AS {column}"
@@ -400,11 +406,11 @@ class MultiTimeframeFeatureService:
             """
             SELECT sum_open_interest
             FROM futures_open_interest_history
-            WHERE symbol = ? AND timestamp <= ?
+            WHERE symbol = ? AND datetime(timestamp) <= datetime(?)
             ORDER BY timestamp DESC
             LIMIT 1
             """,
-            (symbol, when.isoformat(sep=" ")),
+            (symbol, sql_dt(when)),
         ).fetchone()
         return dec(row["sum_open_interest"]) if row and row["sum_open_interest"] is not None else None
 
@@ -413,11 +419,11 @@ class MultiTimeframeFeatureService:
             """
             SELECT funding_rate
             FROM futures_funding_history
-            WHERE symbol = ? AND funding_time <= ?
+            WHERE symbol = ? AND datetime(funding_time) <= datetime(?)
             ORDER BY funding_time DESC
             LIMIT 1
             """,
-            (symbol, when.isoformat(sep=" ")),
+            (symbol, sql_dt(when)),
         ).fetchone()
         return dec(row["funding_rate"]) if row and row["funding_rate"] is not None else None
 
@@ -429,10 +435,10 @@ class MultiTimeframeFeatureService:
             """
             SELECT timestamp, sum_open_interest
             FROM futures_open_interest_history
-            WHERE symbol = ? AND timestamp >= ? AND timestamp <= ?
+            WHERE symbol = ? AND datetime(timestamp) >= datetime(?) AND datetime(timestamp) <= datetime(?)
             ORDER BY timestamp ASC
             """,
-            (symbol, start.isoformat(sep=" "), when.isoformat(sep=" ")),
+            (symbol, sql_dt(start), sql_dt(when)),
         ).fetchall()
         changes: list[Decimal] = []
         previous: Decimal | None = None
@@ -462,10 +468,10 @@ class MultiTimeframeFeatureService:
             """
             SELECT funding_rate
             FROM futures_funding_history
-            WHERE symbol = ? AND funding_time >= ? AND funding_time <= ? AND funding_rate IS NOT NULL
+            WHERE symbol = ? AND datetime(funding_time) >= datetime(?) AND datetime(funding_time) <= datetime(?) AND funding_rate IS NOT NULL
             ORDER BY funding_time ASC
             """,
-            (symbol, start.isoformat(sep=" "), when.isoformat(sep=" ")),
+            (symbol, sql_dt(start), sql_dt(when)),
         ).fetchall()
         rates = [dec(row["funding_rate"]) for row in rows]
         if not rates:
@@ -500,10 +506,13 @@ class MultiTimeframeFeatureService:
             """
             SELECT alignment_status, global_long_short_ratio_avg, top_trader_position_ratio_avg, top_trader_account_ratio_avg
             FROM rich_futures_5m_alignment
-            WHERE symbol = ? AND timeframe = ? AND window_open_time = ? AND window_close_time = ?
+            WHERE symbol = ?
+              AND timeframe = ?
+              AND datetime(window_open_time) = datetime(?)
+              AND datetime(window_close_time) = datetime(?)
             LIMIT 1
             """,
-            (symbol, timeframe, open_time.isoformat(sep=" "), close_time.isoformat(sep=" ")),
+            (symbol, timeframe, sql_dt(open_time), sql_dt(close_time)),
         ).fetchone()
         if not row:
             return output
@@ -529,10 +538,13 @@ class MultiTimeframeFeatureService:
             """
             SELECT snapshot_alignment_status, futures_spread_pct, spot_spread_pct
             FROM market_state_alignment
-            WHERE symbol = ? AND timeframe = ? AND window_open_time = ? AND window_close_time = ?
+            WHERE symbol = ?
+              AND timeframe = ?
+              AND datetime(window_open_time) = datetime(?)
+              AND datetime(window_close_time) = datetime(?)
             LIMIT 1
             """,
-            (symbol, timeframe, open_time.isoformat(sep=" "), close_time.isoformat(sep=" ")),
+            (symbol, timeframe, sql_dt(open_time), sql_dt(close_time)),
         ).fetchone()
         if not row:
             return output
@@ -584,9 +596,9 @@ class MultiTimeframeFeatureService:
             f"""
             SELECT open, close
             FROM {table}
-            WHERE close_time = ? AND aggregation_status = 'AGG_READY'
+            WHERE datetime(close_time) = datetime(?) AND aggregation_status = 'AGG_READY'
             """,
-            (close_time.isoformat(sep=" "),),
+            (sql_dt(close_time),),
         ).fetchall()
         returns = [_pct_change(dec(row["open"]), dec(row["close"])) for row in rows if row["open"]]
         return Decimal(str(median(returns))) if returns else None
