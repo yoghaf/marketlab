@@ -344,6 +344,94 @@ export type StrategyArenaResultsResponse = {
   results: StrategyArenaResult[];
 };
 
+export type EarlyBacktestHorizonSummary = {
+  events: number;
+  ready: number;
+  waiting: number;
+  tp: number;
+  sl: number;
+  both: number;
+  neither: number;
+  outcomes: Record<string, number>;
+  avg_r?: number | null;
+  median_r?: number | null;
+  best_r?: number | null;
+  worst_r?: number | null;
+};
+
+export type EarlyBacktestEvent = {
+  signal_id: string;
+  symbol: string;
+  timeframe: string;
+  signal_time_utc?: string | null;
+  signal_time_wib?: string | null;
+  stage: "EARLY_LONG" | "EARLY_SHORT" | string;
+  direction: "LONG" | "SHORT" | string;
+  confidence_tier?: string | null;
+  core_score?: string | number | null;
+  evidence_score?: string | number | null;
+  evidence_data_completeness?: number | null;
+  execution_flag?: string | null;
+  entry_market?: string | null;
+  entry_price_source?: string | null;
+  entry?: string | number | null;
+  stop?: string | number | null;
+  target?: string | number | null;
+  risk?: string | number | null;
+  horizon: string;
+  outcome: string;
+  status?: string | null;
+  realized_r?: string | number | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+  result_time_utc?: string | null;
+  result_time_wib?: string | null;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+};
+
+export type EarlyBacktestSummaryResponse = {
+  metadata: {
+    generated_at_utc?: string | null;
+    epoch?: string | null;
+    signals_loaded?: number;
+    events_evaluated?: number;
+    include_watch_only?: boolean;
+    entry_market?: string;
+    spot_usage?: string;
+  };
+  source: Record<string, string>;
+  guardrails: {
+    read_only: boolean;
+    not_live_signal: boolean;
+    not_execution_instruction: boolean;
+    entry_market: string;
+    spot_usage: string;
+  };
+  summary: {
+    total_events: number;
+    by_stage: Record<string, number>;
+    by_confidence: Record<string, number>;
+    by_horizon: Record<string, EarlyBacktestHorizonSummary>;
+    best_horizon?: string | null;
+  };
+  latest_events: EarlyBacktestEvent[];
+};
+
+export type EarlyBacktestEventsResponse = {
+  count: number;
+  filters: {
+    stage?: string | null;
+    horizon: string;
+    outcome?: string | null;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  items: EarlyBacktestEvent[];
+};
+
 export type SignalFactoryCandidate = {
   symbol: string;
   timeframe: string;

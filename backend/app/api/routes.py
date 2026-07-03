@@ -40,6 +40,7 @@ from app.services.psychology_labeler_15m import PsychologyLabeler15mService
 from app.services.rich_5m_alignment import Rich5mAlignmentService
 from app.services.anomaly_signal_factory import DEFAULT_SIGNAL_FACTORY_DIR, SignalFactoryArtifactService
 from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArtifactService
+from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_arena import StrategyArenaArtifactService
@@ -365,6 +366,36 @@ def strategy_arena_v1_setup(setup_family: str):
         return json_safe(StrategyArenaArtifactService().setup(setup_family))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/backtests/early-lab/summary")
+def early_backtest_lab_summary():
+    try:
+        return json_safe(EarlyBacktestLabArtifactService().summary())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Early backtest artifact not found. Run signal factory v2 backtest script first.") from exc
+
+
+@router.get("/api/backtests/early-lab/events")
+def early_backtest_lab_events(
+    stage: str | None = None,
+    horizon: str = "4h",
+    outcome: str | None = None,
+    limit: int = 200,
+):
+    try:
+        return json_safe(
+            EarlyBacktestLabArtifactService().events(
+                stage=stage,
+                horizon=horizon,
+                outcome=outcome,
+                limit=limit,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Early backtest artifact not found. Run signal factory v2 backtest script first.") from exc
 
 
 @router.get("/api/signal-factory/v1/summary")
