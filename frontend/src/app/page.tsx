@@ -10,10 +10,12 @@ import {
   CollectorRun,
   Phase6ReadinessResponse,
   Phase7FullBlockerAuditResponse,
+  LiveScannerItem,
   LiveScannerResponse,
   fetchJson,
   fmtTime
 } from "@/lib/api";
+import { compactReason, labelFor } from "@/lib/labels";
 
 type HealthResponse = {
   counts: Record<string, number>;
@@ -48,13 +50,24 @@ export default async function OverviewPage() {
   const radarCount = scannerCounts.RADAR_ONLY || 0;
   const candidateCount = scannerCounts.WATCHLIST_CONTEXT || 0;
   const signalCandidateCount = scannerCounts.SIGNAL_CANDIDATE || 0;
+  const riskCount = scannerCounts.RISK_CONTEXT || 0;
+  const baselineCount = scannerCounts.BASELINE_CONTEXT || 0;
+  const latestCandidates = (scanner?.items || [])
+    .filter((item) => item.scanner_tier !== "BASELINE_CONTEXT" && item.candidate_type !== "NO_SIGNAL_CONTEXT")
+    .slice(0, 8);
+  const latestSignal = latestCandidates.find((item) => item.scanner_tier === "SIGNAL_CANDIDATE");
+  const primaryAction = signalCandidateCount > 0
+    ? "Cek Signal Candidate dan evidence angka di Radar."
+    : candidateCount > 0
+      ? "Pantau Candidate, belum ada yang cukup kuat untuk dinaikkan."
+      : "Tunggu cycle data berikutnya atau cek Data Health.";
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Overview"
+        title="MarketLab Command Center"
         badge="READ-ONLY - bukan sinyal entry live"
-        subtitle="Ringkasan hirarki MarketLab: radar, candidate, signal candidate, dan alasan kenapa belum jadi eksekusi."
+        subtitle="Ringkasan cepat untuk baca market radar, kualitas data, dan status riset. Semua output tetap observasi read-only."
         updatedAt={fmtTime(phase6?.generated_at || audit?.generated_at || health.latest.latest_futures_candle_time)}
       />
 
@@ -70,23 +83,41 @@ export default async function OverviewPage() {
       />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <MetricCard label="Radar" value={radarCount} helper="Pantauan awal" tone="info" />
-        <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
         <MetricCard label="Signal Candidate" value={signalCandidateCount} helper="Final read-only, bukan order" tone={signalCandidateCount ? "good" : "warn"} />
+        <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
+        <MetricCard label="Radar" value={radarCount} helper="Aktivitas awal" tone="info" />
+        <MetricCard label="Risk Context" value={riskCount} helper="Campuran/risiko" tone="warn" />
         <MetricCard label="Phase 7 Approved" value={approvedCount} helper="Shadow-test approved" tone={approvedCount ? "good" : "warn"} />
-        <MetricCard label="Data 4h" value={atr4 > 0 ? "Mulai siap" : "Belum cukup"} helper={`ATR ${atr4}/75 symbol`} tone={atr4 > 0 ? "warn" : "bad"} />
-        <MetricCard label="Edge" value={edgeOver010 > 0 ? "Mulai kuat" : "Belum kuat"} helper={`edge > 0.10R: ${edgeOver010}`} tone={edgeOver010 > 0 ? "info" : "warn"} />
+        <MetricCard label="Baseline" value={baselineCount} helper="Kontrol pembanding" />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <SectionCard title="Yang penting sekarang" description="Keputusan utama tanpa label teknis.">
-          <div className="space-y-3 p-4 text-sm leading-6">
-            <ReasonRow label="Radar" value={`${radarCount} token`} />
-            <ReasonRow label="Candidate" value={`${candidateCount} token`} />
-            <ReasonRow label="Signal Candidate" value={`${signalCandidateCount} token`} />
-            <ReasonRow label="Phase 7 approved" value={String(approvedCount)} />
-            <ReasonRow label="Data 4h/24h" value="Belum cukup untuk ATR" />
-            <ReasonRow label="Aksi" value="Backfill data atau tunggu data 4h/24h matang." />
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <SectionCard
+          title="Yang harus dicek sekarang"
+          description="Prioritas kerja dashboard, bukan keputusan eksekusi."
+          actions={<StatusBadge value={phase7Decision} />}
+        >
+          <div className="grid gap-4 p-4 lg:grid-cols-2">
+            <div className="rounded border border-line bg-field/40 p-4">
+              <div className="text-xs font-semibold uppercase text-slate-500">Fokus sekarang</div>
+              <div className="mt-2 text-lg font-bold text-ink">{primaryAction}</div>
+              <div className="mt-3 space-y-2 text-sm leading-6">
+                <ReasonRow label="Signal Candidate" value={`${signalCandidateCount} token`} />
+                <ReasonRow label="Candidate" value={`${candidateCount} token`} />
+                <ReasonRow label="Risk Context" value={`${riskCount} token`} />
+                <ReasonRow label="Latest signal" value={latestSignal ? latestSignal.symbol : "-"} />
+              </div>
+            </div>
+            <div className="rounded border border-line bg-field/40 p-4">
+              <div className="text-xs font-semibold uppercase text-slate-500">Readiness blocker</div>
+              <div className="mt-2 text-lg font-bold text-ink">{edgeOver010 > 0 ? "Edge mulai muncul" : "Edge belum kuat"}</div>
+              <div className="mt-3 space-y-2 text-sm leading-6">
+                <ReasonRow label="ATR 4h" value={`${atr4}/75 symbol`} />
+                <ReasonRow label="ATR 24h" value={`${atr24}/75 symbol`} />
+                <ReasonRow label="Edge > 0.10R" value={`${edgeOver010} kandidat`} />
+                <ReasonRow label="Score >= 7" value={`${scoreGe7} kandidat`} />
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2 pt-2">
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Radar</Link>
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Open Phase 6 Audit</Link>
@@ -95,15 +126,45 @@ export default async function OverviewPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Kenapa belum ada sinyal?" description="Blocker utama yang menentukan Phase 7.">
-          <div className="space-y-3 p-4 text-sm leading-6">
-            <ReasonRow label="ATR 4h belum tersedia" value={`${atr4}/75 symbol`} />
-            <ReasonRow label="ATR 24h belum tersedia" value={`${atr24}/75 symbol`} />
-            <ReasonRow label="Edge > 0.10R" value={`${edgeOver010} kandidat`} />
-            <ReasonRow label="Score >= 7" value={`${scoreGe7} kandidat`} />
+        <SectionCard title="Alur keputusan" description="Urutan baca output MarketLab.">
+          <div className="space-y-3 p-4">
+            <PipelineStep title="Radar" value={`${radarCount} token`} description="Aktivitas awal, belum cukup untuk candidate." />
+            <PipelineStep title="Candidate" value={`${candidateCount} token`} description="Konteks layak dipantau, masih butuh bukti." />
+            <PipelineStep title="Signal Candidate" value={`${signalCandidateCount} token`} description="Final read-only dengan reference futures." />
+            <PipelineStep title="Phase 7 Shadow" value={`${approvedCount} approved`} description="Uji forward, tetap bukan execution." />
           </div>
         </SectionCard>
       </section>
+
+      <SectionCard
+        title="Latest market radar"
+        description="Token terbaru yang bukan baseline/control. Klik symbol untuk detail token, atau buka Radar untuk evidence lengkap."
+        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/scanner?limit=75">Open full scanner</Link>}
+      >
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Tier</th>
+                <th>Label</th>
+                <th>Arah</th>
+                <th>Confidence</th>
+                <th>Evidence</th>
+                <th>Update WIB</th>
+              </tr>
+            </thead>
+            <tbody>
+              {latestCandidates.map((item) => <LatestCandidateRow item={item} key={`${item.symbol}-${item.window_open_time}-${item.scanner_tier}`} />)}
+              {!latestCandidates.length && (
+                <tr>
+                  <td colSpan={7} className="text-sm text-slate-500">Belum ada radar non-baseline.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
       <SectionCard title="Collector pulse" description="Ops ringkas. Detail raw ada di Advanced.">
         <div className="grid gap-3 p-4 text-sm leading-6 md:grid-cols-4">
@@ -123,6 +184,38 @@ export default async function OverviewPage() {
   );
 }
 
+function LatestCandidateRow({ item }: { item: LiveScannerItem }) {
+  const ev = item.evidence_summary || {};
+  return (
+    <tr>
+      <td className="font-semibold">
+        <Link className="text-blue-700 hover:underline" href={`/tokens/${item.symbol}`}>{item.symbol}</Link>
+      </td>
+      <td><StatusBadge value={item.scanner_tier} /></td>
+      <td>{labelFor(item.candidate_type)}</td>
+      <td><StatusBadge value={item.candidate_direction} /></td>
+      <td>{labelFor(item.confidence)}</td>
+      <td className="text-xs leading-5 text-slate-600">
+        <div>Score {valueOrDash(ev.core_score)}/{valueOrDash(ev.core_score_max)} | Evidence {valueOrDash(ev.evidence_data_completeness)}/4</div>
+        <div>{compactReason(formatList(ev.core_reasons), 120)}</div>
+      </td>
+      <td>{fmtTime(item.latest_outcome_update || item.observation_time || item.window_close_time)}</td>
+    </tr>
+  );
+}
+
+function PipelineStep({ title, value, description }: { title: string; value: string; description: string }) {
+  return (
+    <div className="rounded border border-line bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="font-bold text-ink">{title}</div>
+        <div className="text-sm font-semibold text-blue-700">{value}</div>
+      </div>
+      <div className="mt-1 text-sm leading-5 text-slate-600">{description}</div>
+    </div>
+  );
+}
+
 function ReasonRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
@@ -130,6 +223,17 @@ function ReasonRow({ label, value }: { label: string; value: string }) {
       <span className="text-right font-semibold">{value}</span>
     </div>
   );
+}
+
+function valueOrDash(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
+}
+
+function formatList(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
+  if (typeof value === "string" && value) return value;
+  return "-";
 }
 
 function edgeBucket(data: Phase7FullBlockerAuditResponse | null, needle: string): number {

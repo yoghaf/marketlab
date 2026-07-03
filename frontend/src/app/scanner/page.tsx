@@ -43,64 +43,76 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
 
   const visibleItems = (data?.items || []).filter((item) => showBaseline || (item.scanner_tier !== "BASELINE_CONTEXT" && item.candidate_type !== "NO_SIGNAL_CONTEXT"));
   const tierCounts = countTiers(visibleItems);
+  const latestTime = latestScannerTime(visibleItems);
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Radar Market"
+        title="Live Scanner"
         badge="READ-ONLY - bukan auto execution"
-        subtitle="Alur baca: Radar -> Candidate -> Signal Candidate. Semuanya read-only, tidak ada order otomatis."
+        subtitle="Tabel kerja untuk membaca Radar -> Candidate -> Signal Candidate. Entry reference hanya futures; spot/rich data hanya evidence."
+        updatedAt={fmtTime(latestTime)}
       />
-      <div className="flex flex-wrap gap-2 text-sm">
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar Market</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-factory">Signal Factory</Link>
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <MetricCard label="Signal Candidate" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone={(tierCounts.SIGNAL_CANDIDATE || 0) > 0 ? "good" : "warn"} />
+        <MetricCard label="Candidate" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Pantau konteks" tone="info" />
+        <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
+        <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Campuran/risiko" tone="warn" />
+        <MetricCard label="Rows" value={visibleItems.length} helper="Sesuai filter aktif" />
       </div>
 
-      <section className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Signal Candidate" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone="good" />
-        <MetricCard label="Candidate" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Perlu dipantau, belum final" tone="info" />
-        <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Ada risiko/campuran" tone="warn" />
-        <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
-      </section>
+      <SectionCard title="Scanner controls" description="Default menyembunyikan inactive, blocked, dan baseline/control agar tabel tidak bising.">
+        <div className="space-y-4 p-4">
+          <div className="flex flex-wrap gap-2 text-sm">
+            <QuickLink href="/scanner?limit=75" label="All active" active={!tier && !candidateType && !includeBlocked && !includeInactive} />
+            <QuickLink href="/scanner?tier=SIGNAL_CANDIDATE&limit=75" label="Signal Candidate" active={tier === "SIGNAL_CANDIDATE"} />
+            <QuickLink href="/scanner?tier=WATCHLIST_CONTEXT&limit=75" label="Candidate" active={tier === "WATCHLIST_CONTEXT"} />
+            <QuickLink href="/scanner?tier=RADAR_ONLY&limit=75" label="Radar" active={tier === "RADAR_ONLY"} />
+            <QuickLink href="/scanner?tier=RISK_CONTEXT&limit=75" label="Risk Context" active={tier === "RISK_CONTEXT"} />
+            <QuickLink href="/signal-factory" label="Signal Factory raw" />
+          </div>
 
-      <FilterBar>
-        <SelectFilter label="Tier" name="tier" value={tier || ""} options={tierOptions} emptyLabel="All tiers" />
-        <SelectFilter label="Candidate Type" name="candidate_type" value={candidateType || ""} options={candidateTypeOptions} emptyLabel="All types" />
-        <label className="grid gap-1 text-sm">
-          <span className="font-semibold text-slate-600">Limit</span>
-          <input className="rounded border border-line px-3 py-2" min={1} max={200} name="limit" type="number" defaultValue={limit} />
-        </label>
-        <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
-          <input name="include_blocked" type="checkbox" value="true" defaultChecked={includeBlocked} />
-          Include blocked
-        </label>
-        <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
-          <input name="include_inactive" type="checkbox" value="true" defaultChecked={includeInactive} />
-          Include inactive
-        </label>
-        <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
-          <input name="show_baseline" type="checkbox" value="true" defaultChecked={showBaseline} />
-          Show baseline/control rows
-        </label>
-      </FilterBar>
+          <FilterBar>
+            <SelectFilter label="Tier" name="tier" value={tier || ""} options={tierOptions} emptyLabel="All tiers" />
+            <SelectFilter label="Candidate Type" name="candidate_type" value={candidateType || ""} options={candidateTypeOptions} emptyLabel="All types" />
+            <label className="grid gap-1 text-sm">
+              <span className="font-semibold text-slate-600">Limit</span>
+              <input className="rounded border border-line px-3 py-2" min={1} max={200} name="limit" type="number" defaultValue={limit} />
+            </label>
+            <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+              <input name="include_blocked" type="checkbox" value="true" defaultChecked={includeBlocked} />
+              Include blocked
+            </label>
+            <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+              <input name="include_inactive" type="checkbox" value="true" defaultChecked={includeInactive} />
+              Include inactive
+            </label>
+            <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-600">
+              <input name="show_baseline" type="checkbox" value="true" defaultChecked={showBaseline} />
+              Show baseline/control rows
+            </label>
+          </FilterBar>
+        </div>
+      </SectionCard>
 
       {error ? (
         <div className="rounded border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : (
-        <SectionCard title="Radar table" description="Default: active universe, non-blocked, dan baseline/control disembunyikan.">
+        <SectionCard title="Scanner table" description="Klik Detail untuk angka evidence lengkap: price, volume, taker, OI, funding, rich, dan spread.">
           <div className="table-wrap">
-            <table>
+            <table className="ops-table scanner-table">
               <thead>
                 <tr>
                   <th>Symbol</th>
-                  <th>Status</th>
-                  <th>Setup</th>
+                  <th>Tier</th>
+                  <th>Label</th>
                   <th>Arah</th>
                   <th>Confidence</th>
-                  <th>Entry/Risk</th>
-                  <th>Quality</th>
-                  <th>Alasan</th>
-                  <th>Update</th>
+                  <th>Evidence singkat</th>
+                  <th>Risk ref</th>
+                  <th>Read-only</th>
+                  <th>Update WIB</th>
                   <th>Detail</th>
                 </tr>
               </thead>
@@ -133,7 +145,16 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
       <td className="max-w-56">{labelFor(item.candidate_type)}</td>
       <td><StatusBadge value={item.candidate_direction} /></td>
       <td>{labelFor(item.confidence)}</td>
-      <td className="min-w-56">
+      <td className="min-w-72 text-xs leading-5 text-slate-600">
+        <EvidenceStrip item={item} />
+        <div className="mt-1">{compactReason(userReason(item), 130)}</div>
+        {item.using_fallback_usable_row && (
+          <div className="mt-1 inline-flex rounded border border-amber-600 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
+            Previous usable context
+          </div>
+        )}
+      </td>
+      <td className="min-w-48">
         {item.signal_status === "SIGNAL_CANDIDATE" ? (
           <div className="space-y-1 text-xs">
             <div className="font-semibold">Futures: {fmtNumber(item.entry_price)}</div>
@@ -146,80 +167,120 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         )}
       </td>
       <td>
-        {item.quality_score !== null && item.quality_score !== undefined ? (
-          <div className="space-y-1 text-xs">
-            <StatusBadge value={item.quality_bucket || "QUALITY"} />
-            <div className="font-semibold">{item.quality_score}/10</div>
-          </div>
-        ) : (
-          <span className="text-xs text-slate-400">-</span>
-        )}
-      </td>
-      <td className="min-w-72">
-        <div>{compactReason(userReason(item))}</div>
-        {item.using_fallback_usable_row && (
-          <div className="mt-1 inline-flex rounded border border-amber-600 bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700">
-            Previous usable context
-          </div>
-        )}
+        <div className="space-y-1 text-xs">
+          <StatusBadge value={item.not_entry_signal ? "READ_ONLY" : "INFO"} />
+          <div className="font-semibold text-slate-600">NOT ENTRY SIGNAL</div>
+          {item.quality_score !== null && item.quality_score !== undefined && (
+            <div>Quality {item.quality_score}/10 {item.quality_bucket || ""}</div>
+          )}
+        </div>
       </td>
       <td>{fmtTime(item.latest_outcome_update || item.observation_time)}</td>
       <td>
         <details className="text-xs text-slate-500">
           <summary className="cursor-pointer font-semibold">Detail</summary>
-          <div className="mt-2 min-w-64 space-y-1">
-            <div>Raw type: {item.candidate_type}</div>
-            <div>Raw status: {item.classifier_status}</div>
-            <div>Raw direction: {item.candidate_direction}</div>
-            <div>Signal status: {item.signal_status || "-"}</div>
-            <div>Signal reason: {item.signal_reason || "-"}</div>
-            <div className="mt-2 rounded border border-line bg-field/40 p-2">
-              <div className="mb-1 font-semibold text-ink">Evidence angka</div>
-              <div>Price 15m: {fmtSignedPercent(evidenceNumber(item, "price_return", "price_return_pct_15m"))}</div>
-              <div>OI change: {fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))}</div>
-              <div>OI z-score: {fmtNumber(evidenceNumber(item, "oi_zscore"))}</div>
-              <div>Volume vs avg: {fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))}</div>
-              <div>Volume baseline: {String(item.evidence_summary.timeframe || "15m") === "15m" ? "30 candle terakhir" : "Lookback TF aktif"}</div>
-              <div>Range vs ATR: {fmtRatioX(evidenceNumber(item, "range_ratio_vs_atr"))}</div>
-              <div>ATR extension: {fmtRatioX(evidenceNumber(item, "atr_extension_normalized"))}</div>
-              <div>Price / ATR: {fmtRatioX(evidenceNumber(item, "price_atr_multiple"))}</div>
-              <div>Taker buy: {fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))}</div>
-              <div>Taker sell: {fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))}</div>
-              <div>Close position: {fmtRatioPercent(evidenceNumber(item, "close_position_in_range", "close_position_15m"))}</div>
-              <div>1h return: {fmtSignedPercent(evidenceNumber(item, "one_hour_return_pct", "price_return_pct_1h"))}</div>
-              <div>Funding rate: {fmtDecimalRatePercent(evidenceNumber(item, "funding_rate"))}</div>
-              <div>Funding percentile: {fmtRatioPercentFromPercent(evidenceNumber(item, "funding_percentile_30d"))}</div>
-              <div>Funding pressure/status: {String(item.evidence_summary.funding_pressure ?? item.evidence_summary.funding_status_15m ?? "-")}</div>
-              <div>Global L/S: {fmtNumber(evidenceNumber(item, "global_long_short_ratio", "global_long_short_ratio_15m"))}</div>
-              <div>Top trader position: {fmtNumber(evidenceNumber(item, "top_trader_position_ratio", "top_trader_position_ratio_15m"))}</div>
-              <div>Top trader account: {fmtNumber(evidenceNumber(item, "top_trader_account_ratio", "top_trader_account_ratio_15m"))}</div>
-              <div>Rich status: {String(item.evidence_summary.rich_alignment_status ?? "-")}</div>
-              <div>Futures spread: {fmtSignedPercent(evidenceNumber(item, "futures_spread_pct"))}</div>
-              <div>Spot spread: {fmtSignedPercent(evidenceNumber(item, "spot_spread_pct"))}</div>
-              <div>Core score: {fmtNumber(evidenceNumber(item, "core_score"))}/{fmtNumber(evidenceNumber(item, "core_score_max"))}</div>
-              <div>Core reasons: {formatList(item.evidence_summary.core_reasons)}</div>
-              <div>Evidence score: {fmtNumber(evidenceNumber(item, "evidence_score"))}</div>
-              <div>Evidence completeness: {fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4</div>
-              <div>Evidence flags: {formatList(item.evidence_summary.evidence_flags)}</div>
-              <div>Evidence reasons: {formatList(item.evidence_summary.evidence_reasons)}</div>
-              <div>Risk status: {String(item.evidence_summary.execution_risk_status ?? "-")}</div>
-              <div>Risk reasons: {formatList(item.evidence_summary.execution_risk_reasons)}</div>
-              <div>Futures led: {String(item.evidence_summary.futures_led_flag ?? "-")}</div>
-              <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? item.evidence_summary.spot_context ?? "-")}</div>
-            </div>
-            <div>Entry source: {item.entry_price_source || "-"}</div>
-            <div>ATR ref: {item.atr_reference_timeframe || "-"} {fmtNumber(item.atr_reference_value)}</div>
-            <div>Position lock: {item.position_lock_mode || "-"}</div>
-            <div>Not auto execution: {String(item.not_execution_instruction ?? true)}</div>
-            <div>Visibility: {item.scanner_visibility_reason}</div>
-            <div>Warning: {item.warning_reason || "No scanner warning"}</div>
-            <div>Latest actual: {item.latest_actual_status || "-"} at {fmtTime(item.latest_actual_observation_timestamp)}</div>
-            <div>Fallback: {item.fallback_reason || "-"}</div>
-            <div>Universe: {item.collection_tier} rank {item.universe_rank ?? "-"}</div>
-          </div>
+          <DetailPanel item={item} />
         </details>
       </td>
     </tr>
+  );
+}
+
+function EvidenceStrip({ item }: { item: LiveScannerItem }) {
+  return (
+    <div className="grid min-w-72 grid-cols-2 gap-x-3 gap-y-1">
+      <span>Price {fmtSignedPercent(evidenceNumber(item, "price_return", "price_return_pct_15m"))}</span>
+      <span>Vol {fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))}</span>
+      <span>Buy {fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))}</span>
+      <span>Sell {fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))}</span>
+      <span>OI {fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))}</span>
+      <span>z {fmtNumber(evidenceNumber(item, "oi_zscore"))}</span>
+      <span>Core {fmtNumber(evidenceNumber(item, "core_score"))}/{fmtNumber(evidenceNumber(item, "core_score_max"))}</span>
+      <span>Ev {fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4</span>
+    </div>
+  );
+}
+
+function DetailPanel({ item }: { item: LiveScannerItem }) {
+  return (
+    <div className="mt-2 min-w-[32rem] space-y-3">
+      <div className="grid gap-2 rounded border border-line bg-field/40 p-3 md:grid-cols-2">
+        <DetailItem label="Raw type" value={item.candidate_type} />
+        <DetailItem label="Raw status" value={item.classifier_status} />
+        <DetailItem label="Raw direction" value={item.candidate_direction} />
+        <DetailItem label="Signal status" value={item.signal_status || "-"} />
+        <DetailItem label="Signal reason" value={item.signal_reason || "-"} />
+        <DetailItem label="Universe" value={`${item.collection_tier} rank ${item.universe_rank ?? "-"}`} />
+      </div>
+
+      <div className="rounded border border-line bg-white p-3">
+        <div className="mb-2 font-semibold text-ink">Evidence angka</div>
+        <div className="grid gap-2 md:grid-cols-2">
+          <DetailItem label="Price 15m" value={fmtSignedPercent(evidenceNumber(item, "price_return", "price_return_pct_15m"))} />
+          <DetailItem label="Close position" value={fmtRatioPercent(evidenceNumber(item, "close_position_in_range", "close_position_15m"))} />
+          <DetailItem label="Volume vs avg" value={fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))} />
+          <DetailItem label="Volume baseline" value={String(item.evidence_summary.timeframe || "15m") === "15m" ? "30 candle terakhir" : "Lookback TF aktif"} />
+          <DetailItem label="Taker buy" value={fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))} />
+          <DetailItem label="Taker sell" value={fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))} />
+          <DetailItem label="OI change" value={fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))} />
+          <DetailItem label="OI z-score" value={fmtNumber(evidenceNumber(item, "oi_zscore"))} />
+          <DetailItem label="Range vs ATR" value={fmtRatioX(evidenceNumber(item, "range_ratio_vs_atr"))} />
+          <DetailItem label="ATR extension" value={fmtRatioX(evidenceNumber(item, "atr_extension_normalized"))} />
+          <DetailItem label="Price / ATR" value={fmtRatioX(evidenceNumber(item, "price_atr_multiple"))} />
+          <DetailItem label="1h return" value={fmtSignedPercent(evidenceNumber(item, "one_hour_return_pct", "price_return_pct_1h"))} />
+          <DetailItem label="Funding rate" value={fmtDecimalRatePercent(evidenceNumber(item, "funding_rate"))} />
+          <DetailItem label="Funding percentile" value={fmtRatioPercentFromPercent(evidenceNumber(item, "funding_percentile_30d"))} />
+          <DetailItem label="Global L/S" value={fmtNumber(evidenceNumber(item, "global_long_short_ratio", "global_long_short_ratio_15m"))} />
+          <DetailItem label="Top position" value={fmtNumber(evidenceNumber(item, "top_trader_position_ratio", "top_trader_position_ratio_15m"))} />
+          <DetailItem label="Top account" value={fmtNumber(evidenceNumber(item, "top_trader_account_ratio", "top_trader_account_ratio_15m"))} />
+          <DetailItem label="Rich status" value={String(item.evidence_summary.rich_alignment_status ?? "-")} />
+          <DetailItem label="Futures spread" value={fmtSignedPercent(evidenceNumber(item, "futures_spread_pct"))} />
+          <DetailItem label="Spot spread" value={fmtSignedPercent(evidenceNumber(item, "spot_spread_pct"))} />
+        </div>
+      </div>
+
+      <div className="grid gap-2 rounded border border-line bg-field/40 p-3 md:grid-cols-2">
+        <DetailItem label="Core score" value={`${fmtNumber(evidenceNumber(item, "core_score"))}/${fmtNumber(evidenceNumber(item, "core_score_max"))}`} />
+        <DetailItem label="Evidence score" value={fmtNumber(evidenceNumber(item, "evidence_score"))} />
+        <DetailItem label="Evidence completeness" value={`${fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4`} />
+        <DetailItem label="Risk status" value={String(item.evidence_summary.execution_risk_status ?? "-")} />
+        <DetailItem label="Core reasons" value={formatList(item.evidence_summary.core_reasons)} wide />
+        <DetailItem label="Evidence reasons" value={formatList(item.evidence_summary.evidence_reasons)} wide />
+        <DetailItem label="Risk reasons" value={formatList(item.evidence_summary.execution_risk_reasons)} wide />
+        <DetailItem label="Evidence flags" value={formatList(item.evidence_summary.evidence_flags)} wide />
+      </div>
+
+      <div className="grid gap-2 rounded border border-line bg-white p-3 md:grid-cols-2">
+        <DetailItem label="Entry source" value={item.entry_price_source || "-"} />
+        <DetailItem label="ATR ref" value={`${item.atr_reference_timeframe || "-"} ${fmtNumber(item.atr_reference_value)}`} />
+        <DetailItem label="Position lock" value={item.position_lock_mode || "-"} />
+        <DetailItem label="Not auto execution" value={String(item.not_execution_instruction ?? true)} />
+        <DetailItem label="Visibility" value={item.scanner_visibility_reason} wide />
+        <DetailItem label="Warning" value={item.warning_reason || "No scanner warning"} wide />
+        <DetailItem label="Latest actual" value={`${item.latest_actual_status || "-"} at ${fmtTime(item.latest_actual_observation_timestamp)}`} wide />
+        <DetailItem label="Fallback" value={item.fallback_reason || "-"} wide />
+      </div>
+    </div>
+  );
+}
+
+function DetailItem({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={wide ? "md:col-span-2" : ""}>
+      <div className="text-[0.68rem] font-semibold uppercase text-slate-500">{label}</div>
+      <div className="mt-0.5 break-words text-xs text-ink">{value}</div>
+    </div>
+  );
+}
+
+function QuickLink({ href, label, active = false }: { href: string; label: string; active?: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`rounded border px-3 py-2 font-semibold ${active ? "border-blue-700 bg-blue-50 text-blue-700" : "border-line bg-white text-ink hover:bg-field"}`}
+    >
+      {label}
+    </Link>
   );
 }
 
@@ -239,6 +300,14 @@ function countTiers(items: LiveScannerItem[]): Record<string, number> {
     acc[item.scanner_tier] = (acc[item.scanner_tier] || 0) + 1;
     return acc;
   }, {});
+}
+
+function latestScannerTime(items: LiveScannerItem[]): string | null {
+  const times = items
+    .map((item) => item.latest_outcome_update || item.observation_time || item.window_close_time || item.window_open_time)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return times.at(-1) || null;
 }
 
 function firstParam(value: string | string[] | undefined): string | undefined {

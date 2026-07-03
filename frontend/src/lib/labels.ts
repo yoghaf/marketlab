@@ -10,6 +10,7 @@ const labels: Record<string, string> = {
   BASELINE_CONTEXT: "Baseline / pembanding",
   RISK_CONTEXT: "Konteks risiko",
   RADAR_ONLY: "Pantauan saja",
+  READ_ONLY: "Read-only",
   SIGNAL_CANDIDATE: "Calon sinyal",
   WATCHLIST_CONTEXT: "Candidate",
   WATCHLIST_FOR_MORE_DATA: "Pantau dulu",

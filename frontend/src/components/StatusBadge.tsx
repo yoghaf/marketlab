@@ -45,6 +45,7 @@ const styles: Record<string, string> = {
   CONTEXT_BLOCKED: "border-stale text-stale bg-red-50",
   WATCHLIST_CONTEXT: "border-blue-700 text-blue-700 bg-blue-50",
   RADAR_ONLY: "border-warmup text-warmup bg-amber-50",
+  READ_ONLY: "border-blue-700 text-blue-700 bg-blue-50",
   RISK_CONTEXT: "border-stale text-stale bg-red-50",
   BASELINE_CONTEXT: "border-line text-slate-700 bg-slate-50",
   BLOCKED: "border-stale text-stale bg-red-50",

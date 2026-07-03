@@ -13,7 +13,7 @@ export function fmtTime(value?: string | null): string {
   return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "short",
     timeStyle: "medium",
-    timeZone: "UTC"
+    timeZone: "Asia/Jakarta"
   }).format(new Date(value));
 }
 

@@ -46,6 +46,21 @@ tbody tr:hover {
   min-width: 900px;
 }
 
+.ops-table th,
+.ops-table td {
+  padding: 0.65rem 0.75rem;
+}
+
+.ops-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.scanner-table {
+  min-width: 1280px;
+}
+
 .truncate-cell {
   max-width: 260px;
   overflow: hidden;
