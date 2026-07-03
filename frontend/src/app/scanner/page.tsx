@@ -173,6 +173,17 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
             <div>Raw direction: {item.candidate_direction}</div>
             <div>Signal status: {item.signal_status || "-"}</div>
             <div>Signal reason: {item.signal_reason || "-"}</div>
+            <div className="mt-2 rounded border border-line bg-field/40 p-2">
+              <div className="mb-1 font-semibold text-ink">Evidence angka</div>
+              <div>Price 15m: {fmtSignedPercent(evidenceNumber(item, "price_return", "price_return_pct_15m"))}</div>
+              <div>OI change: {fmtSignedPercent(evidenceNumber(item, "oi_change_pct", "oi_change_pct_15m"))}</div>
+              <div>Volume vs avg: {fmtRatioX(evidenceNumber(item, "volume_ratio_vs_lookback"))}</div>
+              <div>Taker buy: {fmtRatioPercent(evidenceNumber(item, "kline_taker_buy_ratio", "futures_taker_buy_ratio_15m"))}</div>
+              <div>Taker sell: {fmtRatioPercent(evidenceNumber(item, "kline_taker_sell_ratio"))}</div>
+              <div>Close position: {fmtRatioPercent(evidenceNumber(item, "close_position_in_range", "close_position_15m"))}</div>
+              <div>Futures led: {String(item.evidence_summary.futures_led_flag ?? "-")}</div>
+              <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? "-")}</div>
+            </div>
             <div>Entry source: {item.entry_price_source || "-"}</div>
             <div>ATR ref: {item.atr_reference_timeframe || "-"} {fmtNumber(item.atr_reference_value)}</div>
             <div>Position lock: {item.position_lock_mode || "-"}</div>
@@ -215,6 +226,34 @@ function normalizeLimit(value: string | undefined): number {
   const parsed = Number(value || 50);
   if (!Number.isFinite(parsed)) return 50;
   return Math.min(Math.max(Math.trunc(parsed), 1), 200);
+}
+
+function evidenceNumber(item: LiveScannerItem, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const value = item.evidence_summary[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value !== "") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function fmtSignedPercent(value: number | null): string {
+  if (value === null) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(value)}%`;
+}
+
+function fmtRatioPercent(value: number | null): string {
+  if (value === null) return "-";
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(value * 100)}%`;
+}
+
+function fmtRatioX(value: number | null): string {
+  if (value === null) return "-";
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}x`;
 }
 
 function scannerApiPath({

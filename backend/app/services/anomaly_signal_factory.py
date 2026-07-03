@@ -89,7 +89,7 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         early_long_quality = evaluate_early_signal_quality(
             price_return_pct=feature.get("price_return"),
             close_position=feature.get("close_position_in_range"),
-            taker_buy_ratio=None,
+            taker_buy_ratio=feature.get("kline_taker_buy_ratio"),
             oi_change_pct=feature.get("oi_change_pct"),
             volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
             range_ratio_vs_baseline=None,
@@ -102,7 +102,7 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
         early_short_quality = evaluate_early_signal_quality(
             price_return_pct=feature.get("price_return"),
             close_position=feature.get("close_position_in_range"),
-            taker_buy_ratio=None,
+            taker_buy_ratio=feature.get("kline_taker_buy_ratio"),
             oi_change_pct=feature.get("oi_change_pct"),
             volume_ratio_vs_baseline=feature.get("volume_ratio_vs_lookback"),
             range_ratio_vs_baseline=None,
@@ -182,7 +182,13 @@ def classify_candidate(feature: dict[str, Any], atr_reference_status: str | None
     evidence = {
         "anomalies": anomalies,
         "price_return": feature.get("price_return"),
+        "close_position_in_range": feature.get("close_position_in_range"),
         "volume_spike": feature.get("volume_spike"),
+        "volume_ratio_vs_lookback": feature.get("volume_ratio_vs_lookback"),
+        "kline_taker_buy_ratio": feature.get("kline_taker_buy_ratio"),
+        "kline_taker_sell_ratio": feature.get("kline_taker_sell_ratio"),
+        "kline_taker_buy_base": feature.get("kline_taker_buy_base"),
+        "kline_taker_sell_base": feature.get("kline_taker_sell_base"),
         "oi_change_pct": feature.get("oi_change_pct"),
         "funding_pressure": feature.get("funding_pressure"),
         "relative_strength": feature.get("relative_strength"),

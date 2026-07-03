@@ -44,6 +44,7 @@ class AnomalySignalFactoryTest(unittest.TestCase):
             price_return=0.55,
             oi_change_pct=0.05,
             close_position=0.78,
+            taker_buy_ratio=0.62,
             volume_ratio=2.2,
             atr_pct=1.0,
             spot_context="SPOT_SUPPORTING",
@@ -56,6 +57,8 @@ class AnomalySignalFactoryTest(unittest.TestCase):
         self.assertEqual(candidate["direction"], "BULLISH_CONTEXT")
         self.assertEqual(candidate["evidence"]["entry_market"], "futures")
         self.assertEqual(candidate["evidence"]["spot_usage"], "filter/evidence_only")
+        self.assertEqual(candidate["evidence"]["kline_taker_buy_ratio"], 0.62)
+        self.assertEqual(candidate["evidence"]["kline_taker_sell_ratio"], 0.38)
         self.assertGreaterEqual(candidate["evidence"]["early_quality_score"], 6)
 
     def test_early_short_quality_missing_atr_stays_radar_only(self) -> None:
@@ -115,6 +118,7 @@ class AnomalySignalFactoryTest(unittest.TestCase):
         oi_change_pct: float = 0.0,
         futures_led: bool = False,
         close_position: float = 0.5,
+        taker_buy_ratio: float = 0.52,
         volume_ratio: float = 1.0,
         atr_pct: float = 1.0,
         spot_context: str = "INLINE_SPOT_CONTEXT",
@@ -132,6 +136,10 @@ class AnomalySignalFactoryTest(unittest.TestCase):
             "funding_rate": 0.0,
             "funding_pressure": "NEUTRAL",
             "close_position_in_range": close_position,
+            "kline_taker_buy_ratio": taker_buy_ratio,
+            "kline_taker_sell_ratio": 1 - taker_buy_ratio,
+            "kline_taker_buy_base": 520,
+            "kline_taker_sell_base": 480,
             "atr_pct": atr_pct,
             "relative_strength": "INLINE_WITH_MARKET",
             "futures_led_flag": futures_led,

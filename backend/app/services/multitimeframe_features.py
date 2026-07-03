@@ -35,6 +35,10 @@ class TimeframeCandle:
     volume: Decimal
     quote_volume: Decimal | None = None
     number_of_trades: int | None = None
+    taker_buy_base_volume: Decimal | None = None
+    taker_sell_base_volume: Decimal | None = None
+    taker_buy_quote_volume: Decimal | None = None
+    taker_sell_quote_volume: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,10 @@ class FeatureSnapshot:
     volume_sum: Decimal | None
     volume_ratio_vs_lookback: Decimal | None
     volume_spike: bool
+    kline_taker_buy_ratio: Decimal | None
+    kline_taker_sell_ratio: Decimal | None
+    kline_taker_buy_base: Decimal | None
+    kline_taker_sell_base: Decimal | None
     oi_change: Decimal | None
     oi_change_pct: Decimal | None
     funding_rate: Decimal | None
@@ -129,6 +137,10 @@ def aggregate_candles(candles: list[TimeframeCandle], timeframe: str) -> list[Ti
                 volume=sum((row.volume for row in rows), Decimal("0")),
                 quote_volume=sum((row.quote_volume or Decimal("0") for row in rows), Decimal("0")),
                 number_of_trades=sum((row.number_of_trades or 0 for row in rows)),
+                taker_buy_base_volume=sum((row.taker_buy_base_volume or Decimal("0") for row in rows), Decimal("0")),
+                taker_sell_base_volume=sum((row.taker_sell_base_volume or Decimal("0") for row in rows), Decimal("0")),
+                taker_buy_quote_volume=sum((row.taker_buy_quote_volume or Decimal("0") for row in rows), Decimal("0")),
+                taker_sell_quote_volume=sum((row.taker_sell_quote_volume or Decimal("0") for row in rows), Decimal("0")),
             )
         )
     return output
@@ -209,6 +221,9 @@ class MultiTimeframeFeatureService:
             volume_ratio = current.volume / avg_volume if avg_volume and avg_volume > 0 else None
             volume_spike = volume_ratio is not None and volume_ratio >= Decimal("1.5")
             price_return = _pct_change(current.open, current.close)
+            taker_total = (current.taker_buy_base_volume or Decimal("0")) + (current.taker_sell_base_volume or Decimal("0"))
+            taker_buy_ratio = current.taker_buy_base_volume / taker_total if taker_total > 0 and current.taker_buy_base_volume is not None else None
+            taker_sell_ratio = current.taker_sell_base_volume / taker_total if taker_total > 0 and current.taker_sell_base_volume is not None else None
             high_low_range = current.high - current.low
             range_pct = high_low_range / current.open * Decimal("100") if current.open else None
             close_position = (current.close - current.low) / high_low_range if high_low_range else None
@@ -252,6 +267,10 @@ class MultiTimeframeFeatureService:
                 volume_sum=current.volume,
                 volume_ratio_vs_lookback=volume_ratio,
                 volume_spike=volume_spike,
+                kline_taker_buy_ratio=taker_buy_ratio,
+                kline_taker_sell_ratio=taker_sell_ratio,
+                kline_taker_buy_base=current.taker_buy_base_volume,
+                kline_taker_sell_base=current.taker_sell_base_volume,
                 oi_change=oi_change,
                 oi_change_pct=oi_change_pct,
                 funding_rate=funding_rate,
@@ -298,9 +317,20 @@ class MultiTimeframeFeatureService:
         if end is not None:
             where.append("close_time <= ?")
             params.append(end.isoformat(sep=" "))
+        columns = self._table_columns(conn, table)
+        taker_selects = [
+            column if column in columns else f"NULL AS {column}"
+            for column in (
+                "taker_buy_base_volume",
+                "taker_sell_base_volume",
+                "taker_buy_quote_volume",
+                "taker_sell_quote_volume",
+            )
+        ]
         rows = conn.execute(
             f"""
-            SELECT symbol, open_time, close_time, open, high, low, close, volume, quote_volume, number_of_trades
+            SELECT symbol, open_time, close_time, open, high, low, close, volume, quote_volume, number_of_trades,
+                   {", ".join(taker_selects)}
             FROM {table}
             WHERE {" AND ".join(where)}
             ORDER BY open_time ASC
@@ -319,9 +349,16 @@ class MultiTimeframeFeatureService:
                 volume=dec(row["volume"] or 0),
                 quote_volume=dec(row["quote_volume"]) if row["quote_volume"] is not None else None,
                 number_of_trades=row["number_of_trades"],
+                taker_buy_base_volume=dec(row["taker_buy_base_volume"]) if row["taker_buy_base_volume"] is not None else None,
+                taker_sell_base_volume=dec(row["taker_sell_base_volume"]) if row["taker_sell_base_volume"] is not None else None,
+                taker_buy_quote_volume=dec(row["taker_buy_quote_volume"]) if row["taker_buy_quote_volume"] is not None else None,
+                taker_sell_quote_volume=dec(row["taker_sell_quote_volume"]) if row["taker_sell_quote_volume"] is not None else None,
             )
             for row in rows
         ]
+
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
     def _open_interest_near(self, conn: sqlite3.Connection, symbol: str, when: datetime) -> Decimal | None:
         row = conn.execute(
@@ -406,6 +443,10 @@ def empty_snapshot(symbol: str, timeframe: str, status: str) -> FeatureSnapshot:
         volume_sum=None,
         volume_ratio_vs_lookback=None,
         volume_spike=False,
+        kline_taker_buy_ratio=None,
+        kline_taker_sell_ratio=None,
+        kline_taker_buy_base=None,
+        kline_taker_sell_base=None,
         oi_change=None,
         oi_change_pct=None,
         funding_rate=None,
