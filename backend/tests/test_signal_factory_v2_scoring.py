@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.anomaly_signal_factory import classify_candidate
+from app.services.signal_factory_v2_scoring import calculate_evidence_score
 
 
 def test_v2_early_long_uses_layered_core_evidence_and_risk() -> None:
@@ -98,3 +99,12 @@ def test_v2_mid_short_uses_normalized_atr_and_oi_zscore() -> None:
     assert candidate["candidate_status"] == "SIGNAL_CANDIDATE"
     assert candidate["evidence"]["oi_signal_source"] == "oi_zscore_30d"
     assert candidate["evidence"]["price_atr_multiple"] == 0.8
+
+
+def test_evidence_score_zero_is_not_medium_when_sources_missing() -> None:
+    evidence = calculate_evidence_score({}, "LONG")
+
+    assert evidence.score == 0
+    assert evidence.data_completeness == 0
+    assert evidence.confidence_tier == "EVIDENCE_UNAVAILABLE"
+    assert "EVIDENCE_UNAVAILABLE" in evidence.flags

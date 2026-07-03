@@ -498,4 +498,6 @@ def _legacy_confidence(v2_tier: str, fallback: str) -> str:
         return "LOW"
     if v2_tier == "CONFLICT":
         return "LOW"
+    if v2_tier == "EVIDENCE_UNAVAILABLE":
+        return "LOW"
     return fallback

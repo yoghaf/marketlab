@@ -19,6 +19,7 @@ STEPS = [
     ("strategy_arena", "run_strategy_arena_v1_atr_r_all_labels.py"),
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
     ("phase7_forward_test", "run_phase7_forward_test.py"),
+    ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
 ]
 
 

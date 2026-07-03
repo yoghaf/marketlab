@@ -35,6 +35,7 @@ class CoreScore:
 class EvidenceScore:
     score: int
     confidence_tier: str
+    data_completeness: int
     flags: list[str]
     reasons: list[str]
 
@@ -155,7 +156,18 @@ def calculate_core_score(feature: dict[str, Any], direction: str, atr_reference_
 def calculate_evidence_score(feature: dict[str, Any], direction: str) -> EvidenceScore:
     global_ratio = _dec(feature.get("global_long_short_ratio"))
     top_position_ratio = _dec(feature.get("top_trader_position_ratio"))
+    top_account_ratio = _dec(feature.get("top_trader_account_ratio"))
     rich_status = feature.get("rich_alignment_status")
+    data_completeness = sum(
+        1
+        for available in (
+            global_ratio is not None,
+            top_position_ratio is not None,
+            top_account_ratio is not None,
+            rich_status is not None,
+        )
+        if available
+    )
     score = 0
     flags: list[str] = []
     reasons: list[str] = []
@@ -187,15 +199,26 @@ def calculate_evidence_score(feature: dict[str, Any], direction: str) -> Evidenc
     elif rich_status:
         flags.append(f"RICH_ALIGNMENT_{rich_status}")
 
-    confidence_tier = "MEDIUM_CONF"
-    if "CONFLICT_WITH_SMART_MONEY" in flags:
+    if data_completeness == 0:
+        confidence_tier = "EVIDENCE_UNAVAILABLE"
+        flags.append("EVIDENCE_UNAVAILABLE")
+        reasons.append("no external evidence source available")
+    elif "CONFLICT_WITH_SMART_MONEY" in flags:
         confidence_tier = "CONFLICT"
     elif score >= 2:
         confidence_tier = "HIGH_CONF"
     elif score <= -1:
         confidence_tier = "LOW_CONF"
+    else:
+        confidence_tier = "MEDIUM_CONF"
 
-    return EvidenceScore(score=score, confidence_tier=confidence_tier, flags=flags, reasons=reasons)
+    return EvidenceScore(
+        score=score,
+        confidence_tier=confidence_tier,
+        data_completeness=data_completeness,
+        flags=flags,
+        reasons=reasons,
+    )
 
 
 def check_execution_risk(feature: dict[str, Any]) -> RiskGate:
@@ -284,6 +307,7 @@ def to_payload(core: CoreScore, evidence: EvidenceScore, risk: RiskGate, entry: 
         "oi_signal_source": core.oi_signal_source,
         "evidence_score": evidence.score,
         "evidence_confidence_tier": evidence.confidence_tier,
+        "evidence_data_completeness": evidence.data_completeness,
         "evidence_flags": evidence.flags,
         "evidence_reasons": evidence.reasons,
         "execution_risk_status": risk.execution,

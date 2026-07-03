@@ -190,6 +190,7 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
               <div>Futures spread: {fmtSignedPercent(evidenceNumber(item, "futures_spread_pct"))}</div>
               <div>Core score: {fmtNumber(evidenceNumber(item, "core_score"))}/{fmtNumber(evidenceNumber(item, "core_score_max"))}</div>
               <div>Evidence score: {fmtNumber(evidenceNumber(item, "evidence_score"))}</div>
+              <div>Evidence completeness: {fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4</div>
               <div>Evidence flags: {formatList(item.evidence_summary.evidence_flags)}</div>
               <div>Futures led: {String(item.evidence_summary.futures_led_flag ?? "-")}</div>
               <div>Spot led/support: {String(item.evidence_summary.spot_led_flag ?? item.evidence_summary.spot_support_status_15m ?? "-")}</div>

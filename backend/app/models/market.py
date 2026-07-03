@@ -902,6 +902,47 @@ class MarketCandidateOutcome15m(Base):
     )
 
 
+class SignalForwardReturnLog(Base):
+    __tablename__ = "signal_forward_return_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(96), nullable=False, unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
+    signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    window_open_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    window_close_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    candidate_status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    core_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    evidence_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    evidence_data_completeness: Mapped[int | None] = mapped_column(Integer)
+    confidence_tier: Mapped[str | None] = mapped_column(String(32))
+    execution_flag: Mapped[str | None] = mapped_column(String(32))
+    entry_ref: Mapped[str | None] = mapped_column(String(64))
+    sl_ref: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    tp_ref: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_at_signal: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_at_15m: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_at_1h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_at_4h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    price_at_24h: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    status_15m: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_1h: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_4h: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_24h: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_artifact_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    evidence: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_signal_forward_return_logs_symbol_time", "symbol", "signal_timestamp"),
+        Index("ix_signal_forward_return_logs_stage_status", "stage", "candidate_status"),
+    )
+
+
 class FuturesLiquidationEvent(Base):
     __tablename__ = "futures_liquidation_events"
 
