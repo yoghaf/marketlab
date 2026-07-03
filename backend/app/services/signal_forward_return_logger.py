@@ -22,6 +22,9 @@ HORIZONS = {
     "4h": timedelta(hours=4),
     "24h": timedelta(hours=24),
 }
+OBSERVATION_START_UTC = datetime(2026, 7, 3, 6, 15, 20)
+OBSERVATION_EPOCH = "STAGE8_OBSERVATION"
+PRE_OBSERVATION_EPOCH = "PRE_STAGE8_FIX"
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class SignalForwardReturnLogger:
         evidence = candidate.get("evidence") or {}
         window_open = _parse_dt(candidate.get("window_start"))
         window_close = _parse_dt(candidate.get("window_end"))
+        artifact_time = _parse_dt(generated_at)
         signal_timestamp = window_close or window_open or now
         signal_id = _signal_id(candidate)
         signal_candle = self._candle_at(candidate.get("symbol"), signal_timestamp)
@@ -122,7 +126,10 @@ class SignalForwardReturnLogger:
             "status_1h": horizon_statuses["1h"],
             "status_4h": horizon_statuses["4h"],
             "status_24h": horizon_statuses["24h"],
-            "source_artifact_generated_at": _parse_dt(generated_at),
+            "source_artifact_generated_at": artifact_time,
+            "observation_epoch": _observation_epoch(artifact_time),
+            "observation_start_utc": OBSERVATION_START_UTC,
+            "observation_marker": bool(artifact_time and artifact_time >= OBSERVATION_START_UTC),
             "evidence": json_safe(
                 {
                     "source": "signal_factory_v2_artifact + futures_klines_15m",
@@ -218,3 +225,9 @@ def _int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _observation_epoch(artifact_time: datetime | None) -> str:
+    if artifact_time is not None and artifact_time >= OBSERVATION_START_UTC:
+        return OBSERVATION_EPOCH
+    return PRE_OBSERVATION_EPOCH
