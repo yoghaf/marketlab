@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import math
 import sqlite3
@@ -21,6 +22,22 @@ FRESHNESS_BARS = 4
 ATR_PERIOD = 14
 EARLY_HORIZON_BARS = 4
 MID_HORIZON_BARS = 16
+EARLY_HORIZONS = {"15m": 1, "1h": 4, "4h": 16, "24h": 96}
+SIGNAL_TIMEFRAME = "15m"
+ATR_REFERENCE_TIMEFRAME = "1h"
+POSITION_LOCK_MODE = "LOCK_BY_SYMBOL"
+ENTRY_MARKET = "futures"
+ENTRY_PRICE_SOURCE = "futures_klines_15m.close"
+OUTCOME_MARKET = "futures"
+OUTCOME_PRICE_SOURCE = "futures_klines_15m"
+SPOT_USAGE = "filter/evidence_only"
+SCREENING_DATA_SOURCES = "futures_ohlcv,futures_taker,futures_oi,spot_volume,spot_taker,spot_support,market_state"
+SETUP_PRIORITY = {
+    "EARLY_LONG_V0": 0,
+    "EARLY_SHORT_V0": 1,
+    "MID_LONG_V0": 2,
+    "MID_SHORT_V0": 3,
+}
 
 
 @dataclass(frozen=True)
@@ -133,8 +150,7 @@ class NormalizedImpulseResearchRunner:
             "MID_LONG_V0": {"direction": "LONG", "horizon_bars": MID_HORIZON_BARS, "rr": 2.0},
             "MID_SHORT_V0": {"direction": "SHORT", "horizon_bars": MID_HORIZON_BARS, "rr": 2.0},
         }
-        setup_results: dict[str, Any] = {}
-        token_results: dict[str, list[dict[str, Any]]] = {}
+        event_based_results: dict[str, list[dict[str, Any]]] = {}
         for setup_name, rows in setup_rows.items():
             config = setup_configs[setup_name]
             evaluated = [
@@ -142,13 +158,30 @@ class NormalizedImpulseResearchRunner:
                 for row in rows
             ]
             evaluated = [row for row in evaluated if row is not None]
-            setup_results[setup_name] = summarize_setup(rows, evaluated, config)
-            token_results[setup_name] = evaluated[: self.max_rows_per_setup]
+            event_based_results[setup_name] = evaluated
+        locked_results, skipped_results = apply_symbol_position_lock(event_based_results)
+        setup_results: dict[str, Any] = {}
+        token_results: dict[str, list[dict[str, Any]]] = {}
+        for setup_name, rows in setup_rows.items():
+            config = setup_configs[setup_name]
+            locked_evaluated = locked_results.get(setup_name, [])
+            skipped_evaluated = skipped_results.get(setup_name, [])
+            setup_results[setup_name] = summarize_setup(
+                rows,
+                locked_evaluated,
+                config,
+                event_evaluated_count=len(event_based_results.get(setup_name, [])),
+                skipped_active_position_count=len(skipped_evaluated),
+            )
+            token_results[setup_name] = locked_evaluated[: self.max_rows_per_setup]
+        early_horizon_results = build_early_horizon_results(setup_rows, candles_15m, self.max_rows_per_setup)
+        latest_unique_by_setup_tf = latest_unique_events(locked_results, unique_fields=("setup", "timeframe", "symbol"))
+        latest_unique_by_symbol_tf = latest_unique_events(locked_results, unique_fields=("timeframe", "symbol"))
 
         payload = {
             "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "db_path": str(self.db_path),
-            "method": "Per-symbol normalized impulse research with ATR 1h RR path evaluation.",
+            "method": "Per-symbol normalized impulse research with ATR 1h RR path evaluation and one active paper position per symbol.",
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
@@ -157,9 +190,12 @@ class NormalizedImpulseResearchRunner:
                 "freshness_bars": FRESHNESS_BARS,
                 "atr_period": ATR_PERIOD,
                 "early_horizon_bars": EARLY_HORIZON_BARS,
+                "early_horizons": EARLY_HORIZONS,
                 "mid_horizon_bars": MID_HORIZON_BARS,
                 "early_rr": 1.5,
                 "mid_rr": 2.0,
+                "position_lock_mode": POSITION_LOCK_MODE,
+                "position_lock_rule": "If a symbol has an active paper position, later signals for the same symbol are skipped until TP, SL, or expiry/result_time.",
             },
             "coverage": {
                 "feature_rows": len(features),
@@ -170,6 +206,11 @@ class NormalizedImpulseResearchRunner:
             },
             "setup_results": setup_results,
             "token_results": token_results,
+            "early_horizon_results": early_horizon_results,
+            "token_results_event_based": {setup: rows[: self.max_rows_per_setup] for setup, rows in event_based_results.items()},
+            "position_lock_skipped_events": {setup: rows[: self.max_rows_per_setup] for setup, rows in skipped_results.items()},
+            "token_results_latest_unique_by_setup_tf": latest_unique_by_setup_tf,
+            "token_results_latest_unique_by_symbol_tf": latest_unique_by_symbol_tf,
             "guardrails": [
                 "This is a diagnostic research artifact, not a production classifier.",
                 "No scanner, classifier, Phase 6, Phase 7, Strategy Arena, or execution logic is changed.",
@@ -186,6 +227,31 @@ class NormalizedImpulseResearchRunner:
             json.dumps(json_safe(payload["token_results"]), indent=2),
             encoding="utf-8",
         )
+        (self.artifact_dir / "early_horizon_results.json").write_text(
+            json.dumps(json_safe(payload["early_horizon_results"]), indent=2),
+            encoding="utf-8",
+        )
+        (self.artifact_dir / "token_results_event_based.json").write_text(
+            json.dumps(json_safe(payload["token_results_event_based"]), indent=2),
+            encoding="utf-8",
+        )
+        (self.artifact_dir / "position_lock_skipped_events.json").write_text(
+            json.dumps(json_safe(payload["position_lock_skipped_events"]), indent=2),
+            encoding="utf-8",
+        )
+        (self.artifact_dir / "token_results_latest_unique_by_setup_tf.json").write_text(
+            json.dumps(json_safe(payload["token_results_latest_unique_by_setup_tf"]), indent=2),
+            encoding="utf-8",
+        )
+        (self.artifact_dir / "token_results_latest_unique_by_symbol_tf.json").write_text(
+            json.dumps(json_safe(payload["token_results_latest_unique_by_symbol_tf"]), indent=2),
+            encoding="utf-8",
+        )
+        write_event_csv(self.artifact_dir / "paper_events_full.csv", flatten_setup_events(payload["token_results"]))
+        write_event_csv(self.artifact_dir / "paper_events_event_based_full.csv", flatten_setup_events(payload["token_results_event_based"]))
+        write_event_csv(self.artifact_dir / "paper_events_skipped_active_position.csv", flatten_setup_events(payload["position_lock_skipped_events"]))
+        write_event_csv(self.artifact_dir / "paper_events_latest_unique_by_setup_tf.csv", payload["token_results_latest_unique_by_setup_tf"])
+        write_event_csv(self.artifact_dir / "paper_events_latest_unique_by_symbol_tf.csv", payload["token_results_latest_unique_by_symbol_tf"])
         self.doc_path.parent.mkdir(parents=True, exist_ok=True)
         self.doc_path.write_text(render_markdown(payload), encoding="utf-8")
 
@@ -507,12 +573,20 @@ def evaluate_rr_path(
             result_price = stop
             break
     return {
+        "timeframe": SIGNAL_TIMEFRAME,
+        "atr_reference_timeframe": ATR_REFERENCE_TIMEFRAME,
+        "entry_market": ENTRY_MARKET,
+        "entry_price_source": ENTRY_PRICE_SOURCE,
+        "outcome_market": OUTCOME_MARKET,
+        "outcome_price_source": OUTCOME_PRICE_SOURCE,
+        "spot_usage": SPOT_USAGE,
+        "screening_data_sources": SCREENING_DATA_SOURCES,
         "symbol": row.symbol,
         "setup_window_open_time": row.window_open_time.isoformat(),
         "window_close_time": row.window_close_time.isoformat(),
         "direction": direction,
         "entry_price": entry,
-        "entry_reference": "candidate_15m_close",
+        "entry_reference": "futures_15m_close",
         "stop_loss_reference": stop,
         "take_profit_reference": target,
         "atr_1h": row.atr_1h,
@@ -548,7 +622,197 @@ def evaluate_rr_path(
     }
 
 
-def summarize_setup(source_rows: list[NormalizedImpulseRow], evaluated: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+def build_early_horizon_results(
+    setup_rows: dict[str, list[NormalizedImpulseRow]],
+    candles_15m: dict[str, list[Candle]],
+    max_rows_per_setup: int,
+) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    configs = {
+        "EARLY_LONG_V0": {"direction": "LONG", "rr": 1.5},
+        "EARLY_SHORT_V0": {"direction": "SHORT", "rr": 1.5},
+    }
+    for horizon, horizon_bars in EARLY_HORIZONS.items():
+        event_based_results: dict[str, list[dict[str, Any]]] = {}
+        for setup_name, config in configs.items():
+            rows = setup_rows.get(setup_name, [])
+            evaluated = [
+                evaluate_rr_path(
+                    row,
+                    candles_15m,
+                    direction=config["direction"],
+                    horizon_bars=horizon_bars,
+                    rr=config["rr"],
+                )
+                for row in rows
+            ]
+            event_based_results[setup_name] = [row for row in evaluated if row is not None]
+        locked_results, skipped_results = apply_symbol_position_lock(event_based_results)
+        setup_results: dict[str, Any] = {}
+        token_results: dict[str, list[dict[str, Any]]] = {}
+        for setup_name, config in configs.items():
+            rows = setup_rows.get(setup_name, [])
+            locked_evaluated = locked_results.get(setup_name, [])
+            skipped_evaluated = skipped_results.get(setup_name, [])
+            setup_results[setup_name] = summarize_setup(
+                rows,
+                locked_evaluated,
+                {"direction": config["direction"], "horizon_bars": horizon_bars, "rr": config["rr"]},
+                event_evaluated_count=len(event_based_results.get(setup_name, [])),
+                skipped_active_position_count=len(skipped_evaluated),
+            )
+            token_results[setup_name] = locked_evaluated[:max_rows_per_setup]
+        output[horizon] = {
+            "horizon_bars": horizon_bars,
+            "horizon_minutes": horizon_bars * 15,
+            "setup_results": setup_results,
+            "token_results": token_results,
+            "token_results_event_based": {setup: rows[:max_rows_per_setup] for setup, rows in event_based_results.items()},
+            "position_lock_skipped_events": {setup: rows[:max_rows_per_setup] for setup, rows in skipped_results.items()},
+        }
+    return output
+
+
+def flatten_setup_events(token_results: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for setup, events in token_results.items():
+        for event in events:
+            rows.append({"setup": setup, **event})
+    return rows
+
+
+def group_events_by_setup(events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        setup = str(event.get("setup"))
+        row = {key: value for key, value in event.items() if key != "setup"}
+        grouped.setdefault(setup, []).append(row)
+    return grouped
+
+
+def apply_symbol_position_lock(token_results: dict[str, list[dict[str, Any]]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+    events = sorted(
+        flatten_setup_events(token_results),
+        key=lambda row: (
+            parse_dt(row["window_close_time"]),
+            SETUP_PRIORITY.get(str(row.get("setup")), 99),
+            str(row.get("symbol")),
+        ),
+    )
+    active_until_by_symbol: dict[str, datetime] = {}
+    accepted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for event in events:
+        symbol = str(event["symbol"])
+        signal_time = parse_dt(event["window_close_time"])
+        active_until = active_until_by_symbol.get(symbol)
+        if active_until is not None and signal_time < active_until:
+            skipped.append(
+                {
+                    **event,
+                    "position_lock_mode": POSITION_LOCK_MODE,
+                    "position_lock_status": "SKIPPED_ACTIVE_POSITION",
+                    "skip_reason": "symbol has active paper position until TP, SL, or expiry/result_time",
+                    "active_position_until": active_until.isoformat(),
+                }
+            )
+            continue
+        result_time = parse_dt(event["result_time"])
+        accepted.append(
+            {
+                **event,
+                "position_lock_mode": POSITION_LOCK_MODE,
+                "position_lock_status": "ACCEPTED",
+                "skip_reason": None,
+                "active_position_until": result_time.isoformat(),
+            }
+        )
+        active_until_by_symbol[symbol] = result_time
+    return group_events_by_setup(accepted), group_events_by_setup(skipped)
+
+
+def latest_unique_events(
+    token_results: dict[str, list[dict[str, Any]]],
+    unique_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    latest_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for event in flatten_setup_events(token_results):
+        key = tuple(event.get(field) for field in unique_fields)
+        existing = latest_by_key.get(key)
+        if existing is None or parse_dt(event["window_close_time"]) > parse_dt(existing["window_close_time"]):
+            latest_by_key[key] = event
+    return sorted(latest_by_key.values(), key=lambda row: (row.get("setup", ""), row.get("symbol", ""), row["window_close_time"]))
+
+
+CSV_FIELDNAMES = [
+    "setup",
+    "timeframe",
+    "atr_reference_timeframe",
+    "position_lock_mode",
+    "position_lock_status",
+    "active_position_until",
+    "skip_reason",
+    "entry_market",
+    "entry_price_source",
+    "outcome_market",
+    "outcome_price_source",
+    "spot_usage",
+    "screening_data_sources",
+    "symbol",
+    "setup_window_open_time",
+    "window_close_time",
+    "direction",
+    "entry_price",
+    "entry_reference",
+    "stop_loss_reference",
+    "take_profit_reference",
+    "atr_1h",
+    "atr_1h_pct",
+    "risk_distance",
+    "risk_atr_mult",
+    "rr",
+    "horizon_bars",
+    "horizon_minutes",
+    "outcome",
+    "result_time",
+    "result_price_reference",
+    "future_close_at_horizon",
+    "realized_r",
+    "max_favorable_r",
+    "max_adverse_r",
+    "max_high_during_horizon",
+    "min_low_during_horizon",
+    "price_return_pct",
+    "volume_spike_ratio_20",
+    "range_spike_ratio_20",
+    "oi_spike_ratio_20",
+    "oi_change_pct",
+    "price_move_atr_1h",
+    "same_direction_impulse_age_bars",
+    "is_fresh_impulse",
+    "spot_support_status",
+    "price_return_pct_1h",
+    "universe_rank",
+    "collection_tier",
+    "not_live_signal",
+    "not_execution_instruction",
+]
+
+
+def write_event_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(json_safe(rows))
+
+
+def summarize_setup(
+    source_rows: list[NormalizedImpulseRow],
+    evaluated: list[dict[str, Any]],
+    config: dict[str, Any],
+    event_evaluated_count: int,
+    skipped_active_position_count: int,
+) -> dict[str, Any]:
     outcomes = Counter(row["outcome"] for row in evaluated)
     realized = [row["realized_r"] for row in evaluated if row["realized_r"] is not None]
     favorable = [row["max_favorable_r"] for row in evaluated if row["max_favorable_r"] is not None]
@@ -556,6 +820,10 @@ def summarize_setup(source_rows: list[NormalizedImpulseRow], evaluated: list[dic
     symbols = Counter(row["symbol"] for row in evaluated)
     return {
         "source_candidate_count": len(source_rows),
+        "event_evaluated_count_before_position_lock": event_evaluated_count,
+        "skipped_active_position_count": skipped_active_position_count,
+        "position_locked_count": len(evaluated),
+        "position_lock_mode": POSITION_LOCK_MODE,
         "evaluated_count": len(evaluated),
         "direction": config["direction"],
         "horizon_bars": config["horizon_bars"],
@@ -700,14 +968,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Diagnostic Setup Results",
             "",
-            "| setup | candidates | evaluated | horizon bars | RR | TP_FIRST | SL_FIRST | median R | verdict |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| setup | raw events | skipped active | position-locked evaluated | horizon bars | RR | TP_FIRST | SL_FIRST | median R | verdict |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for setup, result in payload["setup_results"].items():
         outcomes = result["outcome_counts"]
         lines.append(
-            f"| {setup} | {result['source_candidate_count']} | {result['evaluated_count']} | "
+            f"| {setup} | {result['event_evaluated_count_before_position_lock']} | "
+            f"{result['skipped_active_position_count']} | {result['evaluated_count']} | "
             f"{result['horizon_bars']} | {result['rr']} | {outcomes.get('TP_FIRST', 0)} | "
             f"{outcomes.get('SL_FIRST', 0)} | {fmt(result['median_realized_r'])} | {result['read_only_verdict']} |"
         )
@@ -720,7 +989,11 @@ def render_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Token-Level Paper Event Fields",
             "",
-            "`token_results.json` contains concrete paper events with `symbol`, `setup_window_open_time`, `window_close_time`, `direction`, `entry_price`, `stop_loss_reference`, `take_profit_reference`, `atr_1h`, `risk_distance`, `rr`, `outcome`, `result_time`, `result_price_reference`, `realized_r`, `max_favorable_r`, and `max_adverse_r`.",
+            "`token_results.json` contains concrete paper events with `setup`, `timeframe`, `entry_market`, `entry_price_source`, `outcome_market`, `spot_usage`, `symbol`, `setup_window_open_time`, `window_close_time`, `direction`, `entry_price`, `stop_loss_reference`, `take_profit_reference`, `atr_1h`, `risk_distance`, `rr`, `outcome`, `result_time`, `result_price_reference`, `realized_r`, `max_favorable_r`, and `max_adverse_r`.",
+            "",
+            "Entry and result prices are futures-only: `entry_price` comes from `futures_klines_15m.close`, TP/SL path is checked against `futures_klines_15m`, and spot fields are only used as evidence/filter context.",
+            "",
+            "`paper_events_full.csv` is position-locked with `LOCK_BY_SYMBOL`: if a symbol already has an active paper position, later signals are skipped until TP, SL, or expiry/result time. `paper_events_event_based_full.csv` is the raw event-based comparator. `paper_events_skipped_active_position.csv` lists skipped overlaps.",
             "",
             "## Sample Paper Events",
             "",

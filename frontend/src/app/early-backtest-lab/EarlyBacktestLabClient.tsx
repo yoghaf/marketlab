@@ -16,20 +16,21 @@ import { labelFor } from "@/lib/labels";
 
 type Props = {
   initialSummary: EarlyBacktestSummaryResponse | null;
-  initialEvents: EarlyBacktestEventsResponse | null;
+  initialEventsByHorizon: Record<string, EarlyBacktestEventsResponse | null>;
   initialError: string | null;
 };
 
 const stages = ["EARLY_LONG", "EARLY_SHORT"];
 const outcomes = ["TP_FIRST", "SL_FIRST", "NEITHER"];
-const evaluatedHorizon = "1h";
+const horizons = ["15m", "1h", "4h", "24h"];
 
-export function EarlyBacktestLabClient({ initialSummary, initialEvents, initialError }: Props) {
+export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon, initialError }: Props) {
+  const [horizon, setHorizon] = useState("4h");
   const [stage, setStage] = useState("");
   const [outcome, setOutcome] = useState("");
   const [limit, setLimit] = useState(200);
 
-  const items = initialEvents?.items || [];
+  const items = initialEventsByHorizon[horizon]?.items || [];
   const filteredItems = useMemo(() => {
     return items
       .filter((item) => !stage || item.stage === stage)
@@ -38,7 +39,7 @@ export function EarlyBacktestLabClient({ initialSummary, initialEvents, initialE
   }, [items, limit, outcome, stage]);
 
   const summary = initialSummary;
-  const selectedHorizon = summary?.summary.by_horizon[evaluatedHorizon];
+  const selectedHorizon = summary?.summary.by_horizon[horizon];
   const earlyLong = summary?.summary.by_stage.EARLY_LONG || 0;
   const earlyShort = summary?.summary.by_stage.EARLY_SHORT || 0;
 
@@ -69,21 +70,21 @@ export function EarlyBacktestLabClient({ initialSummary, initialEvents, initialE
             <MetricCard label="Early Events" value={summary?.summary.total_events || 0} helper={`${summary?.metadata.feature_rows || 0} feature rows`} tone="info" />
             <MetricCard label="EARLY_LONG" value={earlyLong} helper="Long awal historis" tone="info" />
             <MetricCard label="EARLY_SHORT" value={earlyShort} helper="Short awal historis" tone="warn" />
-            <MetricCard label="1h Ready" value={selectedHorizon?.ready || 0} helper={`Waiting ${selectedHorizon?.waiting || 0}`} />
-            <MetricCard label="1h Median R" value={fmtR(selectedHorizon?.median_r)} helper={`Avg ${fmtR(selectedHorizon?.avg_r)}`} tone={(selectedHorizon?.median_r || 0) > 0 ? "good" : "warn"} />
+            <MetricCard label={`${horizon} Ready`} value={selectedHorizon?.ready || 0} helper={`Waiting ${selectedHorizon?.waiting || 0}`} />
+            <MetricCard label={`${horizon} Median R`} value={fmtR(selectedHorizon?.median_r)} helper={`Avg ${fmtR(selectedHorizon?.avg_r)}`} tone={(selectedHorizon?.median_r || 0) > 0 ? "good" : "warn"} />
             <MetricCard label="Candles" value={summary?.metadata.candles_15m || 0} helper="Futures 15m di artifact" />
           </section>
 
-          <SectionCard title="Kenapa cuma 1h?" description="Artifact early V0 saat ini memang menguji horizon 4 candle 15m = 1h. Horizon 15m, 4h, dan 24h belum dievaluasi di artifact ini, jadi tidak ditampilkan sebagai hasil palsu.">
+          <SectionCard title="Backtest horizon" description="Early V0 sekarang dievaluasi di 15m, 1h, 4h, dan 24h. Tiap horizon punya position lock sendiri, jadi hasil 24h tidak mengunci hasil 15m.">
             <div className="grid gap-3 p-4 text-sm md:grid-cols-4">
-              <Guardrail label="Evaluated horizon" value="1h" />
+              <Guardrail label="Selected horizon" value={horizon} />
               <Guardrail label="Entry market" value={summary?.guardrails.entry_market || "futures"} />
               <Guardrail label="Spot usage" value={summary?.guardrails.spot_usage || "evidence/filter only"} />
               <Guardrail label="Execution" value={summary?.guardrails.not_execution_instruction ? "NO" : "UNKNOWN"} />
             </div>
           </SectionCard>
 
-          <SectionCard title="1h result summary" description="Perbandingan RR untuk EARLY_LONG dan EARLY_SHORT pada horizon yang benar-benar dievaluasi. Neither berarti sampai horizon 1h belum kena TP/SL, lalu dihitung memakai close horizon.">
+          <SectionCard title="Horizon result summary" description="Perbandingan RR untuk EARLY_LONG dan EARLY_SHORT. Neither berarti sampai horizon tersebut belum kena TP/SL, lalu dihitung memakai close horizon.">
             <div className="table-wrap">
               <table className="ops-table">
                 <thead>
@@ -99,23 +100,34 @@ export function EarlyBacktestLabClient({ initialSummary, initialEvents, initialE
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td className="font-semibold">1h</td>
-                    <td>{selectedHorizon?.ready ?? 0}</td>
-                    <td>{selectedHorizon?.tp ?? 0}</td>
-                    <td>{selectedHorizon?.sl ?? 0}</td>
-                    <td>{selectedHorizon?.neither ?? 0}</td>
-                    <td>{fmtR(selectedHorizon?.avg_r)}</td>
-                    <td>{fmtR(selectedHorizon?.median_r)}</td>
-                    <td>{fmtR(selectedHorizon?.best_r)} / {fmtR(selectedHorizon?.worst_r)}</td>
-                  </tr>
+                  {horizons.map((item) => {
+                    const row = summary?.summary.by_horizon[item];
+                    return (
+                      <tr key={item} className={item === horizon ? "bg-blue-50/60" : ""}>
+                        <td className="font-semibold">{item}</td>
+                        <td>{row?.ready ?? 0}</td>
+                        <td>{row?.tp ?? 0}</td>
+                        <td>{row?.sl ?? 0}</td>
+                        <td>{row?.neither ?? 0}</td>
+                        <td>{fmtR(row?.avg_r)}</td>
+                        <td>{fmtR(row?.median_r)}</td>
+                        <td>{fmtR(row?.best_r)} / {fmtR(row?.worst_r)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </SectionCard>
 
-          <SectionCard title="History entry + trigger evidence" description="Satu baris adalah satu paper entry futures historis. Waktu invalid/result adalah waktu TP, SL, atau close horizon 1h jika neither.">
-            <div className="grid gap-3 p-4 md:grid-cols-4">
+          <SectionCard title="History entry + trigger evidence" description={`Satu baris adalah satu paper entry futures historis. Waktu invalid/result adalah waktu TP, SL, atau close horizon ${horizon} jika neither.`}>
+            <div className="grid gap-3 p-4 md:grid-cols-4 xl:grid-cols-5">
+              <label className="grid gap-1 text-sm">
+                <span className="font-semibold text-slate-600">Horizon</span>
+                <select className="rounded border border-line bg-white px-3 py-2" value={horizon} onChange={(event) => setHorizon(event.target.value)}>
+                  {horizons.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
               <label className="grid gap-1 text-sm">
                 <span className="font-semibold text-slate-600">Stage</span>
                 <select className="rounded border border-line bg-white px-3 py-2" value={stage} onChange={(event) => setStage(event.target.value)}>

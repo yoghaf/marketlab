@@ -94,16 +94,22 @@ class EarlyBacktestLabArtifactService:
     def _metadata(self, payload: dict[str, Any]) -> dict[str, Any]:
         if "token_results" in payload:
             coverage = payload.get("coverage") or {}
+            horizon_results = payload.get("early_horizon_results") or {}
+            default_token_results = (
+                horizon_results.get("1h", {}).get("token_results")
+                if horizon_results
+                else payload.get("token_results")
+            ) or {}
             return {
                 "generated_at_utc": payload.get("generated_at"),
                 "epoch": "NORMALIZED_IMPULSE_RESEARCH_V1",
                 "artifact_type": "historical_normalized_impulse_backtest",
                 "signals_loaded": sum(
-                    len((payload.get("token_results") or {}).get(setup, []))
+                    len(default_token_results.get(setup, []))
                     for setup in NORMALIZED_EARLY_SETUPS
                 ),
                 "events_evaluated": sum(
-                    len((payload.get("token_results") or {}).get(setup, []))
+                    len(default_token_results.get(setup, []))
                     for setup in NORMALIZED_EARLY_SETUPS
                 ),
                 "source_candidate_count": sum(
@@ -122,6 +128,8 @@ class EarlyBacktestLabArtifactService:
         return metadata
 
     def _normalized_impulse_events(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if payload.get("early_horizon_results"):
+            return self._normalized_impulse_multi_horizon_events(payload)
         rows: list[dict[str, Any]] = []
         token_results = payload.get("token_results") or {}
         for setup, stage in NORMALIZED_EARLY_SETUPS.items():
@@ -182,6 +190,58 @@ class EarlyBacktestLabArtifactService:
                 )
         return rows
 
+    def _normalized_impulse_multi_horizon_events(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        events_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for horizon in HORIZONS:
+            horizon_payload = (payload.get("early_horizon_results") or {}).get(horizon) or {}
+            token_results = horizon_payload.get("token_results") or {}
+            for setup, stage in NORMALIZED_EARLY_SETUPS.items():
+                direction = "LONG" if stage == "EARLY_LONG" else "SHORT"
+                for row in token_results.get(setup, []):
+                    key = (setup, str(row.get("symbol")), str(row.get("window_close_time")))
+                    event = events_by_key.get(key)
+                    if event is None:
+                        signal_time = row.get("window_close_time") or row.get("setup_window_open_time")
+                        event = {
+                            "signal_id": f"{setup}:{row.get('symbol')}:{row.get('window_close_time')}",
+                            "symbol": row.get("symbol"),
+                            "timeframe": row.get("timeframe") or "15m",
+                            "signal_time_utc": signal_time,
+                            "signal_time_wib": _to_wib_string(signal_time),
+                            "stage": stage,
+                            "direction": direction,
+                            "confidence_tier": row.get("quality_bucket") or "RESEARCH_V0",
+                            "core_score": None,
+                            "evidence_score": None,
+                            "evidence_data_completeness": None,
+                            "execution_flag": "RESEARCH_BACKTEST",
+                            "entry_market": row.get("entry_market") or "futures",
+                            "entry_price_source": row.get("entry_price_source") or "futures_klines_15m.close",
+                            "entry": row.get("entry_price"),
+                            "stop": row.get("stop_loss_reference"),
+                            "target": row.get("take_profit_reference"),
+                            "risk": row.get("risk_distance"),
+                            "horizons": {
+                                item: {"status": "NOT_EVALUATED", "outcome": "NOT_EVALUATED", "realized_r": None}
+                                for item in HORIZONS
+                            },
+                            "evidence": _normalized_evidence(row),
+                            "not_live_signal": True,
+                            "not_execution_instruction": True,
+                        }
+                        events_by_key[key] = event
+                    result_time = row.get("result_time")
+                    event["horizons"][horizon] = {
+                        "status": "READY",
+                        "outcome": row.get("outcome") or "UNKNOWN",
+                        "realized_r": row.get("realized_r"),
+                        "mfe_r": row.get("max_favorable_r"),
+                        "mae_r": row.get("max_adverse_r"),
+                        "result_time_utc": result_time,
+                        "result_time_wib": _to_wib_string(result_time),
+                    }
+        return list(events_by_key.values())
+
     def _summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         by_stage = Counter(str(event.get("stage") or "UNKNOWN") for event in events)
         by_confidence = Counter(str(event.get("confidence_tier") or "UNKNOWN") for event in events)
@@ -202,18 +262,18 @@ class EarlyBacktestLabArtifactService:
         for event in events:
             result = (event.get("horizons") or {}).get(horizon) or {}
             status = result.get("status")
+            if status == "NOT_EVALUATED":
+                continue
             outcome = str(result.get("outcome") or status or "UNKNOWN")
             outcomes[outcome] += 1
             realized = _dec(result.get("realized_r"))
-            if status == "NOT_EVALUATED":
-                continue
             if realized is None:
                 waiting += 1
                 continue
             ready += 1
             values.append(realized)
         return {
-            "events": len(events),
+            "events": ready + waiting,
             "ready": ready,
             "waiting": waiting,
             "tp": outcomes.get("TP_FIRST", 0),
@@ -250,6 +310,8 @@ class EarlyBacktestLabArtifactService:
             if stage and event.get("stage") != stage:
                 continue
             result = (event.get("horizons") or {}).get(horizon) or {}
+            if result.get("status") == "NOT_EVALUATED":
+                continue
             row_outcome = result.get("outcome") or result.get("status") or "UNKNOWN"
             if outcome and row_outcome != outcome:
                 continue
@@ -303,6 +365,21 @@ def _avg(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
     return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _normalized_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "price_return_pct": row.get("price_return_pct"),
+        "volume_spike_ratio_20": row.get("volume_spike_ratio_20"),
+        "range_spike_ratio_20": row.get("range_spike_ratio_20"),
+        "oi_spike_ratio_20": row.get("oi_spike_ratio_20"),
+        "oi_change_pct": row.get("oi_change_pct"),
+        "price_move_atr_1h": row.get("price_move_atr_1h"),
+        "spot_support_status": row.get("spot_support_status"),
+        "price_return_pct_1h": row.get("price_return_pct_1h"),
+        "universe_rank": row.get("universe_rank"),
+        "position_lock_status": row.get("position_lock_status"),
+    }
 
 
 def _to_wib_string(value: Any) -> str | None:
