@@ -302,6 +302,7 @@ class EarlyBacktestLabArtifactService:
             "neither": outcomes.get("NEITHER_CLOSE_AT_HORIZON", 0) + outcomes.get("NEITHER", 0),
             "outcomes": dict(outcomes),
             "total_r": sum(values, Decimal("0")) if values else None,
+            "fixed_risk_return_pct_1pct": sum(values, Decimal("0")) if values else None,
             "avg_r": _avg(values),
             "median_r": median(values) if values else None,
             "total_return_pct": sum(return_values, Decimal("0")) if return_values else None,

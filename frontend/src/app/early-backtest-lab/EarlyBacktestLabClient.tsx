@@ -72,8 +72,8 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
             <MetricCard label="EARLY_SHORT" value={earlyShort} helper="Short awal historis" tone="warn" />
             <MetricCard label={`${horizon} Ready`} value={selectedHorizon?.ready || 0} helper={`Waiting ${selectedHorizon?.waiting || 0}`} />
             <MetricCard label="Planned RR" value={fmtRR(selectedHorizon?.planned_rr)} helper="Target dibanding risk" tone="info" />
-            <MetricCard label={`${horizon} Total R Return`} value={fmtR(selectedHorizon?.total_r)} helper={`Return sum ${fmtPct(selectedHorizon?.total_return_pct)}`} tone={(selectedHorizon?.total_r || 0) > 0 ? "good" : "bad"} />
-            <MetricCard label={`${horizon} Median Return`} value={fmtPct(selectedHorizon?.median_return_pct)} helper={`Median R ${fmtR(selectedHorizon?.median_r)}`} tone={(selectedHorizon?.median_return_pct || 0) > 0 ? "good" : "warn"} />
+            <MetricCard label={`${horizon} Total R`} value={fmtR(selectedHorizon?.total_r)} helper={`Fixed-risk 1%: ${fmtPct(selectedHorizon?.fixed_risk_return_pct_1pct)}`} tone={(selectedHorizon?.total_r || 0) > 0 ? "good" : "bad"} />
+            <MetricCard label={`${horizon} Median Raw Move`} value={fmtPct(selectedHorizon?.median_return_pct)} helper={`Median R ${fmtR(selectedHorizon?.median_r)}`} tone={(selectedHorizon?.median_return_pct || 0) > 0 ? "good" : "warn"} />
             <MetricCard label="Candles" value={summary?.metadata.candles_15m || 0} helper="Futures 15m di artifact" />
           </section>
 
@@ -86,7 +86,7 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
             </div>
           </SectionCard>
 
-          <SectionCard title="Horizon result summary" description="Perbandingan RR untuk EARLY_LONG dan EARLY_SHORT. Neither berarti sampai horizon tersebut belum kena TP/SL, lalu dihitung memakai close horizon.">
+          <SectionCard title="Horizon result summary" description="Total R adalah hasil utama untuk backtest risk-based. Fixed-risk 1% berarti 1R = 1% account risk. Raw move sum hanya jumlah persen gerak harga futures dan bisa berbeda arah karena ATR/risk tiap token beda.">
             <div className="table-wrap">
               <table className="ops-table">
                 <thead>
@@ -97,10 +97,10 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
                     <th>SL</th>
                     <th>Neither</th>
                     <th>RR Plan</th>
-                    <th>Total R Return</th>
-                    <th>Total Return</th>
-                    <th>Avg Return</th>
-                    <th>Median Return</th>
+                    <th>Total R</th>
+                    <th>Fixed-risk 1%</th>
+                    <th>Raw Move Sum</th>
+                    <th>Avg / Median Raw Move</th>
                     <th>Avg / Median R</th>
                     <th>Best/Worst</th>
                   </tr>
@@ -117,9 +117,9 @@ export function EarlyBacktestLabClient({ initialSummary, initialEventsByHorizon,
                         <td>{row?.neither ?? 0}</td>
                         <td>{fmtRR(row?.planned_rr)}</td>
                         <td className="font-semibold">{fmtR(row?.total_r)}</td>
+                        <td>{fmtPct(row?.fixed_risk_return_pct_1pct)}</td>
                         <td>{fmtPct(row?.total_return_pct)}</td>
-                        <td>{fmtPct(row?.avg_return_pct)}</td>
-                        <td>{fmtPct(row?.median_return_pct)}</td>
+                        <td>{fmtPct(row?.avg_return_pct)} / {fmtPct(row?.median_return_pct)}</td>
                         <td>{fmtR(row?.avg_r)} / {fmtR(row?.median_r)}</td>
                         <td>{fmtR(row?.best_r)} / {fmtR(row?.worst_r)}</td>
                       </tr>
