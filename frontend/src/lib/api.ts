@@ -511,6 +511,79 @@ export type SignalFactorySummaryResponse = {
   };
 };
 
+export type SignalPerformanceItem = {
+  signal_id: string;
+  symbol: string;
+  timeframe: string;
+  signal_timestamp?: string | null;
+  signal_time_wib?: string | null;
+  stage: string;
+  direction: string;
+  candidate_status: string;
+  confidence_tier?: string | null;
+  execution_flag?: string | null;
+  core_score?: string | number | null;
+  evidence_score?: string | number | null;
+  evidence_data_completeness?: number | null;
+  entry?: string | number | null;
+  stop_loss?: string | number | null;
+  take_profit?: string | number | null;
+  risk?: string | number | null;
+  rr?: string | number | null;
+  result_status: string;
+  result_time_utc?: string | null;
+  result_time_wib?: string | null;
+  exit_price?: string | number | null;
+  realized_r?: string | number | null;
+  unrealized_r?: string | number | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+  candles_seen: number;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+};
+
+export type SignalPerformanceResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  entry_market: string;
+  entry_price_source: string;
+  latest_futures_15m_close_time?: string | null;
+  aggregate: {
+    signals_evaluated: number;
+    signals_skipped: number;
+    skip_reasons: Record<string, number>;
+    open_count: number;
+    waiting_count: number;
+    tp_count: number;
+    sl_count: number;
+    both_hit_count: number;
+    closed_count: number;
+    winrate_pct?: string | number | null;
+    total_r_closed: string | number;
+    open_unrealized_r: string | number;
+    total_r_with_open: string | number;
+    fixed_risk_return_pct_1pct_closed: string | number;
+    fixed_risk_return_pct_1pct_with_open: string | number;
+    avg_r_closed?: string | number | null;
+    status_counts: Record<string, number>;
+    by_stage: Record<string, number>;
+    by_timeframe: Record<string, number>;
+    by_confidence: Record<string, number>;
+  };
+  items: SignalPerformanceItem[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;

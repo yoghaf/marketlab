@@ -42,6 +42,7 @@ from app.services.anomaly_signal_factory import DEFAULT_SIGNAL_FACTORY_DIR, Sign
 from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArtifactService
 from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
+from app.services.signal_candidate_performance import SignalCandidatePerformanceService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_arena import StrategyArenaArtifactService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
@@ -271,6 +272,26 @@ def signal_candidates_readonly_15m(
             "count": len(rows),
             "items": [model_to_dict(row) for row in rows],
         }
+    )
+
+
+@router.get("/api/signal-candidates/performance/live")
+def signal_candidates_performance_live(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    stage: str | None = None,
+    timeframe: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    return json_safe(
+        SignalCandidatePerformanceService(db).summary(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            limit=max(1, min(limit, 500)),
+        )
     )
 
 
