@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { MetricCard } from "@/components/MetricCard";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { SignalPerformanceResponse } from "@/lib/api";
+import { SignalPerformanceBucket, SignalPerformanceResponse } from "@/lib/api";
 import { labelFor } from "@/lib/labels";
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
@@ -104,6 +104,33 @@ export function SignalPerformanceClient() {
         {error && <div className="border-t border-line bg-red-50 p-4 text-sm text-stale">{error}</div>}
       </SectionCard>
 
+      <SectionCard title="Performance by signal timeframe" description="Ini membagi hasil berdasarkan timeframe asal signal, bukan horizon evaluasi. Jika 4h/24h kosong berarti belum ada signal dari TF itu.">
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Signal TF</th>
+                <th>Evaluated</th>
+                <th>TP</th>
+                <th>SL</th>
+                <th>Open</th>
+                <th>Waiting</th>
+                <th>Winrate</th>
+                <th>Total R</th>
+                <th>Fixed-risk 1%</th>
+                <th>With Open</th>
+              </tr>
+            </thead>
+            <tbody>
+              {timeframes.map((tf) => {
+                const row = data?.aggregate.by_timeframe_performance?.[tf];
+                return <TimeframeRow key={tf} timeframe={tf} row={row} />;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
       <section className="grid gap-4 xl:grid-cols-3">
         <SectionCard title="Status counts">
           <KeyValueTable rows={data?.aggregate.status_counts || {}} />
@@ -166,6 +193,23 @@ export function SignalPerformanceClient() {
         </div>
       </SectionCard>
     </div>
+  );
+}
+
+function TimeframeRow({ timeframe, row }: { timeframe: string; row?: SignalPerformanceBucket }) {
+  return (
+    <tr>
+      <td className="font-semibold">{timeframe}</td>
+      <td>{row?.signals_evaluated ?? 0}</td>
+      <td>{row?.tp_count ?? 0}</td>
+      <td>{row?.sl_count ?? 0}</td>
+      <td>{row?.open_count ?? 0}</td>
+      <td>{row?.waiting_count ?? 0}</td>
+      <td>{row?.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
+      <td>{fmtSigned(row?.total_r_closed)}R</td>
+      <td>{fmtSigned(row?.fixed_risk_return_pct_1pct_closed)}%</td>
+      <td>{fmtSigned(row?.total_r_with_open)}R</td>
+    </tr>
   );
 }
 

@@ -291,34 +291,19 @@ class SignalCandidatePerformanceService:
         by_stage = Counter(str(item["stage"]) for item in items)
         by_timeframe = Counter(str(item["timeframe"]) for item in items)
         by_confidence = Counter(str(item.get("confidence_tier") or "UNKNOWN") for item in items)
-        closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES]
-        wins = [item for item in closed if item["result_status"] == "TP_HIT"]
-        losses = [item for item in closed if item["result_status"] == "SL_HIT"]
-        realized_values = [Decimal(item["realized_r"]) for item in closed if item.get("realized_r") is not None]
-        open_values = [Decimal(item["unrealized_r"]) for item in items if item["result_status"] == "OPEN" and item.get("unrealized_r") is not None]
-        completed_for_winrate = len(wins) + len(losses)
-        total_r_closed = sum(realized_values, Decimal("0"))
-        total_unrealized_r = sum(open_values, Decimal("0"))
+        total_perf = _performance_summary(items)
+        timeframe_perf = {
+            timeframe: _performance_summary([item for item in items if item.get("timeframe") == timeframe])
+            for timeframe in ("15m", "1h", "4h", "24h")
+        }
         return {
-            "signals_evaluated": len(items),
             "signals_skipped": sum(skipped.values()),
             "skip_reasons": dict(skipped),
-            "open_count": status_counts.get("OPEN", 0),
-            "waiting_count": status_counts.get("WAITING_DATA", 0),
-            "tp_count": status_counts.get("TP_HIT", 0),
-            "sl_count": status_counts.get("SL_HIT", 0),
-            "both_hit_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
-            "closed_count": len(closed),
-            "winrate_pct": (Decimal(len(wins)) / Decimal(completed_for_winrate) * Decimal("100")) if completed_for_winrate else None,
-            "total_r_closed": total_r_closed,
-            "open_unrealized_r": total_unrealized_r,
-            "total_r_with_open": total_r_closed + total_unrealized_r,
-            "fixed_risk_return_pct_1pct_closed": total_r_closed,
-            "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
-            "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
+            **total_perf,
             "status_counts": dict(status_counts),
             "by_stage": dict(by_stage),
             "by_timeframe": dict(by_timeframe),
+            "by_timeframe_performance": timeframe_perf,
             "by_confidence": dict(by_confidence),
         }
 
@@ -340,3 +325,35 @@ def _wib_string(value: datetime | None) -> str | None:
         return None
     wib = _naive(value) + timedelta(hours=7)
     return f"{wib:%Y-%m-%d %H:%M:%S} WIB"
+
+
+def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    status_counts = Counter(str(item["result_status"]) for item in items)
+    closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES]
+    wins = [item for item in closed if item["result_status"] == "TP_HIT"]
+    losses = [item for item in closed if item["result_status"] == "SL_HIT"]
+    realized_values = [Decimal(item["realized_r"]) for item in closed if item.get("realized_r") is not None]
+    open_values = [
+        Decimal(item["unrealized_r"])
+        for item in items
+        if item["result_status"] == "OPEN" and item.get("unrealized_r") is not None
+    ]
+    completed_for_winrate = len(wins) + len(losses)
+    total_r_closed = sum(realized_values, Decimal("0"))
+    total_unrealized_r = sum(open_values, Decimal("0"))
+    return {
+        "signals_evaluated": len(items),
+        "open_count": status_counts.get("OPEN", 0),
+        "waiting_count": status_counts.get("WAITING_DATA", 0),
+        "tp_count": status_counts.get("TP_HIT", 0),
+        "sl_count": status_counts.get("SL_HIT", 0),
+        "both_hit_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
+        "closed_count": len(closed),
+        "winrate_pct": (Decimal(len(wins)) / Decimal(completed_for_winrate) * Decimal("100")) if completed_for_winrate else None,
+        "total_r_closed": total_r_closed,
+        "open_unrealized_r": total_unrealized_r,
+        "total_r_with_open": total_r_closed + total_unrealized_r,
+        "fixed_risk_return_pct_1pct_closed": total_r_closed,
+        "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
+        "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
+    }

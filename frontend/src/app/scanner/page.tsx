@@ -12,6 +12,7 @@ import { compactReason, labelFor } from "@/lib/labels";
 type ScannerSearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const tierOptions = ["SIGNAL_CANDIDATE", "WATCHLIST_CONTEXT", "RADAR_ONLY", "RISK_CONTEXT", "BASELINE_CONTEXT", "BLOCKED"];
+const performanceTimeframes = ["15m", "1h", "4h", "24h"];
 const candidateTypeOptions = [
   "MID_SHORT_CONTEXT_READONLY",
   "MID_LONG_CONTEXT_READONLY",
@@ -106,6 +107,44 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
             value={fmtTime(performance?.latest_futures_15m_close_time)}
             helper={`${performance?.aggregate.signals_skipped ?? 0} skipped by lock`}
           />
+        </div>
+        <div className="border-t border-line p-4">
+          <div className="mb-3 text-sm font-semibold text-ink">Breakdown per signal timeframe</div>
+          <div className="table-wrap">
+            <table className="ops-table">
+              <thead>
+                <tr>
+                  <th>Signal TF</th>
+                  <th>Evaluated</th>
+                  <th>TP</th>
+                  <th>SL</th>
+                  <th>Open</th>
+                  <th>Waiting</th>
+                  <th>Winrate</th>
+                  <th>Total R</th>
+                  <th>With Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {performanceTimeframes.map((tf) => {
+                  const row = performance?.aggregate.by_timeframe_performance?.[tf];
+                  return (
+                    <tr key={tf}>
+                      <td className="font-semibold">{tf}</td>
+                      <td>{row?.signals_evaluated ?? 0}</td>
+                      <td>{row?.tp_count ?? 0}</td>
+                      <td>{row?.sl_count ?? 0}</td>
+                      <td>{row?.open_count ?? 0}</td>
+                      <td>{row?.waiting_count ?? 0}</td>
+                      <td>{row?.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
+                      <td>{fmtSigned(row?.total_r_closed)}R</td>
+                      <td>{fmtSigned(row?.total_r_with_open)}R</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </SectionCard>
 

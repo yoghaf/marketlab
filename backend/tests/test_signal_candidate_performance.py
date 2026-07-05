@@ -56,6 +56,12 @@ def test_live_performance_counts_tp_open_and_position_lock() -> None:
         assert aggregate["open_unrealized_r"] == Decimal("0.2")
         assert aggregate["fixed_risk_return_pct_1pct_closed"] == Decimal("1.5")
         assert aggregate["fixed_risk_return_pct_1pct_with_open"] == Decimal("1.7")
+        tf = aggregate["by_timeframe_performance"]["15m"]
+        assert tf["signals_evaluated"] == 2
+        assert tf["tp_count"] == 1
+        assert tf["open_count"] == 1
+        assert tf["total_r_closed"] == Decimal("1.5")
+        assert aggregate["by_timeframe_performance"]["4h"]["signals_evaluated"] == 0
 
 
 def test_watch_only_filter_can_include_or_exclude_rows() -> None:

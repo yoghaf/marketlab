@@ -543,6 +543,23 @@ export type SignalPerformanceItem = {
   not_execution_instruction: boolean;
 };
 
+export type SignalPerformanceBucket = {
+  signals_evaluated: number;
+  open_count: number;
+  waiting_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  closed_count: number;
+  winrate_pct?: string | number | null;
+  total_r_closed: string | number;
+  open_unrealized_r: string | number;
+  total_r_with_open: string | number;
+  fixed_risk_return_pct_1pct_closed: string | number;
+  fixed_risk_return_pct_1pct_with_open: string | number;
+  avg_r_closed?: string | number | null;
+};
+
 export type SignalPerformanceResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -559,26 +576,13 @@ export type SignalPerformanceResponse = {
   entry_market: string;
   entry_price_source: string;
   latest_futures_15m_close_time?: string | null;
-  aggregate: {
-    signals_evaluated: number;
+  aggregate: SignalPerformanceBucket & {
     signals_skipped: number;
     skip_reasons: Record<string, number>;
-    open_count: number;
-    waiting_count: number;
-    tp_count: number;
-    sl_count: number;
-    both_hit_count: number;
-    closed_count: number;
-    winrate_pct?: string | number | null;
-    total_r_closed: string | number;
-    open_unrealized_r: string | number;
-    total_r_with_open: string | number;
-    fixed_risk_return_pct_1pct_closed: string | number;
-    fixed_risk_return_pct_1pct_with_open: string | number;
-    avg_r_closed?: string | number | null;
     status_counts: Record<string, number>;
     by_stage: Record<string, number>;
     by_timeframe: Record<string, number>;
+    by_timeframe_performance: Record<string, SignalPerformanceBucket>;
     by_confidence: Record<string, number>;
   };
   items: SignalPerformanceItem[];
