@@ -6,7 +6,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
+import { LiveScannerItem, LiveScannerResponse, SignalPerformanceResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
 
 type ScannerSearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -34,9 +34,13 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   const apiPath = scannerApiPath({ tier, candidateType, includeBlocked, includeInactive, limit });
 
   let data: LiveScannerResponse | null = null;
+  let performance: SignalPerformanceResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchJson<LiveScannerResponse>(apiPath);
+    [data, performance] = await Promise.all([
+      fetchJson<LiveScannerResponse>(apiPath),
+      fetchJson<SignalPerformanceResponse>("/api/signal-candidates/performance/live?limit=1").catch(() => null)
+    ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Scanner API failed";
   }
@@ -61,6 +65,49 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Campuran/risiko" tone="warn" />
         <MetricCard label="Rows" value={visibleItems.length} helper="Sesuai filter aktif" />
       </div>
+
+      <SectionCard
+        title="Live Signal Candidate performance"
+        description="Ringkasan TP/SL paper-live dari Signal Candidate yang sudah dilog. Dihitung ulang dari futures 15m terbaru; bukan order dan bukan execution."
+        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/signal-performance">Open detail</Link>}
+      >
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+          <MetricCard
+            label="Total R"
+            value={`${fmtSigned(performance?.aggregate.total_r_closed)}R`}
+            helper="Closed TP/SL only"
+            tone={Number(performance?.aggregate.total_r_closed || 0) >= 0 ? "good" : "bad"}
+          />
+          <MetricCard
+            label="Fixed-risk return"
+            value={`${fmtSigned(performance?.aggregate.fixed_risk_return_pct_1pct_closed)}%`}
+            helper="Jika 1R = 1% risk"
+            tone={Number(performance?.aggregate.fixed_risk_return_pct_1pct_closed || 0) >= 0 ? "good" : "bad"}
+          />
+          <MetricCard
+            label="Winrate"
+            value={performance?.aggregate.winrate_pct == null ? "-" : `${fmtNumber(performance.aggregate.winrate_pct)}%`}
+            helper="TP / (TP + SL)"
+            tone="info"
+          />
+          <MetricCard
+            label="TP / SL"
+            value={`${performance?.aggregate.tp_count ?? 0} / ${performance?.aggregate.sl_count ?? 0}`}
+            helper={`${performance?.aggregate.closed_count ?? 0} closed`}
+          />
+          <MetricCard
+            label="Open"
+            value={performance?.aggregate.open_count ?? 0}
+            helper={`${fmtSigned(performance?.aggregate.open_unrealized_r)}R unrealized`}
+            tone="warn"
+          />
+          <MetricCard
+            label="Latest candle"
+            value={fmtTime(performance?.latest_futures_15m_close_time)}
+            helper={`${performance?.aggregate.signals_skipped ?? 0} skipped by lock`}
+          />
+        </div>
+      </SectionCard>
 
       <SectionCard title="Scanner controls" description="Default menyembunyikan inactive, blocked, dan baseline/control agar tabel tidak bising.">
         <div className="space-y-4 p-4">
@@ -358,6 +405,13 @@ function fmtDecimalRatePercent(value: number | null): string {
 function fmtRatioX(value: number | null): string {
   if (value === null) return "-";
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}x`;
+}
+
+function fmtSigned(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return `${num >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}`;
 }
 
 function formatList(value: unknown): string {
