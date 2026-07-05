@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -48,7 +49,8 @@ class SignalCandidatePerformanceService:
             stage=stage,
             timeframe=timeframe,
         )
-        candles = self._load_candles({row.symbol for row in signals})
+        min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        candles = self._load_candles({row.symbol for row in signals}, start_time=min_signal_time)
         evaluated, skipped = self._evaluate(signals, candles, position_lock=position_lock)
         aggregate = self._aggregate(evaluated, skipped)
         items = sorted(evaluated, key=lambda item: item["signal_timestamp"] or datetime.min, reverse=True)[:limit]
@@ -108,17 +110,20 @@ class SignalCandidatePerformanceService:
             query = query.where(SignalForwardReturnLog.timeframe == timeframe)
         return list(self.db.scalars(query).all())
 
-    def _load_candles(self, symbols: set[str]) -> dict[str, list[PerfCandle]]:
+    def _load_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
         if not symbols:
             return {}
-        rows = self.db.scalars(
+        query = (
             select(FuturesKline15m)
             .where(
                 FuturesKline15m.symbol.in_(symbols),
                 FuturesKline15m.aggregation_status == "AGG_READY",
             )
             .order_by(asc(FuturesKline15m.symbol), asc(FuturesKline15m.open_time))
-        ).all()
+        )
+        if start_time is not None:
+            query = query.where(FuturesKline15m.open_time >= start_time)
+        rows = self.db.scalars(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
             output[row.symbol].append(
@@ -142,13 +147,18 @@ class SignalCandidatePerformanceService:
         items: list[dict[str, Any]] = []
         skipped: Counter[str] = Counter()
         locked_until: dict[str, datetime | None] = {}
+        open_times_by_symbol = {symbol: [candle.open_time for candle in rows] for symbol, rows in candles.items()}
         for signal in signals:
             signal_time = _naive(signal.signal_timestamp)
             lock_time = locked_until.get(signal.symbol)
             if position_lock and signal.symbol in locked_until and (lock_time is None or signal_time < lock_time):
                 skipped["ACTIVE_POSITION_LOCK"] += 1
                 continue
-            item = self._evaluate_signal(signal, candles.get(signal.symbol, []))
+            item = self._evaluate_signal(
+                signal,
+                candles.get(signal.symbol, []),
+                open_times_by_symbol.get(signal.symbol, []),
+            )
             items.append(item)
             if position_lock:
                 if item["result_status"] in COMPLETED_OUTCOMES and item.get("result_time_utc"):
@@ -157,14 +167,20 @@ class SignalCandidatePerformanceService:
                     locked_until[signal.symbol] = None
         return items, skipped
 
-    def _evaluate_signal(self, signal: SignalForwardReturnLog, candles: list[PerfCandle]) -> dict[str, Any]:
+    def _evaluate_signal(
+        self,
+        signal: SignalForwardReturnLog,
+        candles: list[PerfCandle],
+        open_times: list[datetime],
+    ) -> dict[str, Any]:
         entry = Decimal(signal.price_at_signal)
         stop = Decimal(signal.sl_ref)
         target = Decimal(signal.tp_ref)
         risk = abs(entry - stop)
         signal_time = _naive(signal.signal_timestamp)
         direction = signal.direction
-        future = [candle for candle in candles if candle.open_time >= signal_time]
+        position = bisect_left(open_times, signal_time)
+        future = candles[position:]
         base = {
             "signal_id": signal.signal_id,
             "symbol": signal.symbol,
