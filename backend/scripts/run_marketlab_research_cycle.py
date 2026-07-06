@@ -13,8 +13,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
 ARTIFACT_DIR = BACKEND_DIR / "artifacts"
 LOCK_PATH = REPO_ROOT / "data" / "marketlab_research_cycle.lock"
+LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_RESEARCH_LOCK_STALE_SECONDS", "7200"))
 
-STEPS = [
+FULL_STEPS = [
     ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
     ("strategy_arena", "run_strategy_arena_v1_atr_r_all_labels.py"),
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
@@ -22,8 +23,17 @@ STEPS = [
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
 ]
 
+LIGHT_STEPS = [
+    ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
+    ("phase6_readiness", "run_phase6_readiness_audit.py"),
+    ("phase7_forward_test", "run_phase7_forward_test.py"),
+    ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
+]
+
 
 def main() -> int:
+    mode = parse_mode()
+    steps = FULL_STEPS if mode == "full" else LIGHT_STEPS
     lock_acquired = acquire_lock()
     if not lock_acquired:
         print_json({"status": "SKIPPED_LOCK_EXISTS", "lock_path": str(LOCK_PATH), "generated_at_utc": iso_utc()})
@@ -38,6 +48,7 @@ def main() -> int:
                 print_json(
                     {
                         "status": "FAILED",
+                        "mode": mode,
                         "failed_step": name,
                         "steps": step_results,
                         "summary": research_summary(),
@@ -49,6 +60,7 @@ def main() -> int:
         print_json(
             {
                 "status": "SUCCESS",
+                "mode": mode,
                 "steps": step_results,
                 "summary": research_summary(),
                 "generated_at_utc": iso_utc(),
@@ -59,12 +71,32 @@ def main() -> int:
         release_lock()
 
 
+def parse_mode() -> str:
+    if "--mode" in sys.argv:
+        index = sys.argv.index("--mode")
+        try:
+            mode = sys.argv[index + 1].strip().lower()
+        except IndexError:
+            raise SystemExit("--mode requires 'light' or 'full'")
+        del sys.argv[index : index + 2]
+    else:
+        mode = os.getenv("MARKETLAB_RESEARCH_CYCLE_MODE", "full").strip().lower()
+    if mode not in {"light", "full"}:
+        raise SystemExit("--mode must be 'light' or 'full'")
+    return mode
+
+
 def acquire_lock() -> bool:
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        return False
+        if not remove_stale_lock(LOCK_PATH, LOCK_STALE_SECONDS):
+            return False
+        try:
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(json.dumps({"pid": os.getpid(), "started_at_utc": iso_utc()}))
     return True
@@ -75,6 +107,44 @@ def release_lock() -> None:
         LOCK_PATH.unlink()
     except FileNotFoundError:
         pass
+
+
+def remove_stale_lock(path: Path, stale_seconds: int) -> bool:
+    payload = read_json(path)
+    pid = parse_pid(payload.get("pid"))
+    if pid is not None and process_exists(pid):
+        return False
+    age_seconds = max(0.0, datetime.now(UTC).timestamp() - path.stat().st_mtime)
+    if pid is not None:
+        reason = f"pid {pid} is not running"
+    elif age_seconds >= stale_seconds:
+        reason = f"age {age_seconds:.0f}s exceeds {stale_seconds}s"
+    else:
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    print(f"[marketlab-research-cycle] removed stale lock {path}: {reason}", flush=True)
+    return True
+
+
+def parse_pid(value: Any) -> int | None:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def run_step(name: str, script_name: str) -> dict[str, Any]:
