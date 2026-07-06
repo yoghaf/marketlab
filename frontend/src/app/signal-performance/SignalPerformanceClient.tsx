@@ -17,7 +17,7 @@ export function SignalPerformanceClient() {
   const [timeframe, setTimeframe] = useState("");
   const [includeWatchOnly, setIncludeWatchOnly] = useState(false);
   const [positionLock, setPositionLock] = useState(true);
-  const [limit, setLimit] = useState(100);
+  const [limit, setLimit] = useState(50);
   const [data, setData] = useState<SignalPerformanceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +68,7 @@ export function SignalPerformanceClient() {
       <SectionCard
         title="Live paper controls"
         description="Filter ini tidak mengubah rule. Position lock membuat hitungan lebih mirip live: satu posisi aktif per symbol sampai TP/SL."
-        actions={<button className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" onClick={load} type="button">{loading ? "Loading..." : "Refresh now"}</button>}
+        actions={<button className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" onClick={load} type="button">{loading ? "Menghitung..." : "Refresh now"}</button>}
       >
         <div className="grid gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
           <label className="grid gap-1 text-sm">
@@ -101,6 +101,11 @@ export function SignalPerformanceClient() {
             Latest candle: {fmtTime(data?.latest_futures_15m_close_time)}
           </div>
         </div>
+        {loading && !data && (
+          <div className="border-t border-line bg-amber-50 p-4 text-sm text-slate-700">
+            Menghitung ulang TP/SL paper-live dari candle futures. Ini read-only, bukan order.
+          </div>
+        )}
         {error && <div className="border-t border-line bg-red-50 p-4 text-sm text-stale">{error}</div>}
       </SectionCard>
 

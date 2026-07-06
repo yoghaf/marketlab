@@ -1,4 +1,6 @@
 import json
+from threading import Lock
+from time import monotonic
 
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
@@ -48,6 +50,10 @@ from app.services.strategy_arena import StrategyArenaArtifactService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
 
 router = APIRouter()
+
+_SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
+_SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
+_SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 
 
 @router.get("/health")
@@ -284,15 +290,35 @@ def signal_candidates_performance_live(
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
-    return json_safe(
+    normalized_limit = max(1, min(limit, 500))
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        stage or "",
+        timeframe or "",
+        normalized_limit,
+    )
+    now = monotonic()
+    with _SIGNAL_PERFORMANCE_CACHE_LOCK:
+        cached = _SIGNAL_PERFORMANCE_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
         SignalCandidatePerformanceService(db).summary(
             include_watch_only=include_watch_only,
             position_lock=position_lock,
             stage=stage,
             timeframe=timeframe,
-            limit=max(1, min(limit, 500)),
+            limit=normalized_limit,
         )
     )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _SIGNAL_PERFORMANCE_CACHE_LOCK:
+        _SIGNAL_PERFORMANCE_CACHE[cache_key] = (monotonic(), payload)
+    return payload
 
 
 @router.get("/api/outcomes/15m/status")

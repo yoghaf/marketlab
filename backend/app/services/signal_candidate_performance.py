@@ -114,7 +114,14 @@ class SignalCandidatePerformanceService:
         if not symbols:
             return {}
         query = (
-            select(FuturesKline15m)
+            select(
+                FuturesKline15m.symbol,
+                FuturesKline15m.open_time,
+                FuturesKline15m.close_time,
+                FuturesKline15m.high,
+                FuturesKline15m.low,
+                FuturesKline15m.close,
+            )
             .where(
                 FuturesKline15m.symbol.in_(symbols),
                 FuturesKline15m.aggregation_status == "AGG_READY",
@@ -123,7 +130,7 @@ class SignalCandidatePerformanceService:
         )
         if start_time is not None:
             query = query.where(FuturesKline15m.open_time >= start_time)
-        rows = self.db.scalars(query).all()
+        rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
             output[row.symbol].append(
