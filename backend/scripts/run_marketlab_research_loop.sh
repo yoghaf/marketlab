@@ -7,6 +7,8 @@ source .venv/bin/activate
 SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-900}"
 LONG_TF_INTERVAL_SECONDS="${MARKETLAB_LONG_TF_INTERVAL_SECONDS:-3600}"
 FULL_RESEARCH_INTERVAL_SECONDS="${MARKETLAB_FULL_RESEARCH_INTERVAL_SECONDS:-21600}"
+FAST_LIMIT_WINDOWS="${MARKETLAB_FAST_LIMIT_WINDOWS:-12}"
+LONG_TF_LIMIT_WINDOWS="${MARKETLAB_LONG_TF_LIMIT_WINDOWS:-8}"
 STATE_DIR="${MARKETLAB_LOOP_STATE_DIR:-../data}"
 
 mkdir -p "$STATE_DIR"
@@ -41,11 +43,11 @@ while true; do
 
   python scripts/run_collector_loop.py --cycles 1 --interval-seconds 0
   python scripts/run_kline_collector.py --markets futures spot --cycles 1
-  python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --cycles 1
+  python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1
-  python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --cycles 1
+  python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_snapshot_collector.py --cycles 1 --interval-seconds 0
-  python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --cycles 1
+  python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_feature_builder_15m.py --cycles 1
   python scripts/run_feature_builder_1h.py --cycles 1
   python scripts/run_feature_context_join.py --cycles 1
@@ -58,9 +60,9 @@ while true; do
 
   if is_due "long_timeframes" "$LONG_TF_INTERVAL_SECONDS"; then
     echo "[marketlab-loop] long timeframe maintenance start $(date -u)"
-    if python scripts/run_ohlcv_aggregation.py --timeframes 4h 24h --markets futures spot --cycles 1 \
-      && python scripts/run_rich_5m_alignment.py --timeframes 4h 24h --cycles 1 \
-      && python scripts/run_snapshot_funding_alignment.py --timeframes 4h 24h --cycles 1; then
+    if python scripts/run_ohlcv_aggregation.py --timeframes 4h 24h --markets futures spot --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1 \
+      && python scripts/run_rich_5m_alignment.py --timeframes 4h 24h --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1 \
+      && python scripts/run_snapshot_funding_alignment.py --timeframes 4h 24h --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1; then
       mark_run "long_timeframes"
       echo "[marketlab-loop] long timeframe maintenance end $(date -u)"
     else

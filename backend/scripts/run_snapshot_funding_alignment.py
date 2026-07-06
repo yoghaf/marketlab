@@ -41,7 +41,12 @@ class RunLock:
             self.path.unlink()
 
 
-def run_cycle(timeframes: list[str], symbols: list[str] | None, dry_run: bool) -> dict[str, Any]:
+def run_cycle(
+    timeframes: list[str],
+    symbols: list[str] | None,
+    limit_windows: int | None,
+    dry_run: bool,
+) -> dict[str, Any]:
     db = SessionLocal()
     run = CollectorRun(
         collector_name="market_state_alignment",
@@ -61,7 +66,12 @@ def run_cycle(timeframes: list[str], symbols: list[str] | None, dry_run: bool) -
     db.refresh(run)
     try:
         service = SnapshotFundingAlignmentService(db)
-        results = service.run(timeframes=timeframes, symbols=symbols, dry_run=dry_run)
+        results = service.run(
+            timeframes=timeframes,
+            symbols=symbols,
+            limit_windows=limit_windows,
+            dry_run=dry_run,
+        )
         inserted = sum(result.inserted_count for result in results)
         updated = sum(result.updated_count for result in results)
         run.status = "SUCCESS"
@@ -69,6 +79,7 @@ def run_cycle(timeframes: list[str], symbols: list[str] | None, dry_run: bool) -
         run.updated_count = updated
         run.details_json = {
             "dry_run": dry_run,
+            "limit_windows": limit_windows,
             "results": [
                 {
                     "timeframe": result.timeframe,
@@ -120,6 +131,7 @@ def main() -> None:
     parser.add_argument("--timeframes", nargs="+", choices=sorted(MARKET_STATE_TIMEFRAMES), required=True)
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--symbols", nargs="*", default=None)
+    parser.add_argument("--limit-windows", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -140,7 +152,7 @@ def main() -> None:
             print(f"{utcnow().isoformat()} market_state_alignment skipped: lock exists at {LOCK_PATH}")
         else:
             try:
-                result = run_cycle(args.timeframes, args.symbols, args.dry_run)
+                result = run_cycle(args.timeframes, args.symbols, args.limit_windows or None, args.dry_run)
                 print(json.dumps(result))
             finally:
                 lock.release()

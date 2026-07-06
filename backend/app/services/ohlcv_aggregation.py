@@ -53,6 +53,7 @@ class OhlcvAggregationService:
         timeframes: list[str],
         markets: list[str],
         symbols: list[str] | None = None,
+        limit_windows: int | None = None,
         dry_run: bool = False,
     ) -> list[AggregationResult]:
         cleaned_timeframes = [timeframe for timeframe in timeframes if timeframe in TIMEFRAMES]
@@ -62,7 +63,16 @@ class OhlcvAggregationService:
         for market in cleaned_markets:
             valid_spot = self._valid_spot_symbols(active_symbols) if market == "spot" else set(active_symbols)
             for timeframe in cleaned_timeframes:
-                results.append(self._aggregate_market_timeframe(market, timeframe, active_symbols, valid_spot, dry_run))
+                results.append(
+                    self._aggregate_market_timeframe(
+                        market,
+                        timeframe,
+                        active_symbols,
+                        valid_spot,
+                        limit_windows,
+                        dry_run,
+                    )
+                )
         if not dry_run:
             self.db.commit()
         return results
@@ -90,6 +100,7 @@ class OhlcvAggregationService:
         timeframe: str,
         active_symbols: list[str],
         valid_spot: set[str],
+        limit_windows: int | None,
         dry_run: bool,
     ) -> AggregationResult:
         source_model = MARKETS[market]
@@ -130,7 +141,12 @@ class OhlcvAggregationService:
                 status_counts["AGG_WARMUP"] += 1
                 continue
 
-            for window_open, window_rows in grouped.items():
+            window_opens = sorted(grouped)
+            if limit_windows is not None and limit_windows > 0:
+                window_opens = window_opens[-limit_windows:]
+
+            for window_open in window_opens:
+                window_rows = grouped[window_open]
                 window_rows.sort(key=lambda item: item.open_time)
                 payload = self._aggregate_window(symbol, timeframe, expected, window_open, window_rows, now)
                 action = self._upsert(target_model, payload, dry_run)

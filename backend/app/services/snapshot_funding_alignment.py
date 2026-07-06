@@ -60,12 +60,13 @@ class SnapshotFundingAlignmentService:
         self,
         timeframes: list[str],
         symbols: list[str] | None = None,
+        limit_windows: int | None = None,
         dry_run: bool = False,
     ) -> list[MarketStateAlignmentResult]:
         active_symbols = self._active_symbols(symbols)
         valid_spot_symbols = self._valid_spot_symbols(active_symbols)
         results = [
-            self._run_timeframe(timeframe, active_symbols, valid_spot_symbols, dry_run)
+            self._run_timeframe(timeframe, active_symbols, valid_spot_symbols, limit_windows, dry_run)
             for timeframe in timeframes
             if timeframe in MARKET_STATE_TIMEFRAMES
         ]
@@ -145,6 +146,7 @@ class SnapshotFundingAlignmentService:
         timeframe: str,
         active_symbols: list[str],
         valid_spot_symbols: set[str],
+        limit_windows: int | None,
         dry_run: bool,
     ) -> MarketStateAlignmentResult:
         target_model = MARKET_STATE_TIMEFRAMES[timeframe]["model"]
@@ -155,11 +157,14 @@ class SnapshotFundingAlignmentService:
         now = utcnow()
 
         for symbol in active_symbols:
-            windows = self.db.scalars(
+            statement = (
                 select(target_model)
                 .where(target_model.symbol == symbol, target_model.aggregation_status == "AGG_READY")
-                .order_by(target_model.open_time.asc())
-            ).all()
+                .order_by(target_model.open_time.desc())
+            )
+            if limit_windows is not None and limit_windows > 0:
+                statement = statement.limit(limit_windows)
+            windows = list(reversed(self.db.scalars(statement).all()))
             for window in windows:
                 payload = self._align_window(
                     symbol=symbol,

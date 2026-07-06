@@ -41,10 +41,11 @@ class Rich5mAlignmentService:
         self,
         timeframes: list[str],
         symbols: list[str] | None = None,
+        limit_windows: int | None = None,
         dry_run: bool = False,
     ) -> list[RichAlignmentResult]:
         active_symbols = self._active_symbols(symbols)
-        return [self._run_timeframe(timeframe, active_symbols, dry_run) for timeframe in timeframes]
+        return [self._run_timeframe(timeframe, active_symbols, limit_windows, dry_run) for timeframe in timeframes]
 
     def status_summary(self) -> dict[str, Any]:
         latest = {
@@ -86,6 +87,7 @@ class Rich5mAlignmentService:
         self,
         timeframe: str,
         active_symbols: list[str],
+        limit_windows: int | None,
         dry_run: bool,
     ) -> RichAlignmentResult:
         minutes = RICH_TIMEFRAMES[timeframe]
@@ -106,6 +108,8 @@ class Rich5mAlignmentService:
                 continue
 
             first_open, latest_open = window_range
+            if limit_windows is not None and limit_windows > 0:
+                first_open = max(first_open, latest_open - timedelta(minutes=minutes * (limit_windows - 1)))
             window_open = first_open
             while window_open <= latest_open:
                 payload = self._align_window(symbol, timeframe, expected, window_open, now)
