@@ -79,7 +79,7 @@ export default async function StrategyArenaPage({ searchParams }: { searchParams
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Best Actual Setup" value={bestActual ? labelFor(bestActual.setup_family) : "Belum ada"} helper="Belum approved Phase 7" tone="info" />
+            <MetricCard label="Best Actual Setup" value={bestActual ? labelFor(bestActual.setup_family) : "Belum ada"} helper="Belum approved gate" tone="info" />
             <MetricCard label="Best Short" value={bestShort ? labelFor(bestShort.setup_family) : "Belum ada short layak"} helper={bestShort ? "Edge belum cukup" : "Baseline masih lebih kuat"} />
             <MetricCard label="Best Long" value={bestLong ? labelFor(bestLong.setup_family) : "Belum ada"} helper="Edge belum cukup" />
             <MetricCard label="Baseline" value="Pembanding kuat" helper="Baseline tidak dihitung sebagai sinyal" tone="warn" />

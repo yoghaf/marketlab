@@ -32,7 +32,7 @@ export default async function Phase6AuditPage() {
       fetchJson<CandidateNumericEvidenceResponse>("/api/phase7/candidate-evidence?limit=300").catch(() => null)
     ]);
   } catch (err) {
-    error = err instanceof Error ? err.message : "Phase 6 artifact belum tersedia";
+    error = err instanceof Error ? err.message : "Signal gate artifact belum tersedia";
   }
 
   const featureRows = Object.values(readiness?.feature_readiness.by_timeframe || {});
@@ -53,14 +53,14 @@ export default async function Phase6AuditPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Phase 6 Audit"
+        title="Signal Gate Audit"
         badge="READ-ONLY - bukan sinyal entry live"
-        subtitle="Gate keputusan sebelum Phase 7. Halaman ini menjawab apakah data dan bukti sudah cukup, bukan memberi instruksi trading."
+        subtitle="Audit keputusan sebelum forward-test. Halaman ini menjawab apakah data dan bukti sudah cukup, bukan memberi instruksi trading."
         updatedAt={formatLocalDateTime(readiness?.generated_at || blockerAudit?.generated_at)}
       />
       <div className="flex flex-wrap gap-2 text-sm">
         <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/strategy-arena">Strategy Test</a>
-        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Phase 6 Audit</a>
+        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Signal Gate Audit</a>
       </div>
 
       {error ? (
@@ -68,7 +68,7 @@ export default async function Phase6AuditPage() {
       ) : (
         <>
           <DecisionBanner
-            title={phase7 === "HAS_CANDIDATES" ? "Ada kandidat untuk diuji Phase 7" : "Phase 7 belum aktif"}
+            title={phase7 === "HAS_CANDIDATES" ? "Ada kandidat untuk forward-test" : "Forward-test belum aktif"}
             status={phase7}
             tone={phase7 === "HAS_CANDIDATES" ? "good" : "warn"}
             description={
@@ -79,7 +79,7 @@ export default async function Phase6AuditPage() {
           />
 
           <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Approved" value={approved} helper="Boleh masuk uji Phase 7" tone={approved > 0 ? "good" : "warn"} />
+            <MetricCard label="Approved" value={approved} helper="Boleh masuk forward-test" tone={approved > 0 ? "good" : "warn"} />
             <MetricCard label="Watchlist" value={watchlist} helper="Pantauan, belum aktif" tone="info" />
             <MetricCard label="Rejected" value={readiness?.rejected_count ?? 0} helper="Belum lolos gate" tone="warn" />
             <MetricCard label="Highest Score" value={blockerAudit?.phase6_scoring.highest_score ?? "-"} helper="Butuh score memadai" />
@@ -116,7 +116,7 @@ export default async function Phase6AuditPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Phase 7 candidate table" description="Approved dan watchlist tampil dulu; rejected dibatasi agar halaman ringan.">
+          <SectionCard title="Signal gate candidate table" description="Approved dan watchlist tampil dulu; rejected dibatasi agar halaman ringan.">
             <div className="table-wrap">
               <table>
                 <thead>
@@ -248,10 +248,10 @@ function EvidenceDetail({ evidence }: { evidence: CandidateNumericEvidenceItem }
 }
 
 function decisionText(value: string): string {
-  if (value === "PHASE7_READY") return "Siap diuji Phase 7";
+  if (value === "PHASE7_READY") return "Siap diuji forward-test";
   if (value === "WATCHLIST_FOR_MORE_DATA") return "Pantau dulu";
   if (value === "RADAR_ONLY") return "Pantauan saja";
-  if (value === "REJECT_FOR_PHASE7") return "Ditolak untuk Phase 7";
+  if (value === "REJECT_FOR_PHASE7") return "Ditolak oleh gate";
   return labelFor(value);
 }
 

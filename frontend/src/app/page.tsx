@@ -39,7 +39,7 @@ export default async function OverviewPage() {
 
   const lastRun = collectors.collectors[0];
   const lastError = collectors.last_errors[0];
-  const phase7Decision = phase6?.phase7_decision || audit?.rerun_result.phase7_decision || "NO_PHASE7_CANDIDATE_YET";
+  const gateDecision = phase6?.phase7_decision || audit?.rerun_result.phase7_decision || "NO_PHASE7_CANDIDATE_YET";
   const approvedCount = phase6?.approved_count ?? audit?.rerun_result.approved_count ?? 0;
   const watchlistCount = phase6?.watchlist_count ?? audit?.rerun_result.watchlist_count ?? 0;
   const atr4 = audit?.atr_readiness["4h"]?.available_symbols ?? 0;
@@ -74,7 +74,7 @@ export default async function OverviewPage() {
       <DecisionBanner
         title={signalCandidateCount > 0 ? "Ada Signal Candidate read-only" : candidateCount > 0 ? "Ada Candidate untuk dipantau" : "Belum ada Signal Candidate"}
         status={`Signal Candidate: ${signalCandidateCount}`}
-        tone={phase7Decision === "HAS_CANDIDATES" ? "good" : "warn"}
+        tone={gateDecision === "HAS_CANDIDATES" ? "good" : "warn"}
         description={
           signalCandidateCount > 0
             ? "Signal Candidate tetap read-only: ada entry futures reference, risk reference, dan tidak ada order otomatis."
@@ -87,7 +87,7 @@ export default async function OverviewPage() {
         <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
         <MetricCard label="Radar" value={radarCount} helper="Aktivitas awal" tone="info" />
         <MetricCard label="Risk Context" value={riskCount} helper="Campuran/risiko" tone="warn" />
-        <MetricCard label="Phase 7 Approved" value={approvedCount} helper="Shadow-test approved" tone={approvedCount ? "good" : "warn"} />
+        <MetricCard label="Gate Approved" value={approvedCount} helper="Forward-test approved" tone={approvedCount ? "good" : "warn"} />
         <MetricCard label="Baseline" value={baselineCount} helper="Kontrol pembanding" />
       </section>
 
@@ -95,7 +95,7 @@ export default async function OverviewPage() {
         <SectionCard
           title="Yang harus dicek sekarang"
           description="Prioritas kerja dashboard, bukan keputusan eksekusi."
-          actions={<StatusBadge value={phase7Decision} />}
+          actions={<StatusBadge value={gateDecision} />}
         >
           <div className="grid gap-4 p-4 lg:grid-cols-2">
             <div className="rounded border border-line bg-field/40 p-4">
@@ -120,7 +120,7 @@ export default async function OverviewPage() {
             </div>
             <div className="flex flex-wrap gap-2 pt-2">
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Radar</Link>
-              <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Open Phase 6 Audit</Link>
+              <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Open Signal Gate Audit</Link>
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/data-health">Open System Health</Link>
             </div>
           </div>
@@ -131,7 +131,7 @@ export default async function OverviewPage() {
             <PipelineStep title="Radar" value={`${radarCount} token`} description="Aktivitas awal, belum cukup untuk candidate." />
             <PipelineStep title="Candidate" value={`${candidateCount} token`} description="Konteks layak dipantau, masih butuh bukti." />
             <PipelineStep title="Signal Candidate" value={`${signalCandidateCount} token`} description="Final read-only dengan reference futures." />
-            <PipelineStep title="Phase 7 Shadow" value={`${approvedCount} approved`} description="Uji forward, tetap bukan execution." />
+            <PipelineStep title="Forward Test" value={`${approvedCount} approved`} description="Uji paper/live-shadow, tetap bukan execution." />
           </div>
         </SectionCard>
       </section>

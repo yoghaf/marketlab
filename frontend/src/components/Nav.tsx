@@ -1,14 +1,18 @@
 import Link from "next/link";
 
-const links = [
+const mainLinks = [
   { href: "/", label: "Overview" },
   { href: "/scanner", label: "Radar" },
   { href: "/signal-performance", label: "Signal History" },
-  { href: "/early-backtest-lab", label: "Early Lab" },
-  { href: "/phase7-forward-test", label: "Phase 7" },
-  { href: "/strategy-arena", label: "Strategy Test" },
   { href: "/data-health", label: "System Health" },
-  { href: "/universe", label: "Universe" },
+  { href: "/universe", label: "Universe" }
+];
+
+const researchLinks = [
+  { href: "/early-backtest-lab", label: "Early Lab" },
+  { href: "/strategy-arena", label: "Strategy Test" },
+  { href: "/phase6-audit", label: "Signal Gate Audit" },
+  { href: "/signal-factory", label: "Signal Factory Raw" },
   { href: "/collectors", label: "Advanced" }
 ];
 
@@ -19,8 +23,8 @@ export function Nav() {
         <Link href="/" className="text-lg font-bold tracking-normal text-ink">
           MarketLab
         </Link>
-        <nav className="flex flex-wrap gap-2 text-sm">
-          {links.map((link) => (
+        <nav className="flex flex-wrap items-center gap-2 text-sm">
+          {mainLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
@@ -29,6 +33,22 @@ export function Nav() {
               {link.label}
             </Link>
           ))}
+          <details className="group relative">
+            <summary className="cursor-pointer list-none rounded border border-line px-3 py-1.5 text-ink hover:bg-field">
+              Research / Advanced
+            </summary>
+            <div className="absolute left-0 top-9 z-30 grid min-w-56 gap-1 rounded border border-line bg-white p-2 shadow-lg">
+              {researchLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="rounded px-3 py-2 text-ink hover:bg-field"
+                >
+                  {link.label}
+                </Link>
+              ))}
+            </div>
+          </details>
         </nav>
       </div>
     </header>

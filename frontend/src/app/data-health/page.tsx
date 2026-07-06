@@ -46,7 +46,7 @@ export default async function DataHealthPage() {
         <MetricCard label="Missing Spot" value={data.counts.MISSING_SPOT || 0} helper="Spot belum tersedia" />
       </section>
 
-      <SectionCard title="Kematangan data 4h/24h" description="Blocker utama Phase 7 saat ini.">
+      <SectionCard title="Kematangan data 4h/24h" description="Blocker utama signal gate dan forward-test saat ini.">
         <div className="grid gap-3 p-4 text-sm md:grid-cols-4">
           <MaturityItem label="4h candles" value={`${audit?.data_coverage["4h"]?.futures.ready_rows ?? 0} ready rows`} />
           <MaturityItem label="24h candles" value={`${audit?.data_coverage["24h"]?.futures.ready_rows ?? 0} ready rows`} />
