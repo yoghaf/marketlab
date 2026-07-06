@@ -53,6 +53,7 @@ class LiveCandidateScannerTest(unittest.TestCase):
     def test_early_signal_candidate_payload_includes_futures_entry_plan(self) -> None:
         open_time = self.window_open
         self._insert_universe("AAAUSDT", rank=1)
+        self._insert_universe("BBBUSDT", rank=2)
         self._insert_candidate(
             "AAAUSDT",
             open_time,
@@ -150,6 +151,7 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(len(signal_items), 1)
         item = signal_items[0]
         self.assertEqual(item["symbol"], "AAAUSDT")
+        self.assertEqual(item["timeframe"], "15m")
         self.assertEqual(item["scanner_tier"], "SIGNAL_CANDIDATE")
         self.assertEqual(item["candidate_type"], "EARLY_LONG_CANDIDATE_READONLY")
         self.assertEqual(item["signal_status"], "SIGNAL_CANDIDATE")
@@ -157,6 +159,69 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(item["entry_price"], "100.000000000000000000")
         self.assertEqual(item["quality_score"], 6)
         self.assertEqual(item["evidence_summary"]["source"], "signal_factory_v1")
+        self.assertTrue(item["not_entry_signal"])
+        self.assertTrue(item["not_execution_instruction"])
+
+    def test_signal_factory_signal_candidates_include_non_15m_timeframes(self) -> None:
+        self._insert_universe("BBBUSDT", rank=2)
+        self.db.commit()
+
+        with TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            (artifact_dir / "candidates.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at": "2026-01-01T01:20:00+00:00",
+                        "items": [
+                            {
+                                "symbol": "BBBUSDT",
+                                "timeframe": "1h",
+                                "window_start": "2026-01-01T00:00:00",
+                                "window_end": "2026-01-01T01:00:00",
+                                "setup_type": "MID_SHORT",
+                                "direction": "BEARISH_CONTEXT",
+                                "confidence": "HIGH",
+                                "reason": "Signal Factory V2 normalized bearish impulse with OI expansion",
+                                "candidate_status": "SIGNAL_CANDIDATE",
+                                "entry_price": "50",
+                                "stop_loss_reference": "52",
+                                "take_profit_reference": "47",
+                                "rr": "1.5",
+                                "timeout_minutes": 240,
+                                "atr_reference_timeframe": "4h",
+                                "atr_reference_status": "AVAILABLE",
+                                "not_live_signal": True,
+                                "not_execution_instruction": True,
+                                "evidence": {
+                                    "entry_market": "futures",
+                                    "entry_price_source": "futures_klines_1h.close",
+                                    "spot_usage": "filter/evidence_only",
+                                    "core_score": 7,
+                                    "evidence_score": 2,
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            signal_items = LiveCandidateScannerService(self.db, signal_factory_artifact_dir=artifact_dir).list_live(
+                tier="SIGNAL_CANDIDATE"
+            )
+
+        self.assertEqual(len(signal_items), 1)
+        item = signal_items[0]
+        self.assertEqual(item["symbol"], "BBBUSDT")
+        self.assertEqual(item["timeframe"], "1h")
+        self.assertEqual(item["scanner_tier"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["candidate_type"], "MID_SHORT_CONTEXT_READONLY")
+        self.assertEqual(item["signal_status"], "SIGNAL_CANDIDATE")
+        self.assertEqual(item["entry_market"], "futures")
+        self.assertEqual(item["entry_price"], "50")
+        self.assertEqual(item["stop_loss_reference"], "52")
+        self.assertEqual(item["take_profit_reference"], "47")
+        self.assertEqual(item["timeout_minutes"], 240)
+        self.assertEqual(item["atr_reference_timeframe"], "4h")
         self.assertTrue(item["not_entry_signal"])
         self.assertTrue(item["not_execution_instruction"])
 

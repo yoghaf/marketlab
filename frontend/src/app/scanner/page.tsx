@@ -26,7 +26,7 @@ const candidateTypeOptions = [
 
 export default async function ScannerPage({ searchParams }: { searchParams: ScannerSearchParams }) {
   const params = await searchParams;
-  const tier = firstParam(params.tier);
+  const tier = firstParam(params.tier) || "SIGNAL_CANDIDATE";
   const candidateType = firstParam(params.candidate_type);
   const includeBlocked = firstParam(params.include_blocked) === "true";
   const includeInactive = firstParam(params.include_inactive) === "true";
@@ -40,7 +40,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   try {
     [data, performance] = await Promise.all([
       fetchJson<LiveScannerResponse>(apiPath),
-      fetchJson<SignalPerformanceResponse>("/api/signal-candidates/performance/live?limit=1").catch(() => null)
+      fetchJson<SignalPerformanceResponse>("/api/signal-candidates/performance/live?limit=50").catch(() => null)
     ]);
   } catch (err) {
     error = err instanceof Error ? err.message : "Scanner API failed";
@@ -53,9 +53,9 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Live Scanner"
+        title="Signal Candidates"
         badge="READ-ONLY - bukan auto execution"
-        subtitle="Tabel kerja untuk membaca Radar -> Candidate -> Signal Candidate. Entry reference hanya futures; spot/rich data hanya evidence."
+        subtitle="Default halaman ini hanya menampilkan SIGNAL_CANDIDATE. Radar/Candidate/Risk tetap ada sebagai filter opsional, tapi bukan fokus utama."
         updatedAt={fmtTime(latestTime)}
       />
 
@@ -64,7 +64,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         <MetricCard label="Candidate" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Pantau konteks" tone="info" />
         <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
         <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Campuran/risiko" tone="warn" />
-        <MetricCard label="Rows" value={visibleItems.length} helper="Sesuai filter aktif" />
+        <MetricCard label="Rows" value={visibleItems.length} helper={tier === "SIGNAL_CANDIDATE" ? "Signal only" : "Sesuai filter aktif"} />
       </div>
 
       <SectionCard
@@ -148,10 +148,9 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         </div>
       </SectionCard>
 
-      <SectionCard title="Scanner controls" description="Default menyembunyikan inactive, blocked, dan baseline/control agar tabel tidak bising.">
+      <SectionCard title="Scanner controls" description="Default sekarang SIGNAL_CANDIDATE only. Filter lain hanya untuk audit, bukan fokus monitoring.">
         <div className="space-y-4 p-4">
           <div className="flex flex-wrap gap-2 text-sm">
-            <QuickLink href="/scanner?limit=75" label="All active" active={!tier && !candidateType && !includeBlocked && !includeInactive} />
             <QuickLink href="/scanner?tier=SIGNAL_CANDIDATE&limit=75" label="Signal Candidate" active={tier === "SIGNAL_CANDIDATE"} />
             <QuickLink href="/scanner?tier=WATCHLIST_CONTEXT&limit=75" label="Candidate" active={tier === "WATCHLIST_CONTEXT"} />
             <QuickLink href="/scanner?tier=RADAR_ONLY&limit=75" label="Radar" active={tier === "RADAR_ONLY"} />
@@ -191,6 +190,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
               <thead>
                 <tr>
                   <th>Symbol</th>
+                  <th>TF</th>
                   <th>Tier</th>
                   <th>Label</th>
                   <th>Arah</th>
@@ -206,8 +206,8 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 {visibleItems.map((item) => <ScannerRow key={`${item.symbol}-${item.window_open_time}-${item.scanner_tier}`} item={item} />)}
                 {!visibleItems.length && (
                   <tr>
-                    <td colSpan={10}>
-                      <EmptyState title="Belum ada radar yang lolos" detail="Data 4h/24h belum cukup dan edge masih lemah." />
+                    <td colSpan={11}>
+                      <EmptyState title="Belum ada Signal Candidate sesuai filter" detail="Cek Signal Perf untuk history, atau buka filter Candidate/Radar kalau ingin lihat konteks non-final." />
                     </td>
                   </tr>
                 )}
@@ -216,6 +216,56 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
           </div>
         </SectionCard>
       )}
+
+      <SectionCard
+        title="Signal Candidate history"
+        description="Riwayat SIGNAL_CANDIDATE yang sudah masuk log paper-live. Ini tempat melihat signal lama, TF, entry, SL, TP, dan hasil sementara."
+        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/signal-performance">Open full history</Link>}
+      >
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Time WIB</th>
+                <th>Symbol</th>
+                <th>TF</th>
+                <th>Stage</th>
+                <th>Direction</th>
+                <th>Result</th>
+                <th>Entry</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>R</th>
+                <th>Read-only</th>
+              </tr>
+            </thead>
+            <tbody>
+              {performance?.items.map((item) => (
+                <tr key={item.signal_id}>
+                  <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
+                  <td className="font-semibold">{item.symbol}</td>
+                  <td><StatusBadge value={item.timeframe} /></td>
+                  <td>{labelFor(item.stage)}</td>
+                  <td><StatusBadge value={item.direction} /></td>
+                  <td><StatusBadge value={item.result_status} /></td>
+                  <td>{fmtNumber(item.entry)}</td>
+                  <td>{fmtNumber(item.stop_loss)}</td>
+                  <td>{fmtNumber(item.take_profit)}</td>
+                  <td>{item.realized_r != null ? `${fmtSigned(item.realized_r)}R` : item.unrealized_r != null ? `${fmtSigned(item.unrealized_r)}R open` : "-"}</td>
+                  <td><StatusBadge value={item.not_live_signal ? "NOT_LIVE_SIGNAL" : "INFO"} /></td>
+                </tr>
+              ))}
+              {!performance?.items.length && (
+                <tr>
+                  <td colSpan={11}>
+                    <EmptyState title="Belum ada history sesuai filter performance" detail="Signal Candidate baru akan muncul setelah Signal Factory menghasilkan final candidate dan logger menyimpan entry reference." />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
     </div>
   );
 }
@@ -227,6 +277,7 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         <Link className="text-blue-700 hover:underline" href={`/tokens/${item.symbol}`}>{item.symbol}</Link>
         {!item.is_active && <div className="mt-1"><StatusBadge value="NOT_ACTIVE" /></div>}
       </td>
+      <td><StatusBadge value={item.timeframe || String(item.evidence_summary.timeframe || "15m")} /></td>
       <td><StatusBadge value={item.scanner_tier} /></td>
       <td className="max-w-56">{labelFor(item.candidate_type)}</td>
       <td><StatusBadge value={item.candidate_direction} /></td>

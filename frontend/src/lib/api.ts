@@ -202,6 +202,7 @@ export type Outcomes15mStatus = {
 
 export type LiveScannerItem = {
   symbol: string;
+  timeframe?: string | null;
   is_active: boolean;
   collection_tier: string;
   universe_rank?: number | null;

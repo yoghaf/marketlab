@@ -9,7 +9,15 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
-from app.models.market import FuturesKline15m, FuturesKline1h, MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
+from app.models.market import (
+    FuturesKline15m,
+    FuturesKline1h,
+    FuturesKline4h,
+    FuturesKline24h,
+    MarketCandidateOutcome15m,
+    MarketSignalCandidateReadonly15m,
+    MarketlabActiveUniverse,
+)
 from app.services.utils import json_safe
 
 SIGNAL_CANDIDATE_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READONLY"}
@@ -18,6 +26,12 @@ RADAR_ONLY_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READ
 RISK_CONTEXT_TYPES = {"SQUEEZE_RISK_CONTEXT_READONLY", "TRAP_RISK_CONTEXT_READONLY"}
 BLOCKED_TYPES = {"DATA_BLOCKED"}
 BASELINE_CONTEXT_TYPES = {"NO_SIGNAL_CONTEXT"}
+FUTURES_KLINE_BY_TIMEFRAME = {
+    "15m": FuturesKline15m,
+    "1h": FuturesKline1h,
+    "4h": FuturesKline4h,
+    "24h": FuturesKline24h,
+}
 
 
 @dataclass(frozen=True)
@@ -132,8 +146,6 @@ class LiveCandidateScannerService:
         for candidate in payload.get("items", []):
             if candidate.get("candidate_status") != "SIGNAL_CANDIDATE":
                 continue
-            if candidate.get("timeframe") != "15m":
-                continue
             symbol = str(candidate.get("symbol") or "").upper()
             if not symbol:
                 continue
@@ -156,34 +168,26 @@ class LiveCandidateScannerService:
         window_close = _parse_dt(candidate.get("window_end"))
         if window_open is None or window_close is None:
             return None
+        timeframe = str(candidate.get("timeframe") or "15m")
         evidence = candidate.get("evidence") or {}
         direction = candidate.get("direction") or "MIXED_CONTEXT"
-        entry_candle = self.db.scalar(
-            select(FuturesKline15m).where(
-                FuturesKline15m.symbol == symbol,
-                FuturesKline15m.open_time == window_open,
-                FuturesKline15m.aggregation_status == "AGG_READY",
-            )
-        )
-        atr = self._atr_1h(symbol, window_close)
-        entry = Decimal(str(entry_candle.close)) if entry_candle is not None and entry_candle.close is not None else None
-        risk = Decimal(str(atr)) if atr is not None and atr > 0 else None
-        rr = Decimal("1.5")
-        stop = None
-        target = None
-        if entry is not None and risk is not None:
-            if direction == "BULLISH_CONTEXT":
-                stop = entry - risk
-                target = entry + risk * rr
-            elif direction == "BEARISH_CONTEXT":
-                stop = entry + risk
-                target = entry - risk * rr
+        entry = _dec_or_none(candidate.get("entry_price") or evidence.get("entry_price"))
+        stop = _dec_or_none(candidate.get("stop_loss_reference") or evidence.get("stop_loss_reference"))
+        target = _dec_or_none(candidate.get("take_profit_reference") or evidence.get("take_profit_reference"))
+        rr = _dec_or_none(candidate.get("rr") or evidence.get("rr")) or Decimal("1.5")
+        timeout_minutes = _int_or_none(candidate.get("timeout_minutes") or evidence.get("timeout_minutes")) or 60
+        atr_timeframe = candidate.get("atr_reference_timeframe") or evidence.get("atr_reference_timeframe") or "1h"
+        atr = self._atr(symbol, str(atr_timeframe), window_close)
+        if entry is None:
+            entry_candle = self._entry_candle(symbol, timeframe, window_open)
+            entry = Decimal(str(entry_candle.close)) if entry_candle is not None and entry_candle.close is not None else None
         is_active = bool(universe and universe.is_active)
         inactive_warning = None if is_active else "Symbol is not in active universe"
         warning_reason = inactive_warning or "read-only signal candidate; not an execution instruction"
         return json_safe(
             {
                 "symbol": symbol,
+                "timeframe": timeframe,
                 "is_active": is_active,
                 "collection_tier": universe.collection_tier if universe else "NOT_ACTIVE",
                 "universe_rank": universe.rank if universe else None,
@@ -213,8 +217,8 @@ class LiveCandidateScannerService:
                 "stop_loss_reference": stop,
                 "take_profit_reference": target,
                 "rr": rr,
-                "timeout_minutes": 60,
-                "atr_reference_timeframe": candidate.get("atr_reference_timeframe") or "1h",
+                "timeout_minutes": timeout_minutes,
+                "atr_reference_timeframe": atr_timeframe,
                 "atr_reference_value": atr,
                 "quality_score": evidence.get("early_quality_score"),
                 "quality_bucket": evidence.get("early_quality_bucket"),
@@ -341,6 +345,7 @@ class LiveCandidateScannerService:
         return json_safe(
             {
                 "symbol": candidate.symbol,
+                "timeframe": "15m",
                 "is_active": is_active,
                 "collection_tier": universe.collection_tier if universe else "NOT_ACTIVE",
                 "universe_rank": universe.rank if universe else None,
@@ -517,6 +522,52 @@ class LiveCandidateScannerService:
             )
         return sum(ranges, Decimal("0")) / Decimal(period)
 
+    def _entry_candle(self, symbol: str, timeframe: str, open_time: Any) -> Any | None:
+        model = FUTURES_KLINE_BY_TIMEFRAME.get(timeframe)
+        if model is None:
+            return None
+        return self.db.scalar(
+            select(model).where(
+                model.symbol == symbol,
+                model.open_time == open_time,
+                model.aggregation_status == "AGG_READY",
+            )
+        )
+
+    def _atr(self, symbol: str, timeframe: str, signal_close_time: Any, period: int = 14) -> Decimal | None:
+        model = FUTURES_KLINE_BY_TIMEFRAME.get(timeframe)
+        if model is None:
+            return None
+        rows = list(
+            self.db.scalars(
+                select(model)
+                .where(
+                    model.symbol == symbol,
+                    model.close_time <= signal_close_time,
+                    model.aggregation_status == "AGG_READY",
+                )
+                .order_by(desc(model.close_time))
+                .limit(period + 1)
+            ).all()
+        )
+        rows.reverse()
+        if len(rows) < period + 1:
+            return None
+        ranges: list[Decimal] = []
+        for index in range(1, len(rows)):
+            candle = rows[index]
+            previous = rows[index - 1]
+            if candle.high is None or candle.low is None or previous.close is None:
+                return None
+            ranges.append(
+                max(
+                    Decimal(str(candle.high)) - Decimal(str(candle.low)),
+                    abs(Decimal(str(candle.high)) - Decimal(str(previous.close))),
+                    abs(Decimal(str(candle.low)) - Decimal(str(previous.close))),
+                )
+            )
+        return sum(ranges, Decimal("0")) / Decimal(period)
+
     def _matching_outcome(self, candidate: MarketSignalCandidateReadonly15m) -> MarketCandidateOutcome15m | None:
         return self.db.scalar(
             select(MarketCandidateOutcome15m)
@@ -635,6 +686,15 @@ def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
+        return None
+
+
+def _dec_or_none(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
         return None
 
 
