@@ -10,7 +10,7 @@ export default function SignalPerformancePage() {
       <PageHeader
         title="Signal Candidate History"
         badge="PAPER LIVE - BUKAN EXECUTION"
-        subtitle="Riwayat Signal Candidate yang sudah dilog: entry futures, SL, TP, status TP/SL/open, dan total R paper-live. Ini bukan order dan bukan auto execution."
+        subtitle="Arsip hasil Signal Candidate yang sudah dilog: entry futures, SL, TP, status TP/SL/open, dan total R paper-live. Bukan radar live dan bukan daftar kandidat terbaru."
       />
       <SignalPerformanceClient />
     </div>

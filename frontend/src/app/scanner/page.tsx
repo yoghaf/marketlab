@@ -6,13 +6,12 @@ import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LiveScannerItem, LiveScannerResponse, SignalPerformanceResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
+import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
 
 type ScannerSearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const tierOptions = ["SIGNAL_CANDIDATE", "WATCHLIST_CONTEXT", "RADAR_ONLY", "RISK_CONTEXT", "BASELINE_CONTEXT", "BLOCKED"];
-const performanceTimeframes = ["15m", "1h", "4h", "24h"];
 const candidateTypeOptions = [
   "MID_SHORT_CONTEXT_READONLY",
   "MID_LONG_CONTEXT_READONLY",
@@ -35,13 +34,9 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   const apiPath = scannerApiPath({ tier, candidateType, includeBlocked, includeInactive, limit });
 
   let data: LiveScannerResponse | null = null;
-  let performance: SignalPerformanceResponse | null = null;
   let error: string | null = null;
   try {
-    [data, performance] = await Promise.all([
-      fetchJson<LiveScannerResponse>(apiPath),
-      fetchJson<SignalPerformanceResponse>("/api/signal-candidates/performance/live?limit=50").catch(() => null)
-    ]);
+    data = await fetchJson<LiveScannerResponse>(apiPath);
   } catch (err) {
     error = err instanceof Error ? err.message : "Scanner API failed";
   }
@@ -53,9 +48,9 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Signal Candidates"
-        badge="READ-ONLY - bukan auto execution"
-        subtitle="Default halaman ini hanya menampilkan SIGNAL_CANDIDATE. Radar/Candidate/Risk tetap ada sebagai filter opsional, tapi bukan fokus utama."
+        title="Live Radar"
+        badge="CURRENT SNAPSHOT - READ ONLY"
+        subtitle="Snapshot kandidat terbaru per symbol. Halaman ini menjawab: token apa yang sedang masuk Radar, Candidate, atau Signal Candidate sekarang."
         updatedAt={fmtTime(latestTime)}
       />
 
@@ -68,82 +63,22 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       </div>
 
       <SectionCard
-        title="Live Signal Candidate performance"
-        description="Ringkasan TP/SL paper-live dari Signal Candidate yang sudah dilog. Dihitung ulang dari futures 15m terbaru; bukan order dan bukan execution."
-        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/signal-performance">Open detail</Link>}
+        title="Fungsi halaman Radar"
+        description="Radar bukan halaman performance. Ini hanya menampilkan kondisi terakhir dari scanner supaya mudah memilih token yang perlu dibaca."
+        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/signal-performance">Open Signal History</Link>}
       >
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard
-            label="Total R"
-            value={`${fmtSigned(performance?.aggregate.total_r_closed)}R`}
-            helper="Closed TP/SL only"
-            tone={Number(performance?.aggregate.total_r_closed || 0) >= 0 ? "good" : "bad"}
-          />
-          <MetricCard
-            label="Fixed-risk return"
-            value={`${fmtSigned(performance?.aggregate.fixed_risk_return_pct_1pct_closed)}%`}
-            helper="Jika 1R = 1% risk"
-            tone={Number(performance?.aggregate.fixed_risk_return_pct_1pct_closed || 0) >= 0 ? "good" : "bad"}
-          />
-          <MetricCard
-            label="Winrate"
-            value={performance?.aggregate.winrate_pct == null ? "-" : `${fmtNumber(performance.aggregate.winrate_pct)}%`}
-            helper="TP / (TP + SL)"
-            tone="info"
-          />
-          <MetricCard
-            label="TP / SL"
-            value={`${performance?.aggregate.tp_count ?? 0} / ${performance?.aggregate.sl_count ?? 0}`}
-            helper={`${performance?.aggregate.closed_count ?? 0} closed`}
-          />
-          <MetricCard
-            label="Open"
-            value={performance?.aggregate.open_count ?? 0}
-            helper={`${fmtSigned(performance?.aggregate.open_unrealized_r)}R unrealized`}
-            tone="warn"
-          />
-          <MetricCard
-            label="Latest candle"
-            value={fmtTime(performance?.latest_futures_15m_close_time)}
-            helper={`${performance?.aggregate.signals_skipped ?? 0} skipped by lock`}
-          />
-        </div>
-        <div className="border-t border-line p-4">
-          <div className="mb-3 text-sm font-semibold text-ink">Breakdown per signal timeframe</div>
-          <div className="table-wrap">
-            <table className="ops-table">
-              <thead>
-                <tr>
-                  <th>Signal TF</th>
-                  <th>Evaluated</th>
-                  <th>TP</th>
-                  <th>SL</th>
-                  <th>Open</th>
-                  <th>Waiting</th>
-                  <th>Winrate</th>
-                  <th>Total R</th>
-                  <th>With Open</th>
-                </tr>
-              </thead>
-              <tbody>
-                {performanceTimeframes.map((tf) => {
-                  const row = performance?.aggregate.by_timeframe_performance?.[tf];
-                  return (
-                    <tr key={tf}>
-                      <td className="font-semibold">{tf}</td>
-                      <td>{row?.signals_evaluated ?? 0}</td>
-                      <td>{row?.tp_count ?? 0}</td>
-                      <td>{row?.sl_count ?? 0}</td>
-                      <td>{row?.open_count ?? 0}</td>
-                      <td>{row?.waiting_count ?? 0}</td>
-                      <td>{row?.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
-                      <td>{fmtSigned(row?.total_r_closed)}R</td>
-                      <td>{fmtSigned(row?.total_r_with_open)}R</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <div className="grid gap-4 p-4 md:grid-cols-3">
+          <div>
+            <div className="text-sm font-semibold text-ink">Radar</div>
+            <p className="mt-1 text-sm text-slate-600">Aktivitas awal atau konteks yang perlu dipantau, belum final sebagai Signal Candidate.</p>
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-ink">Candidate</div>
+            <p className="mt-1 text-sm text-slate-600">Konteks lebih kuat dari radar, tetapi masih perlu validasi evidence, risk, atau conflict.</p>
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-ink">Signal Candidate</div>
+            <p className="mt-1 text-sm text-slate-600">Final read-only candidate yang punya entry futures reference, SL, TP, RR, dan alasan numerik.</p>
           </div>
         </div>
       </SectionCard>
@@ -207,7 +142,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 {!visibleItems.length && (
                   <tr>
                     <td colSpan={11}>
-                      <EmptyState title="Belum ada Signal Candidate sesuai filter" detail="Cek Signal Perf untuk history, atau buka filter Candidate/Radar kalau ingin lihat konteks non-final." />
+                      <EmptyState title="Belum ada row sesuai filter" detail="Cek filter Candidate/Radar/Risk untuk konteks non-final, atau buka Signal History untuk arsip hasil signal lama." />
                     </td>
                   </tr>
                 )}
@@ -216,56 +151,6 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
           </div>
         </SectionCard>
       )}
-
-      <SectionCard
-        title="Signal Candidate history"
-        description="Riwayat SIGNAL_CANDIDATE yang sudah masuk log paper-live. Ini tempat melihat signal lama, TF, entry, SL, TP, dan hasil sementara."
-        actions={<Link className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" href="/signal-performance">Open full history</Link>}
-      >
-        <div className="table-wrap">
-          <table className="ops-table">
-            <thead>
-              <tr>
-                <th>Time WIB</th>
-                <th>Symbol</th>
-                <th>TF</th>
-                <th>Stage</th>
-                <th>Direction</th>
-                <th>Result</th>
-                <th>Entry</th>
-                <th>SL</th>
-                <th>TP</th>
-                <th>R</th>
-                <th>Read-only</th>
-              </tr>
-            </thead>
-            <tbody>
-              {performance?.items.map((item) => (
-                <tr key={item.signal_id}>
-                  <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
-                  <td className="font-semibold">{item.symbol}</td>
-                  <td><StatusBadge value={item.timeframe} /></td>
-                  <td>{labelFor(item.stage)}</td>
-                  <td><StatusBadge value={item.direction} /></td>
-                  <td><StatusBadge value={item.result_status} /></td>
-                  <td>{fmtNumber(item.entry)}</td>
-                  <td>{fmtNumber(item.stop_loss)}</td>
-                  <td>{fmtNumber(item.take_profit)}</td>
-                  <td>{item.realized_r != null ? `${fmtSigned(item.realized_r)}R` : item.unrealized_r != null ? `${fmtSigned(item.unrealized_r)}R open` : "-"}</td>
-                  <td><StatusBadge value={item.not_live_signal ? "NOT_LIVE_SIGNAL" : "INFO"} /></td>
-                </tr>
-              ))}
-              {!performance?.items.length && (
-                <tr>
-                  <td colSpan={11}>
-                    <EmptyState title="Belum ada history sesuai filter performance" detail="Signal Candidate baru akan muncul setelah Signal Factory menghasilkan final candidate dan logger menyimpan entry reference." />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
     </div>
   );
 }
