@@ -21,7 +21,7 @@ const researchLinks = [
 export function Nav() {
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-white/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-5 px-4 py-3 md:px-6">
+      <div className="flex w-full flex-wrap items-center gap-5 px-3 py-3 md:px-4 xl:px-5">
         <Link href="/" className="text-lg font-bold tracking-normal text-ink">
           MarketLab
         </Link>

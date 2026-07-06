@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-06",
+    version: "UI-08",
+    title: "Full-width dashboard layout",
+    status: "LIVE",
+    area: "Frontend",
+    summary: "Layout web dibuat full-width supaya tabel lebih banyak muat di layar desktop.",
+    changes: [
+      "Container utama tidak lagi dikunci max-width kecil.",
+      "Padding kanan-kiri halaman dan navbar diperkecil.",
+      "Tabel global dibuat lebih kompak.",
+      "Lebar minimum tabel besar dikurangi supaya horizontal scroll lebih jarang muncul."
+    ],
+    impact: "Halaman seperti Signal Quality Lab, Radar, Strategy Test, dan System Health memakai ruang layar lebih maksimal.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
+    date: "2026-07-06",
     version: "LAB-03",
     title: "Signal Quality Lab",
     status: "LIVE",

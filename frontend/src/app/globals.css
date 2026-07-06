@@ -21,13 +21,13 @@ table {
 th,
 td {
   border-bottom: 1px solid #d8e0e7;
-  padding: 0.7rem 0.85rem;
+  padding: 0.55rem 0.6rem;
   text-align: left;
   vertical-align: middle;
 }
 
 th {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   color: #5d6b7a;
@@ -40,15 +40,17 @@ tbody tr:hover {
 
 .table-wrap {
   overflow-x: auto;
+  width: 100%;
 }
 
 .table-wrap table {
-  min-width: 900px;
+  min-width: 760px;
 }
 
 .ops-table th,
 .ops-table td {
-  padding: 0.65rem 0.75rem;
+  padding: 0.5rem 0.55rem;
+  font-size: 0.86rem;
 }
 
 .ops-table th {
@@ -58,7 +60,7 @@ tbody tr:hover {
 }
 
 .scanner-table {
-  min-width: 1280px;
+  min-width: 1120px;
 }
 
 .truncate-cell {
