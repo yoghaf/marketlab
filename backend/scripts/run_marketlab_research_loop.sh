@@ -48,12 +48,12 @@ while true; do
   python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_snapshot_collector.py --cycles 1 --interval-seconds 0
   python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_feature_builder_15m.py --cycles 1
-  python scripts/run_feature_builder_1h.py --cycles 1
-  python scripts/run_feature_context_join.py --cycles 1
-  python scripts/run_psychology_labeler_15m.py --cycles 1
-  python scripts/run_signal_candidate_classifier_readonly_15m.py --cycles 1
-  python scripts/run_outcome_tracker_15m.py --cycles 1
+  python scripts/run_feature_builder_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  python scripts/run_feature_builder_1h.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  python scripts/run_feature_context_join.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  python scripts/run_psychology_labeler_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  python scripts/run_signal_candidate_classifier_readonly_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  python scripts/run_outcome_tracker_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   if ! python scripts/run_marketlab_research_cycle.py --mode light; then
     echo "[marketlab-loop] light research cycle failed $(date -u)"
   fi
