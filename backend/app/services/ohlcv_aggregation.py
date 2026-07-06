@@ -120,11 +120,13 @@ class OhlcvAggregationService:
                 status_counts["AGG_MISSING_SPOT"] += 1
                 continue
 
-            rows = self.db.scalars(
-                select(source_model)
-                .where(source_model.symbol == symbol)
-                .order_by(source_model.open_time.asc())
-            ).all()
+            statement = select(source_model).where(source_model.symbol == symbol)
+            if limit_windows is not None and limit_windows > 0:
+                latest_window_close = _latest_closed_boundary(now, expected)
+                latest_window_open = latest_window_close - timedelta(minutes=expected)
+                earliest_window_open = latest_window_open - timedelta(minutes=expected * (limit_windows - 1))
+                statement = statement.where(source_model.open_time >= earliest_window_open)
+            rows = self.db.scalars(statement.order_by(source_model.open_time.asc())).all()
             closed_rows = [row for row in rows if _as_utc(row.close_time) < now]
             grouped: dict[datetime, list[Any]] = defaultdict(list)
             for row in closed_rows:

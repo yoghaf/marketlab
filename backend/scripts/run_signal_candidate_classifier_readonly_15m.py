@@ -16,6 +16,7 @@ from app.models.market import CollectorError, CollectorRun  # noqa: E402
 from app.services.signal_candidate_classifier_readonly_15m import (  # noqa: E402
     SignalCandidateClassifierReadonly15mService,
 )
+from app.services.run_lock import JsonRunLock  # noqa: E402
 from app.services.utils import duration_seconds, json_safe, utcnow  # noqa: E402
 
 LOCK_PATH = ROOT / "data" / "signal_candidate_classifier_readonly_15m.lock"
@@ -23,21 +24,13 @@ LOCK_PATH = ROOT / "data" / "signal_candidate_classifier_readonly_15m.lock"
 
 class RunLock:
     def __init__(self, path: Path) -> None:
-        self.path = path
+        self.lock = JsonRunLock(path, "signal_candidate_classifier_readonly_15m", stale_seconds=3600)
 
     def acquire(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-        os.write(fd, json.dumps({"pid": os.getpid(), "acquired_at": utcnow().isoformat()}).encode("utf-8"))
-        os.close(fd)
-        return True
+        return self.lock.acquire()
 
     def release(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
+        self.lock.release()
 
 
 def run_cycle(symbols: list[str] | None, limit_windows: int | None, dry_run: bool) -> dict[str, Any]:
