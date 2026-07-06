@@ -82,6 +82,32 @@ def test_watch_only_filter_can_include_or_exclude_rows() -> None:
         assert included["aggregate"]["tp_count"] == 1
 
 
+def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        first_time = datetime(2026, 1, 1, 0, 15)
+        second_time = datetime(2026, 1, 1, 0, 30)
+        db.add(_signal("s1", "AAAUSDT", first_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("s2", "BBBUSDT", second_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(_candle("AAAUSDT", first_time, first_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("BBBUSDT", second_time, second_time + timedelta(minutes=15), high="111", low="98", close="109"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).quality_lab(position_lock=False, min_sample=1)
+
+        assert payload["aggregate"]["signals_evaluated"] == 2
+        assert payload["drawdown"]["total_r_closed"] == Decimal("0.5")
+        assert payload["drawdown"]["max_drawdown_r"] == Decimal("-1.0")
+        by_stage = {row["bucket"]: row for row in payload["by_stage"]}
+        assert by_stage["EARLY_LONG"]["tp_count"] == 1
+        assert by_stage["EARLY_LONG"]["median_r_closed"] == Decimal("1.5")
+        assert by_stage["MID_SHORT"]["sl_count"] == 1
+        assert payload["best_signals"][0]["symbol"] == "AAAUSDT"
+        assert payload["worst_signals"][0]["symbol"] == "BBBUSDT"
+
+
 def _signal(
     signal_id: str,
     symbol: str,

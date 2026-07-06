@@ -10,6 +10,7 @@ const mainLinks = [
 
 const researchLinks = [
   { href: "/patch-notes", label: "Patch Notes" },
+  { href: "/signal-quality-lab", label: "Signal Quality Lab" },
   { href: "/early-backtest-lab", label: "Early Lab" },
   { href: "/strategy-arena", label: "Strategy Test" },
   { href: "/phase6-audit", label: "Signal Gate Audit" },

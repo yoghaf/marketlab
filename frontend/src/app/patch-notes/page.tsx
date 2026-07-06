@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-06",
+    version: "LAB-03",
+    title: "Signal Quality Lab",
+    status: "LIVE",
+    area: "Research",
+    summary: "Halaman analisis kualitas signal ditambahkan untuk membedah kenapa Signal Candidate menang atau kalah.",
+    changes: [
+      "Menambahkan breakdown TP/SL/R berdasarkan stage, confidence, timeframe, dan symbol.",
+      "Menambahkan best signal, worst signal, open signal, dan drawdown R sederhana.",
+      "Menambahkan filter stage, timeframe, min sample, position lock, dan WATCH_ONLY.",
+      "Semua analisis tetap read-only dan tidak mengubah rule Signal Factory."
+    ],
+    impact: "MarketLab sekarang punya tempat khusus untuk kalibrasi kualitas signal dari data live yang sudah terkumpul.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-06",
     version: "UI-07",
     title: "Navigation cleanup and Phase 7 page removal",
     status: "LIVE",

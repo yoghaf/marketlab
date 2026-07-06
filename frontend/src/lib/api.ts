@@ -589,6 +589,66 @@ export type SignalPerformanceResponse = {
   items: SignalPerformanceItem[];
 };
 
+export type SignalQualityBucket = SignalPerformanceBucket & {
+  bucket: string;
+  quality_flag: string;
+  symbol_count: number;
+  top_symbol: string;
+  top_symbol_share_pct?: string | number | null;
+  median_r_closed?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  best_r?: string | number | null;
+  worst_r?: string | number | null;
+};
+
+export type SignalQualityDrawdownPoint = {
+  signal_id: string;
+  symbol: string;
+  stage: string;
+  timeframe: string;
+  result_status: string;
+  result_time_utc?: string | null;
+  result_time_wib?: string | null;
+  realized_r: string | number;
+  cumulative_r: string | number;
+  drawdown_r: string | number;
+};
+
+export type SignalQualityLabResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  latest_futures_15m_close_time?: string | null;
+  aggregate: SignalPerformanceResponse["aggregate"];
+  drawdown: {
+    closed_count: number;
+    total_r_closed: string | number;
+    peak_r: string | number;
+    max_drawdown_r: string | number;
+    current_drawdown_r: string | number;
+    points: SignalQualityDrawdownPoint[];
+  };
+  by_stage: SignalQualityBucket[];
+  by_confidence: SignalQualityBucket[];
+  by_timeframe: SignalQualityBucket[];
+  top_symbols: SignalQualityBucket[];
+  weak_symbols: SignalQualityBucket[];
+  best_signals: SignalPerformanceItem[];
+  worst_signals: SignalPerformanceItem[];
+  open_signals: SignalPerformanceItem[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;
