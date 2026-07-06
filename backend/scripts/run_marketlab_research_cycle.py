@@ -41,7 +41,7 @@ def main() -> int:
 
     step_results: list[dict[str, Any]] = []
     try:
-        for name, script_name in STEPS:
+        for name, script_name in steps:
             result = run_step(name, script_name)
             step_results.append(result)
             if result["returncode"] != 0:
