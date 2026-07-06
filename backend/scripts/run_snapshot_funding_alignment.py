@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from app.services.snapshot_funding_alignment import (  # noqa: E402
 from app.services.utils import duration_seconds, json_safe, utcnow  # noqa: E402
 
 LOCK_PATH = ROOT / "data" / "market_state_alignment.lock"
+LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_MARKET_STATE_LOCK_STALE_SECONDS", "3600"))
 
 
 class RunLock:
@@ -31,7 +33,12 @@ class RunLock:
         try:
             fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            return False
+            if not self._remove_stale_lock():
+                return False
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                return False
         os.write(fd, json.dumps({"pid": os.getpid(), "acquired_at": utcnow().isoformat()}).encode("utf-8"))
         os.close(fd)
         return True
@@ -39,6 +46,45 @@ class RunLock:
     def release(self) -> None:
         if self.path.exists():
             self.path.unlink()
+
+    def _remove_stale_lock(self) -> bool:
+        pid = self._lock_pid()
+        age_seconds = max(0.0, time.time() - self.path.stat().st_mtime)
+        if pid is not None and self._process_exists(pid):
+            return False
+        if pid is not None:
+            reason = f"pid {pid} is not running"
+        elif age_seconds >= LOCK_STALE_SECONDS:
+            reason = f"age {age_seconds:.0f}s exceeds {LOCK_STALE_SECONDS}s"
+        else:
+            return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        print(f"{utcnow().isoformat()} market_state_alignment removed stale lock at {self.path}: {reason}")
+        return True
+
+    def _lock_pid(self) -> int | None:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        try:
+            pid = int(payload.get("pid"))
+        except (TypeError, ValueError):
+            return None
+        return pid if pid > 0 else None
+
+    @staticmethod
+    def _process_exists(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
 
 
 def run_cycle(
