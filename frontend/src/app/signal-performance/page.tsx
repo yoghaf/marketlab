@@ -8,9 +8,9 @@ export default function SignalPerformancePage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Signal Performance"
+        title="Signal Candidate History"
         badge="PAPER LIVE - BUKAN EXECUTION"
-        subtitle="Performa Signal Candidate dari log live MarketLab. Hitungan dibaca langsung dari DB dan candle futures terbaru; entry, SL, dan TP tetap read-only."
+        subtitle="Riwayat Signal Candidate yang sudah dilog: entry futures, SL, TP, status TP/SL/open, dan total R paper-live. Ini bukan order dan bukan auto execution."
       />
       <SignalPerformanceClient />
     </div>
