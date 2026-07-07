@@ -32,6 +32,7 @@ from app.services.feature_builder_1h import FeatureBuilder1hService
 from app.services.feature_builder_15m import FeatureBuilder15mService
 from app.services.feature_context_join import FeatureContextJoinService
 from app.services.live_candidate_scanner import LiveCandidateScannerService
+from app.services.market_regime_study import DEFAULT_ARTIFACT_DIR as DEFAULT_MARKET_REGIME_STUDY_DIR
 from app.services.ohlcv_aggregation import OhlcvAggregationService
 from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
@@ -411,6 +412,17 @@ def signal_candidates_filter_study(
     with _SIGNAL_FILTER_STUDY_CACHE_LOCK:
         _SIGNAL_FILTER_STUDY_CACHE[cache_key] = (monotonic(), payload)
     return payload
+
+
+@router.get("/api/signal-candidates/market-regime-study")
+def signal_candidates_market_regime_study():
+    artifact_path = DEFAULT_MARKET_REGIME_STUDY_DIR / "results.json"
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Market regime study artifact not found. Run run_market_regime_study_v1.py first.",
+        )
+    return json_safe(json.loads(artifact_path.read_text(encoding="utf-8")))
 
 
 @router.get("/api/outcomes/15m/status")

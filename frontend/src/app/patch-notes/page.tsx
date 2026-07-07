@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-07",
+    version: "LAB-07",
+    title: "Signal Quality Lab filter and regime studies",
+    status: "LIVE",
+    area: "Research",
+    summary: "Halaman Quality Lab sekarang memuat Filter Study dan Market Regime Study untuk membedah Signal Candidate dari data live.",
+    changes: [
+      "Filter Study 1h MID_SHORT/MID_LONG ditampilkan di Signal Quality Lab untuk melihat filter mana yang memperbaiki atau merusak hasil.",
+      "Optuna filter discovery dibuat read-only untuk MID_SHORT/MID_LONG 1h; hasil validation belum layak dipromosikan menjadi rule.",
+      "Market Regime Study v1 ditambahkan: split hasil berdasarkan BTC, ETH, breadth market, dan volatility.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, outcome logic, TP/SL, atau execution."
+    ],
+    impact: "Riset kualitas signal sekarang bisa dilihat dari web: filter apa yang membantu, dan kondisi market apa yang membuat setup menjadi bagus atau buruk.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-factory", label: "Signal Factory Raw" }
+    ]
+  },
+  {
+    date: "2026-07-07",
     version: "LAB-04",
     title: "Evidence TP vs SL analysis",
     status: "LIVE",

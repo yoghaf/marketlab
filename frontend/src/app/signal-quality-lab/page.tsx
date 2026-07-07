@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
+  MarketRegimeStudyBucket,
+  MarketRegimeStudyResponse,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -45,8 +47,10 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
 
   let data: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
+  let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
+  let marketRegimeError: string | null = null;
   try {
     data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
@@ -64,6 +68,11 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
     filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
+  }
+  try {
+    marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 30 });
+  } catch (err) {
+    marketRegimeError = err instanceof Error ? err.message : "Market Regime Study API failed";
   }
 
   const aggregate = data?.aggregate;
@@ -126,6 +135,17 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
               <div className="p-4 text-sm text-stale">{filterStudyError}</div>
             ) : (
               <FilterStudyTable rows={filterStudy?.rows || []} />
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Market Regime Study"
+            description="Split read-only berdasarkan kondisi BTC, ETH, breadth market, dan volatility. Ini menjawab setup bekerja di rezim market apa, tanpa mengubah Signal Factory."
+          >
+            {marketRegimeError ? (
+              <div className="p-4 text-sm text-stale">{marketRegimeError}</div>
+            ) : (
+              <MarketRegimeStudy data={marketRegimeStudy} />
             )}
           </SectionCard>
 
@@ -216,6 +236,98 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function MarketRegimeStudy({ data }: { data: MarketRegimeStudyResponse | null }) {
+  const lanes = Object.values(data?.lanes || {});
+  if (!lanes.length) {
+    return (
+      <EmptyState
+        title="Market Regime Study belum tersedia"
+        detail="Artifact regime belum ada. Jalankan run_market_regime_study_v1.py di VPS untuk mengisi hasilnya."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 p-4 md:grid-cols-2">
+        {lanes.map((lane) => (
+          <div key={lane.lane} className="rounded border border-line bg-field/50 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-bold text-ink">{lane.lane}</div>
+              <StatusBadge value={lane.direction === "SHORT" ? "BEARISH_CONTEXT" : "BULLISH_CONTEXT"} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-4">
+              <Insight label="Sample" value={String(lane.sample_count)} />
+              <Insight label="TP / SL" value={`${lane.baseline.tp_count ?? 0} / ${lane.baseline.sl_count ?? 0}`} />
+              <Insight label="Avg R" value={`${fmtSigned(lane.baseline.avg_r_closed)}R`} />
+              <Insight label="Total R" value={`${fmtSigned(lane.baseline.total_r_closed)}R`} />
+            </div>
+            <p className="mt-3 text-slate-600">{lane.interpretation}</p>
+          </div>
+        ))}
+      </div>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <div>
+          <div className="px-4 pb-2 text-sm font-bold">Helpful regimes</div>
+          <MarketRegimeTable rows={lanes.flatMap((lane) => lane.top_helpful_regimes.map((row) => ({ ...row, lane: lane.lane })))} />
+        </div>
+        <div>
+          <div className="px-4 pb-2 text-sm font-bold">Harmful regimes</div>
+          <MarketRegimeTable rows={lanes.flatMap((lane) => lane.top_harmful_regimes.map((row) => ({ ...row, lane: lane.lane })))} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MarketRegimeTable({ rows }: { rows: (MarketRegimeStudyBucket & { lane: string })[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Regime</th>
+            <th>Verdict</th>
+            <th>Sample</th>
+            <th>TP / SL</th>
+            <th>Avg R</th>
+            <th>Delta</th>
+            <th>Win Delta</th>
+            <th>Catatan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row) => (
+            <tr key={`${row.lane}-${row.dimension}-${row.bucket}`}>
+              <td className="font-semibold">{row.lane}</td>
+              <td>
+                <div className="font-semibold">{labelFor(row.bucket)}</div>
+                <div className="text-xs text-slate-500">{row.dimension}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.sample_count}</td>
+              <td>{row.tp_count ?? 0} / {row.sl_count ?? 0}</td>
+              <td>{fmtSigned(row.avg_r_closed)}R</td>
+              <td>{fmtSigned(row.avg_r_delta_vs_baseline)}R</td>
+              <td>{fmtSigned(row.winrate_delta_vs_baseline)}%</td>
+              <td className="max-w-md text-sm text-slate-600">{row.note}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={9}>
+                <EmptyState title="No regime rows" detail="Belum ada bucket regime yang memenuhi sample minimum." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

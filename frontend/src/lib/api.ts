@@ -672,6 +672,43 @@ export type SignalFilterStudyResponse = {
   rows: SignalFilterStudyRow[];
 };
 
+export type MarketRegimeStudyBucket = SignalPerformanceBucket & {
+  dimension: string;
+  bucket: string;
+  sample_count: number;
+  avg_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  verdict: string;
+  note: string;
+};
+
+export type MarketRegimeStudyLane = {
+  lane: string;
+  stage: string;
+  timeframe: string;
+  direction: string;
+  raw_count: number;
+  sample_count: number;
+  lock_skipped: number;
+  baseline: SignalPerformanceBucket;
+  top_helpful_regimes: MarketRegimeStudyBucket[];
+  top_harmful_regimes: MarketRegimeStudyBucket[];
+  interpretation: string;
+};
+
+export type MarketRegimeStudyResponse = {
+  generated_at: string;
+  epoch: string;
+  include_watch_only: boolean;
+  position_lock: boolean;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  method: string;
+  lanes: Record<string, MarketRegimeStudyLane>;
+};
+
 export type SignalQualityDrawdownPoint = {
   signal_id: string;
   symbol: string;
