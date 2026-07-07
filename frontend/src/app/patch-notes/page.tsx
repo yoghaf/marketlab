@@ -18,6 +18,24 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-07",
+    version: "LAB-04",
+    title: "Evidence TP vs SL analysis",
+    status: "LIVE",
+    area: "Research",
+    summary: "Signal Quality Lab sekarang membandingkan angka evidence aktual antara signal yang TP dan SL.",
+    changes: [
+      "Menambahkan tabel Evidence TP vs SL.",
+      "Menampilkan median, kuartil, delta TP-SL, available count, dan missing count per field.",
+      "Field yang dibandingkan mencakup price return, volume ratio, taker ratio, OI, funding, spread, rich ratio, core score, dan evidence score.",
+      "Tabel mengikuti filter stage, timeframe, position lock, WATCH_ONLY, dan min sample."
+    ],
+    impact: "Kalibrasi Early/Mid bisa mulai dilakukan dari angka aktual signal yang menang/kalah, bukan tebakan threshold.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
     date: "2026-07-06",
     version: "UI-08",
     title: "Full-width dashboard layout",

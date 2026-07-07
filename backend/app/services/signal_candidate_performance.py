@@ -17,6 +17,27 @@ from app.services.utils import utcnow
 
 COMPLETED_OUTCOMES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE"}
 
+EVIDENCE_FIELDS = [
+    ("price_return", "Price return %"),
+    ("volume_ratio_vs_lookback", "Volume vs avg"),
+    ("range_ratio_vs_atr", "Range / ATR"),
+    ("atr_extension_normalized", "ATR extension"),
+    ("price_atr_multiple", "Price ATR multiple"),
+    ("kline_taker_buy_ratio", "Taker buy ratio"),
+    ("kline_taker_sell_ratio", "Taker sell ratio"),
+    ("oi_change_pct", "OI change %"),
+    ("oi_zscore", "OI z-score"),
+    ("funding_percentile_30d", "Funding percentile"),
+    ("futures_spread_pct", "Futures spread %"),
+    ("spot_spread_pct", "Spot spread %"),
+    ("global_long_short_ratio", "Global L/S ratio"),
+    ("top_trader_position_ratio", "Top trader position"),
+    ("top_trader_account_ratio", "Top trader account"),
+    ("core_score", "Core score"),
+    ("evidence_score", "Evidence score"),
+    ("evidence_data_completeness", "Evidence completeness"),
+]
+
 
 @dataclass(frozen=True)
 class PerfCandle:
@@ -120,6 +141,7 @@ class SignalCandidatePerformanceService:
             "by_stage": _bucket_rows(evaluated, key="stage", min_sample=min_sample),
             "by_confidence": _bucket_rows(evaluated, key="confidence_tier", min_sample=min_sample),
             "by_timeframe": _bucket_rows(evaluated, key="timeframe", min_sample=min_sample),
+            "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
             "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
             "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
             "best_signals": best,
@@ -275,6 +297,7 @@ class SignalCandidatePerformanceService:
             "core_score": signal.core_score,
             "evidence_score": signal.evidence_score,
             "evidence_data_completeness": signal.evidence_data_completeness,
+            "evidence_snapshot": _evidence_snapshot(signal),
             "entry": entry,
             "stop_loss": stop,
             "take_profit": target,
@@ -437,6 +460,126 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
         "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
     }
+
+
+def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | None]:
+    evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
+    snapshot: dict[str, Decimal | None] = {}
+    for field, _label in EVIDENCE_FIELDS:
+        if field == "core_score":
+            value = signal.core_score
+        elif field == "evidence_score":
+            value = signal.evidence_score
+        elif field == "evidence_data_completeness":
+            value = signal.evidence_data_completeness
+        else:
+            value = evidence.get(field)
+        snapshot[field] = _decimal_or_none(value)
+    return snapshot
+
+
+def _evidence_field_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for field, label in EVIDENCE_FIELDS:
+        values_by_result: dict[str, list[Decimal]] = defaultdict(list)
+        missing = 0
+        for item in items:
+            value = (item.get("evidence_snapshot") or {}).get(field)
+            if value is None:
+                missing += 1
+                continue
+            result = str(item.get("result_status") or "UNKNOWN")
+            if result == "BOTH_HIT_SAME_CANDLE":
+                result = "BOTH"
+            values_by_result[result].append(Decimal(value))
+
+        available_count = sum(len(values) for values in values_by_result.values())
+        tp_values = values_by_result.get("TP_HIT", [])
+        sl_values = values_by_result.get("SL_HIT", [])
+        open_values = values_by_result.get("OPEN", [])
+        waiting_values = values_by_result.get("WAITING_DATA", [])
+        both_values = values_by_result.get("BOTH", [])
+        tp_median = _median_decimal(tp_values)
+        sl_median = _median_decimal(sl_values)
+        delta = tp_median - sl_median if tp_median is not None and sl_median is not None else None
+        rows.append(
+            {
+                "field": field,
+                "label": label,
+                "quality_flag": _evidence_quality_flag(
+                    tp_count=len(tp_values),
+                    sl_count=len(sl_values),
+                    delta=delta,
+                    min_sample=min_sample,
+                ),
+                "available_count": available_count,
+                "missing_count": missing,
+                "available_pct": (Decimal(available_count) / Decimal(len(items)) * Decimal("100")) if items else None,
+                "tp_count": len(tp_values),
+                "sl_count": len(sl_values),
+                "open_count": len(open_values),
+                "waiting_count": len(waiting_values),
+                "both_count": len(both_values),
+                "tp_median": tp_median,
+                "sl_median": sl_median,
+                "open_median": _median_decimal(open_values),
+                "waiting_median": _median_decimal(waiting_values),
+                "tp_avg": _avg_decimal(tp_values),
+                "sl_avg": _avg_decimal(sl_values),
+                "tp_q1": _percentile_decimal(tp_values, Decimal("0.25")),
+                "tp_q3": _percentile_decimal(tp_values, Decimal("0.75")),
+                "sl_q1": _percentile_decimal(sl_values, Decimal("0.25")),
+                "sl_q3": _percentile_decimal(sl_values, Decimal("0.75")),
+                "delta_tp_minus_sl": delta,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            row["quality_flag"] != "SAMPLE_TOO_SMALL",
+            abs(Decimal(row["delta_tp_minus_sl"])) if row["delta_tp_minus_sl"] is not None else Decimal("-1"),
+            row["available_count"],
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _evidence_quality_flag(*, tp_count: int, sl_count: int, delta: Decimal | None, min_sample: int) -> str:
+    if tp_count < min_sample or sl_count < min_sample or delta is None:
+        return "SAMPLE_TOO_SMALL"
+    if abs(delta) < Decimal("0.0001"):
+        return "NO_CLEAR_GAP"
+    if delta > 0:
+        return "TP_HIGHER"
+    return "SL_HIGHER"
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _avg_decimal(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _percentile_decimal(values: list[Decimal], pct: Decimal) -> Decimal | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = pct * Decimal(len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - Decimal(lower)
+    return ordered[lower] + ((ordered[upper] - ordered[lower]) * fraction)
 
 
 def _bucket_rows(

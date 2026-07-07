@@ -602,6 +602,31 @@ export type SignalQualityBucket = SignalPerformanceBucket & {
   worst_r?: string | number | null;
 };
 
+export type SignalQualityEvidenceField = {
+  field: string;
+  label: string;
+  quality_flag: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  open_count: number;
+  waiting_count: number;
+  both_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  open_median?: string | number | null;
+  waiting_median?: string | number | null;
+  tp_avg?: string | number | null;
+  sl_avg?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  delta_tp_minus_sl?: string | number | null;
+};
+
 export type SignalQualityDrawdownPoint = {
   signal_id: string;
   symbol: string;
@@ -642,6 +667,7 @@ export type SignalQualityLabResponse = {
   by_stage: SignalQualityBucket[];
   by_confidence: SignalQualityBucket[];
   by_timeframe: SignalQualityBucket[];
+  evidence_fields: SignalQualityEvidenceField[];
   top_symbols: SignalQualityBucket[];
   weak_symbols: SignalQualityBucket[];
   best_signals: SignalPerformanceItem[];

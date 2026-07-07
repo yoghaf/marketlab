@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   SignalPerformanceItem,
   SignalQualityBucket,
+  SignalQualityEvidenceField,
   SignalQualityLabResponse,
   fetchJson,
   fmtNumber,
@@ -57,7 +58,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       <PageHeader
         title="Signal Quality Lab"
         badge="READ-ONLY ANALYSIS"
-        subtitle="Analisis kenapa Signal Candidate menang/kalah: stage, confidence, symbol, drawdown R, best/worst signal. Ini tidak mengubah rule dan bukan execution."
+        subtitle="Analisis kenapa Signal Candidate menang/kalah: TP vs SL berdasarkan angka evidence aktual, stage, confidence, symbol, drawdown R, dan best/worst signal. Ini tidak mengubah rule dan bukan execution."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
@@ -147,6 +148,10 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             </SectionCard>
           </section>
 
+          <SectionCard title="Evidence TP vs SL" description="Median dan kuartil angka evidence aktual dari signal yang TP dibanding yang SL. Pakai filter di atas untuk bedah stage/timeframe tertentu.">
+            <EvidenceTable rows={data?.evidence_fields || []} />
+          </SectionCard>
+
           <SectionCard title="Quality by stage" description="Ini yang paling penting untuk memperbaiki definisi EARLY/MID berikutnya.">
             <BucketTable rows={data?.by_stage || []} />
           </SectionCard>
@@ -183,6 +188,55 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Evidence field</th>
+            <th>Flag</th>
+            <th>Available</th>
+            <th>TP / SL</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>Delta</th>
+            <th>TP q1/q3</th>
+            <th>SL q1/q3</th>
+            <th>Open median</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td><StatusBadge value={row.quality_flag} /></td>
+              <td>{row.available_count} / miss {row.missing_count} ({fmtNumber(row.available_pct)}%)</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>{fmtNumber(row.tp_median)}</td>
+              <td>{fmtNumber(row.sl_median)}</td>
+              <td>{fmtSigned(row.delta_tp_minus_sl)}</td>
+              <td>{fmtNumber(row.tp_q1)} / {fmtNumber(row.tp_q3)}</td>
+              <td>{fmtNumber(row.sl_q1)} / {fmtNumber(row.sl_q3)}</td>
+              <td>{fmtNumber(row.open_median)}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={10}>
+                <EmptyState title="No evidence rows" detail="Belum ada signal/evidence sesuai filter ini." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

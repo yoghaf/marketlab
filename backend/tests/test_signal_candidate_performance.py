@@ -89,8 +89,32 @@ def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
     with Session() as db:
         first_time = datetime(2026, 1, 1, 0, 15)
         second_time = datetime(2026, 1, 1, 0, 30)
-        db.add(_signal("s1", "AAAUSDT", first_time, "LONG", "EARLY_LONG", "100", "90", "115"))
-        db.add(_signal("s2", "BBBUSDT", second_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(
+            _signal(
+                "s1",
+                "AAAUSDT",
+                first_time,
+                "LONG",
+                "EARLY_LONG",
+                "100",
+                "90",
+                "115",
+                evidence={"price_return": "2.5", "oi_zscore": "3.0", "kline_taker_buy_ratio": "0.70"},
+            )
+        )
+        db.add(
+            _signal(
+                "s2",
+                "BBBUSDT",
+                second_time,
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                evidence={"price_return": "-1.0", "oi_zscore": "0.5", "kline_taker_buy_ratio": "0.40"},
+            )
+        )
         db.add(_candle("AAAUSDT", first_time, first_time + timedelta(minutes=15), high="116", low="99", close="115"))
         db.add(_candle("BBBUSDT", second_time, second_time + timedelta(minutes=15), high="111", low="98", close="109"))
         db.commit()
@@ -104,6 +128,10 @@ def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
         assert by_stage["EARLY_LONG"]["tp_count"] == 1
         assert by_stage["EARLY_LONG"]["median_r_closed"] == Decimal("1.5")
         assert by_stage["MID_SHORT"]["sl_count"] == 1
+        evidence_by_field = {row["field"]: row for row in payload["evidence_fields"]}
+        assert evidence_by_field["price_return"]["tp_median"] == Decimal("2.5")
+        assert evidence_by_field["price_return"]["sl_median"] == Decimal("-1.0")
+        assert evidence_by_field["price_return"]["delta_tp_minus_sl"] == Decimal("3.5")
         assert payload["best_signals"][0]["symbol"] == "AAAUSDT"
         assert payload["worst_signals"][0]["symbol"] == "BBBUSDT"
 
@@ -118,6 +146,7 @@ def _signal(
     stop: str,
     target: str,
     execution: str = "ACTIVE",
+    evidence: dict | None = None,
 ) -> SignalForwardReturnLog:
     now = datetime(2026, 1, 1, 0, 0)
     return SignalForwardReturnLog(
@@ -146,7 +175,7 @@ def _signal(
         observation_epoch=OBSERVATION_EPOCH,
         observation_start_utc=now,
         observation_marker=True,
-        evidence={},
+        evidence=evidence or {},
         created_at=now,
         updated_at=now,
     )
