@@ -62,6 +62,7 @@ SEARCH_FIELDS = {
 }
 
 MODE_CHOICES = ("ANY", "GE", "LE", "BETWEEN")
+MAX_ACTIVE_FILTERS = 5
 
 
 @dataclass(frozen=True)
@@ -182,12 +183,15 @@ class SignalFilterOptunaRunner:
 
         def objective(trial: Any) -> float:
             rule = suggest_rule(trial, bounds)
+            active_filters = active_filter_count(rule)
+            if active_filters < 1 or active_filters > MAX_ACTIVE_FILTERS:
+                return -900.0 - active_filters
             selected_raw = apply_rule(train_raw_items, rule)
             selected, _selected_skipped = apply_position_lock(selected_raw) if self.position_lock else (selected_raw, 0)
             metrics = evaluate_items(selected, direction=config["direction"])
             if metrics["closed_count"] < min_train:
                 return -1000.0 + (metrics["closed_count"] / max(min_train, 1))
-            return objective_score(metrics, baseline_train, active_filter_count(rule))
+            return objective_score(metrics, baseline_train, active_filters)
 
         sampler = optuna.samplers.TPESampler(seed=self.seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
@@ -277,7 +281,8 @@ def suggest_rule(trial: Any, bounds: list[FieldBounds]) -> dict[str, Any]:
 
 
 def _suggest_condition(trial: Any, bound: FieldBounds) -> dict[str, Any]:
-    mode = trial.suggest_categorical(f"{bound.field}_mode", MODE_CHOICES)
+    use_field = trial.suggest_categorical(f"{bound.field}_use", [False, False, True])
+    mode = trial.suggest_categorical(f"{bound.field}_mode", ("GE", "LE", "BETWEEN")) if use_field else "ANY"
     condition: dict[str, Any] = {"field": bound.field, "label": bound.label, "mode": mode}
     if mode == "GE":
         condition["min"] = trial.suggest_float(f"{bound.field}_min", bound.low, bound.high)
@@ -294,7 +299,8 @@ def _suggest_condition(trial: Any, bound: FieldBounds) -> dict[str, Any]:
 def rule_from_params(params: dict[str, Any], bounds: list[FieldBounds]) -> dict[str, Any]:
     conditions = []
     for bound in bounds:
-        mode = str(params.get(f"{bound.field}_mode", "ANY"))
+        use_field = bool(params.get(f"{bound.field}_use", params.get(f"{bound.field}_mode", "ANY") != "ANY"))
+        mode = str(params.get(f"{bound.field}_mode", "ANY")) if use_field else "ANY"
         condition: dict[str, Any] = {"field": bound.field, "label": bound.label, "mode": mode}
         if mode == "GE":
             condition["min"] = float(params[f"{bound.field}_min"])
