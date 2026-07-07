@@ -166,6 +166,92 @@ def test_quality_lab_reads_nested_forward_log_evidence() -> None:
         assert evidence_by_field["volume_ratio_vs_lookback"]["tp_median"] == Decimal("2.50")
 
 
+def test_filter_study_targets_mid_short_1h_and_ranks_filters() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        first_time = datetime(2026, 1, 1, 0, 15)
+        second_time = datetime(2026, 1, 1, 0, 30)
+        third_time = datetime(2026, 1, 1, 0, 45)
+        ignored_time = datetime(2026, 1, 1, 1, 0)
+        db.add(
+            _signal(
+                "s1",
+                "AAAUSDT",
+                first_time,
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                timeframe="1h",
+                evidence={"funding_percentile_30d": "82", "volume_ratio_vs_lookback": "1.20", "global_long_short_ratio": "1.30"},
+            )
+        )
+        db.add(
+            _signal(
+                "s2",
+                "BBBUSDT",
+                second_time,
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                timeframe="1h",
+                evidence={"funding_percentile_30d": "55", "volume_ratio_vs_lookback": "2.10", "global_long_short_ratio": "1.00"},
+            )
+        )
+        db.add(
+            _signal(
+                "s3",
+                "CCCUSDT",
+                third_time,
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                timeframe="1h",
+                evidence={"funding_percentile_30d": "90", "volume_ratio_vs_lookback": "1.10", "global_long_short_ratio": "1.40"},
+            )
+        )
+        db.add(
+            _signal(
+                "ignored",
+                "DDDUSDT",
+                ignored_time,
+                "LONG",
+                "MID_LONG",
+                "100",
+                "90",
+                "115",
+                timeframe="1h",
+                evidence={"funding_percentile_30d": "95", "volume_ratio_vs_lookback": "1.10", "global_long_short_ratio": "1.50"},
+            )
+        )
+        db.add(_candle("AAAUSDT", first_time, first_time + timedelta(minutes=15), high="101", low="84", close="86"))
+        db.add(_candle("BBBUSDT", second_time, second_time + timedelta(minutes=15), high="111", low="98", close="109"))
+        db.add(_candle("CCCUSDT", third_time, third_time + timedelta(minutes=15), high="101", low="84", close="86"))
+        db.add(_candle("DDDUSDT", ignored_time, ignored_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).filter_study(position_lock=False, min_sample=1)
+
+        assert payload["filters"]["stage"] == "MID_SHORT"
+        assert payload["filters"]["timeframe"] == "1h"
+        assert payload["baseline"]["sample_count"] == 3
+        assert payload["baseline"]["tp_count"] == 2
+        assert payload["baseline"]["sl_count"] == 1
+        rows = {row["filter_id"]: row for row in payload["rows"]}
+        assert rows["FUNDING_GE_75"]["sample_count"] == 2
+        assert rows["FUNDING_GE_75"]["tp_count"] == 2
+        assert rows["FUNDING_GE_75"]["sl_count"] == 0
+        assert rows["FUNDING_GE_75"]["avg_r_delta_vs_baseline"] > 0
+        assert rows["VOLUME_LE_1_50"]["sample_count"] == 2
+
+
 def _signal(
     signal_id: str,
     symbol: str,
@@ -177,12 +263,13 @@ def _signal(
     target: str,
     execution: str = "ACTIVE",
     evidence: dict | None = None,
+    timeframe: str = "15m",
 ) -> SignalForwardReturnLog:
     now = datetime(2026, 1, 1, 0, 0)
     return SignalForwardReturnLog(
         signal_id=signal_id,
         symbol=symbol,
-        timeframe="15m",
+        timeframe=timeframe,
         signal_timestamp=signal_time,
         window_open_time=signal_time - timedelta(minutes=15),
         window_close_time=signal_time,

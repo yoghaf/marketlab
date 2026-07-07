@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import asc, or_, select
 from sqlalchemy.orm import Session
@@ -46,6 +46,16 @@ class PerfCandle:
     high: Decimal
     low: Decimal
     close: Decimal
+
+
+@dataclass(frozen=True)
+class FilterStudySpec:
+    filter_id: str
+    label: str
+    expression: str
+    family: str
+    required_fields: tuple[str, ...]
+    predicate: Callable[[dict[str, Any]], bool]
 
 
 class SignalCandidatePerformanceService:
@@ -147,6 +157,83 @@ class SignalCandidatePerformanceService:
             "best_signals": best,
             "worst_signals": worst,
             "open_signals": open_items,
+        }
+
+    def filter_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        stage: str = "MID_SHORT",
+        timeframe: str = "1h",
+        min_sample: int = 20,
+        limit: int = 40,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            position_lock=position_lock,
+        )
+        baseline = _filter_study_row(
+            filter_id="BASELINE",
+            label=f"Baseline {timeframe} {stage}",
+            expression="no additional filter",
+            family="BASELINE",
+            items=evaluated,
+            source_count=len(evaluated),
+            missing_data_count=0,
+            required_fields=(),
+            baseline_perf=None,
+            min_sample=min_sample,
+        )
+        rows = [baseline]
+        for spec in _filter_study_specs():
+            passed: list[dict[str, Any]] = []
+            missing_data_count = 0
+            for item in evaluated:
+                evidence = item.get("evidence_snapshot") or {}
+                if any(evidence.get(field) is None for field in spec.required_fields):
+                    missing_data_count += 1
+                    continue
+                if spec.predicate(item):
+                    passed.append(item)
+            rows.append(
+                _filter_study_row(
+                    filter_id=spec.filter_id,
+                    label=spec.label,
+                    expression=spec.expression,
+                    family=spec.family,
+                    items=passed,
+                    source_count=len(evaluated),
+                    missing_data_count=missing_data_count,
+                    required_fields=spec.required_fields,
+                    baseline_perf=baseline,
+                    min_sample=min_sample,
+                )
+            )
+        rows = [rows[0], *_sort_filter_rows(rows[1:])[:limit]]
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": stage,
+                "timeframe": timeframe,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "study_scope": "read_only_filter_study",
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "baseline": baseline,
+            "rows": rows,
         }
 
     def _evaluated_context(
@@ -641,6 +728,293 @@ def _bucket_summary(bucket: str, items: list[dict[str, Any]], *, min_sample: int
         "worst_r": min(realized_values) if realized_values else None,
         **perf,
     }
+
+
+def _filter_study_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "CONF_MEDIUM_HIGH",
+            "Confidence medium/high",
+            "confidence_tier in MEDIUM_CONF,HIGH_CONF",
+            "confidence",
+            (),
+            lambda item: str(item.get("confidence_tier") or "") in {"MEDIUM_CONF", "HIGH_CONF", "MEDIUM", "HIGH"},
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_75",
+            "Funding percentile tinggi",
+            "funding_percentile_30d >= 75",
+            "funding",
+            ("funding_percentile_30d",),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("75"),
+        ),
+        FilterStudySpec(
+            "GLOBAL_LS_GE_1_20",
+            "Global L/S crowded long",
+            "global_long_short_ratio >= 1.20",
+            "positioning",
+            ("global_long_short_ratio",),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "TOP_POSITION_GE_1_10",
+            "Top trader position long bias",
+            "top_trader_position_ratio >= 1.10",
+            "positioning",
+            ("top_trader_position_ratio",),
+            lambda item: (_evidence_value(item, "top_trader_position_ratio") or Decimal("-999")) >= Decimal("1.10"),
+        ),
+        FilterStudySpec(
+            "TOP_ACCOUNT_GE_1_10",
+            "Top trader account long bias",
+            "top_trader_account_ratio >= 1.10",
+            "positioning",
+            ("top_trader_account_ratio",),
+            lambda item: (_evidence_value(item, "top_trader_account_ratio") or Decimal("-999")) >= Decimal("1.10"),
+        ),
+        FilterStudySpec(
+            "VOLUME_LE_1_50",
+            "Volume tidak ekstrem",
+            "volume_ratio_vs_lookback <= 1.50",
+            "volume",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "VOLUME_BETWEEN_0_80_1_50",
+            "Volume normal-tinggi",
+            "0.80 <= volume_ratio_vs_lookback <= 1.50",
+            "volume",
+            ("volume_ratio_vs_lookback",),
+            lambda item: Decimal("0.80") <= (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("-999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "OI_Z_LE_1_80",
+            "OI belum terlalu spike",
+            "oi_zscore <= 1.80",
+            "open_interest",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("999")) <= Decimal("1.80"),
+        ),
+        FilterStudySpec(
+            "OI_CHANGE_LE_0_50",
+            "OI change tidak ekstrem",
+            "oi_change_pct <= 0.50",
+            "open_interest",
+            ("oi_change_pct",),
+            lambda item: (_evidence_value(item, "oi_change_pct") or Decimal("999")) <= Decimal("0.50"),
+        ),
+        FilterStudySpec(
+            "ATR_EXTENSION_LE_0_90",
+            "ATR extension rendah",
+            "atr_extension_normalized <= 0.90",
+            "extension",
+            ("atr_extension_normalized",),
+            lambda item: (_evidence_value(item, "atr_extension_normalized") or Decimal("999")) <= Decimal("0.90"),
+        ),
+        FilterStudySpec(
+            "PRICE_ATR_LE_1_25",
+            "Price/ATR tidak terlalu jauh",
+            "price_atr_multiple <= 1.25",
+            "extension",
+            ("price_atr_multiple",),
+            lambda item: (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "SPOT_SPREAD_LE_0_03",
+            "Spot spread rendah",
+            "spot_spread_pct <= 0.03",
+            "spread",
+            ("spot_spread_pct",),
+            lambda item: (_evidence_value(item, "spot_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "FUTURES_SPREAD_LE_0_03",
+            "Futures spread rendah",
+            "futures_spread_pct <= 0.03",
+            "spread",
+            ("futures_spread_pct",),
+            lambda item: (_evidence_value(item, "futures_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_75_AND_GLOBAL_LS_GE_1_20",
+            "Funding tinggi + global L/S crowded",
+            "funding_percentile_30d >= 75 AND global_long_short_ratio >= 1.20",
+            "combo",
+            ("funding_percentile_30d", "global_long_short_ratio"),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("75")
+            and (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_75_AND_VOLUME_LE_1_50",
+            "Funding tinggi + volume tidak ekstrem",
+            "funding_percentile_30d >= 75 AND volume_ratio_vs_lookback <= 1.50",
+            "combo",
+            ("funding_percentile_30d", "volume_ratio_vs_lookback"),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("75")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "GLOBAL_LS_GE_1_20_AND_VOLUME_LE_1_50",
+            "Global L/S crowded + volume tidak ekstrem",
+            "global_long_short_ratio >= 1.20 AND volume_ratio_vs_lookback <= 1.50",
+            "combo",
+            ("global_long_short_ratio", "volume_ratio_vs_lookback"),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "VOLUME_LE_1_50_AND_OI_Z_LE_1_80",
+            "Volume tidak ekstrem + OI z-score terkendali",
+            "volume_ratio_vs_lookback <= 1.50 AND oi_zscore <= 1.80",
+            "combo",
+            ("volume_ratio_vs_lookback", "oi_zscore"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "oi_zscore") or Decimal("999")) <= Decimal("1.80"),
+        ),
+        FilterStudySpec(
+            "ATR_EXTENSION_LE_0_90_AND_VOLUME_LE_1_50",
+            "ATR extension rendah + volume tidak ekstrem",
+            "atr_extension_normalized <= 0.90 AND volume_ratio_vs_lookback <= 1.50",
+            "combo",
+            ("atr_extension_normalized", "volume_ratio_vs_lookback"),
+            lambda item: (_evidence_value(item, "atr_extension_normalized") or Decimal("999")) <= Decimal("0.90")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "FUNDING_VOLUME_SPOTSPREAD",
+            "Funding tinggi + volume terkendali + spot spread rendah",
+            "funding_percentile_30d >= 75 AND volume_ratio_vs_lookback <= 1.50 AND spot_spread_pct <= 0.03",
+            "combo",
+            ("funding_percentile_30d", "volume_ratio_vs_lookback", "spot_spread_pct"),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("75")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "spot_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+    ]
+
+
+def _filter_study_row(
+    *,
+    filter_id: str,
+    label: str,
+    expression: str,
+    family: str,
+    items: list[dict[str, Any]],
+    source_count: int,
+    missing_data_count: int,
+    required_fields: tuple[str, ...],
+    baseline_perf: dict[str, Any] | None,
+    min_sample: int,
+) -> dict[str, Any]:
+    perf = _performance_summary(items)
+    closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES and item.get("realized_r") is not None]
+    realized_values = [Decimal(item["realized_r"]) for item in closed]
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    drawdown = _drawdown_summary(items, point_limit=1)
+    winrate = perf["winrate_pct"]
+    sl_share = _sl_share(perf)
+    avg_r = perf["avg_r_closed"]
+    baseline_avg = baseline_perf.get("avg_r_closed") if baseline_perf else None
+    baseline_winrate = baseline_perf.get("winrate_pct") if baseline_perf else None
+    baseline_sl_share = baseline_perf.get("sl_share_pct") if baseline_perf else None
+    row = {
+        "filter_id": filter_id,
+        "label": label,
+        "expression": expression,
+        "family": family,
+        "required_fields": list(required_fields),
+        "source_count": source_count,
+        "sample_count": len(items),
+        "sample_retention_pct": (Decimal(len(items)) / Decimal(source_count) * Decimal("100")) if source_count else None,
+        "missing_data_count": missing_data_count,
+        "missing_data_pct": (Decimal(missing_data_count) / Decimal(source_count) * Decimal("100")) if source_count else None,
+        "median_r_closed": _median_decimal(realized_values),
+        "max_drawdown_r": drawdown["max_drawdown_r"],
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_symbol_count,
+        "top_symbol_share_pct": (Decimal(top_symbol_count) / Decimal(len(items)) * Decimal("100")) if items else None,
+        "avg_r_delta_vs_baseline": (Decimal(avg_r) - Decimal(baseline_avg)) if avg_r is not None and baseline_avg is not None else None,
+        "winrate_delta_vs_baseline": (Decimal(winrate) - Decimal(baseline_winrate)) if winrate is not None and baseline_winrate is not None else None,
+        "sl_share_pct": sl_share,
+        "sl_share_delta_vs_baseline": (Decimal(sl_share) - Decimal(baseline_sl_share)) if sl_share is not None and baseline_sl_share is not None else None,
+        **perf,
+    }
+    row["verdict"] = _filter_study_verdict(row, min_sample=min_sample)
+    row["note"] = _filter_study_note(row)
+    return row
+
+
+def _sort_filter_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    verdict_rank = {
+        "PROMISING_FILTER": 4,
+        "REDUCES_DAMAGE": 3,
+        "NOISY_FILTER": 2,
+        "WORSE_THAN_BASELINE": 1,
+        "SAMPLE_TOO_SMALL": 0,
+    }
+    return sorted(
+        rows,
+        key=lambda row: (
+            verdict_rank.get(str(row.get("verdict")), -1),
+            Decimal(row["avg_r_delta_vs_baseline"]) if row.get("avg_r_delta_vs_baseline") is not None else Decimal("-999"),
+            Decimal(row["total_r_closed"]),
+            row["sample_count"],
+        ),
+        reverse=True,
+    )
+
+
+def _filter_study_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row["sample_count"]) < min_sample or int(row["closed_count"]) < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    avg_delta = row.get("avg_r_delta_vs_baseline")
+    win_delta = row.get("winrate_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    total_r = Decimal(row["total_r_closed"])
+    top_share = row.get("top_symbol_share_pct")
+    if (
+        avg_delta is not None
+        and Decimal(avg_delta) >= Decimal("0.10")
+        and win_delta is not None
+        and Decimal(win_delta) >= Decimal("3")
+        and total_r > 0
+        and (top_share is None or Decimal(top_share) <= Decimal("25"))
+    ):
+        return "PROMISING_FILTER"
+    if avg_delta is not None and Decimal(avg_delta) > 0 and sl_delta is not None and Decimal(sl_delta) < 0:
+        return "REDUCES_DAMAGE"
+    if avg_delta is not None and Decimal(avg_delta) < 0:
+        return "WORSE_THAN_BASELINE"
+    return "NOISY_FILTER"
+
+
+def _filter_study_note(row: dict[str, Any]) -> str:
+    verdict = str(row.get("verdict") or "")
+    if verdict == "PROMISING_FILTER":
+        return "Filter memperbaiki avg R dan winrate dibanding baseline, tetap perlu forward validation."
+    if verdict == "REDUCES_DAMAGE":
+        return "Filter menurunkan sisi rugi atau memperbaiki avg R, tapi belum cukup kuat jadi rule."
+    if verdict == "WORSE_THAN_BASELINE":
+        return "Filter lebih buruk dari baseline saat ini."
+    if verdict == "SAMPLE_TOO_SMALL":
+        return "Sample belum cukup untuk disimpulkan."
+    return "Belum ada separation yang bersih."
+
+
+def _evidence_value(item: dict[str, Any], field: str) -> Decimal | None:
+    value = (item.get("evidence_snapshot") or {}).get(field)
+    return Decimal(value) if value is not None else None
+
+
+def _sl_share(perf: dict[str, Any]) -> Decimal | None:
+    tp_count = int(perf["tp_count"])
+    sl_count = int(perf["sl_count"])
+    denominator = tp_count + sl_count
+    if denominator <= 0:
+        return None
+    return Decimal(sl_count) / Decimal(denominator) * Decimal("100")
 
 
 def _quality_flag(

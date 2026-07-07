@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
+  SignalFilterStudyResponse,
+  SignalFilterStudyRow,
   SignalPerformanceItem,
   SignalQualityBucket,
   SignalQualityEvidenceField,
@@ -42,11 +44,26 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   if (timeframe) query.set("timeframe", timeframe);
 
   let data: SignalQualityLabResponse | null = null;
+  let filterStudy: SignalFilterStudyResponse | null = null;
   let error: string | null = null;
+  let filterStudyError: string | null = null;
   try {
     data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
     error = err instanceof Error ? err.message : "Signal Quality Lab API failed";
+  }
+  const studyQuery = new URLSearchParams({
+    include_watch_only: String(includeWatchOnly),
+    position_lock: String(positionLock),
+    stage: stage || "MID_SHORT",
+    timeframe: timeframe || "1h",
+    min_sample: String(minSample),
+    limit: String(limit)
+  });
+  try {
+    filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 20 });
+  } catch (err) {
+    filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
   }
 
   const aggregate = data?.aggregate;
@@ -99,6 +116,17 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
                 Include WATCH_ONLY
               </label>
             </FilterBar>
+          </SectionCard>
+
+          <SectionCard
+            title={`Filter Study ${filterStudy?.filters.timeframe || "1h"} ${labelFor(filterStudy?.filters.stage || "MID_SHORT")}`}
+            description="Ranking filter read-only untuk melihat mana yang memperbaiki Signal Candidate. Ini belum mengubah rule produksi."
+          >
+            {filterStudyError ? (
+              <div className="p-4 text-sm text-stale">{filterStudyError}</div>
+            ) : (
+              <FilterStudyTable rows={filterStudy?.rows || []} />
+            )}
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
@@ -188,6 +216,57 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function FilterStudyTable({ rows }: { rows: SignalFilterStudyRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Filter</th>
+            <th>Verdict</th>
+            <th>Sample</th>
+            <th>TP / SL / Open</th>
+            <th>Winrate</th>
+            <th>Total R</th>
+            <th>Avg R Δ</th>
+            <th>SL share Δ</th>
+            <th>Max DD</th>
+            <th>Top symbol</th>
+            <th>Catatan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.sample_count} / {row.source_count} ({fmtNumber(row.sample_retention_pct)}%)</td>
+              <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+              <td>{row.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
+              <td>{fmtSigned(row.total_r_closed)}R</td>
+              <td>{fmtSigned(row.avg_r_delta_vs_baseline)}R</td>
+              <td>{fmtSigned(row.sl_share_delta_vs_baseline)}%</td>
+              <td>{fmtSigned(row.max_drawdown_r)}R</td>
+              <td>{row.top_symbol} ({fmtNumber(row.top_symbol_share_pct)}%)</td>
+              <td className="max-w-md text-sm text-slate-600">{row.note}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={11}>
+                <EmptyState title="No filter study rows" detail="Belum ada Signal Candidate sesuai target filter study." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

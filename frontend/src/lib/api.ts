@@ -627,6 +627,51 @@ export type SignalQualityEvidenceField = {
   delta_tp_minus_sl?: string | number | null;
 };
 
+export type SignalFilterStudyRow = SignalPerformanceBucket & {
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  source_count: number;
+  sample_count: number;
+  sample_retention_pct?: string | number | null;
+  missing_data_count: number;
+  missing_data_pct?: string | number | null;
+  median_r_closed?: string | number | null;
+  max_drawdown_r?: string | number | null;
+  top_symbol: string;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+  avg_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_pct?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  verdict: string;
+  note: string;
+};
+
+export type SignalFilterStudyResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  baseline: SignalFilterStudyRow;
+  rows: SignalFilterStudyRow[];
+};
+
 export type SignalQualityDrawdownPoint = {
   signal_id: string;
   symbol: string;
