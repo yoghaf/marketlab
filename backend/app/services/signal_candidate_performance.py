@@ -463,7 +463,8 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | None]:
-    evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
+    raw_evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
+    evidence = raw_evidence.get("evidence") if isinstance(raw_evidence.get("evidence"), dict) else raw_evidence
     snapshot: dict[str, Decimal | None] = {}
     for field, _label in EVIDENCE_FIELDS:
         if field == "core_score":

@@ -136,6 +136,36 @@ def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
         assert payload["worst_signals"][0]["symbol"] == "BBBUSDT"
 
 
+def test_quality_lab_reads_nested_forward_log_evidence() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(
+            _signal(
+                "s1",
+                "AAAUSDT",
+                signal_time,
+                "LONG",
+                "EARLY_LONG",
+                "100",
+                "90",
+                "115",
+                evidence={"evidence": {"price_return": "1.25", "volume_ratio_vs_lookback": "2.50"}},
+            )
+        )
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).quality_lab(position_lock=False, min_sample=1)
+
+        evidence_by_field = {row["field"]: row for row in payload["evidence_fields"]}
+        assert evidence_by_field["price_return"]["available_count"] == 1
+        assert evidence_by_field["price_return"]["tp_median"] == Decimal("1.25")
+        assert evidence_by_field["volume_ratio_vs_lookback"]["tp_median"] == Decimal("2.50")
+
+
 def _signal(
     signal_id: str,
     symbol: str,
