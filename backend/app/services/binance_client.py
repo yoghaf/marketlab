@@ -106,6 +106,36 @@ class BinanceClient:
     async def spot_ticker_24h(self) -> list[dict[str, Any]]:
         return await self._get("spot", "/api/v3/ticker/24hr")
 
+    async def futures_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 500,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> list[list[Any]]:
+        params: dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        return await self._get("futures", "/fapi/v1/klines", params)
+
+    async def spot_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 500,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> list[list[Any]]:
+        params: dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time_ms is not None:
+            params["startTime"] = start_time_ms
+        if end_time_ms is not None:
+            params["endTime"] = end_time_ms
+        return await self._get("spot", "/api/v3/klines", params)
+
     async def futures_klines_1m(
         self,
         symbol: str,
@@ -113,12 +143,7 @@ class BinanceClient:
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
     ) -> list[list[Any]]:
-        params: dict[str, Any] = {"symbol": symbol, "interval": "1m", "limit": limit}
-        if start_time_ms is not None:
-            params["startTime"] = start_time_ms
-        if end_time_ms is not None:
-            params["endTime"] = end_time_ms
-        return await self._get("futures", "/fapi/v1/klines", params)
+        return await self.futures_klines(symbol, "1m", limit, start_time_ms, end_time_ms)
 
     async def spot_klines_1m(
         self,
@@ -127,12 +152,7 @@ class BinanceClient:
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
     ) -> list[list[Any]]:
-        params: dict[str, Any] = {"symbol": symbol, "interval": "1m", "limit": limit}
-        if start_time_ms is not None:
-            params["startTime"] = start_time_ms
-        if end_time_ms is not None:
-            params["endTime"] = end_time_ms
-        return await self._get("spot", "/api/v3/klines", params)
+        return await self.spot_klines(symbol, "1m", limit, start_time_ms, end_time_ms)
 
     async def futures_open_interest(self, symbol: str) -> dict[str, Any]:
         return await self._get("futures", "/fapi/v1/openInterest", {"symbol": symbol})
