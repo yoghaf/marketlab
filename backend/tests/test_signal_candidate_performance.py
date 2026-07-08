@@ -82,6 +82,80 @@ def test_watch_only_filter_can_include_or_exclude_rows() -> None:
         assert included["aggregate"]["tp_count"] == 1
 
 
+def test_summary_can_filter_closed_only_rows() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        first_time = datetime(2026, 1, 1, 0, 15)
+        second_time = datetime(2026, 1, 1, 0, 30)
+        db.add(_signal("s1", "AAAUSDT", first_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("s2", "BBBUSDT", second_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(_candle("AAAUSDT", first_time, first_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("BBBUSDT", second_time, second_time + timedelta(minutes=15), high="105", low="95", close="98"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).summary(position_lock=False, result_status="closed")
+
+        assert payload["aggregate"]["signals_evaluated"] == 1
+        assert payload["aggregate"]["tp_count"] == 1
+        assert payload["aggregate"]["open_count"] == 0
+        assert payload["items"][0]["signal_id"] == "s1"
+
+
+def test_detail_returns_latest_symbol_signal_with_current_open_r() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        first_time = datetime(2026, 1, 1, 0, 15)
+        second_time = datetime(2026, 1, 1, 0, 30)
+        db.add(_signal("old", "AAAUSDT", first_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(
+            _signal(
+                "latest",
+                "AAAUSDT",
+                second_time,
+                "LONG",
+                "MID_LONG",
+                "100",
+                "90",
+                "115",
+                evidence={"price_return": "1.25", "oi_zscore": "2.0"},
+            )
+        )
+        db.add(_candle("AAAUSDT", second_time, second_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).detail(symbol="AAAUSDT", timeframe="15m")
+
+        assert payload is not None
+        assert payload["item"]["signal_id"] == "latest"
+        assert payload["item"]["result_status"] == "OPEN"
+        assert payload["item"]["unrealized_r"] == Decimal("0.5")
+        assert payload["item"]["evidence_snapshot"]["price_return"] == Decimal("1.25")
+
+
+def test_detail_can_load_exact_signal_id() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        first_time = datetime(2026, 1, 1, 0, 15)
+        second_time = datetime(2026, 1, 1, 0, 30)
+        db.add(_signal("old", "AAAUSDT", first_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("latest", "AAAUSDT", second_time, "LONG", "MID_LONG", "100", "90", "115"))
+        db.add(_candle("AAAUSDT", first_time, first_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("AAAUSDT", second_time, second_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).detail(signal_id="old")
+
+        assert payload is not None
+        assert payload["item"]["signal_id"] == "old"
+        assert payload["item"]["result_status"] == "TP_HIT"
+
+
 def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

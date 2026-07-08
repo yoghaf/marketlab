@@ -252,6 +252,7 @@ class SignalFilterOptunaRunner:
             include_watch_only=self.include_watch_only,
             stage=str(config["stage"]),
             timeframe=str(config["timeframe"]),
+            symbol=None,
             position_lock=False,
         )
 

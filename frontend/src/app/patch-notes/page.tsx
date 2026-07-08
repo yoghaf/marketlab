@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-08",
+    version: "UI-11",
+    title: "Signal detail page and closed-only history",
+    status: "LIVE",
+    area: "Frontend + API",
+    summary: "Radar sekarang membuka halaman detail signal penuh, sementara Signal History fokus ke signal yang sudah close.",
+    changes: [
+      "Tombol Detail di Radar mengarah ke halaman detail signal, bukan expand inline di tabel.",
+      "Halaman detail signal menampilkan status posisi, current/final R, entry futures, SL, TP, MFE/MAE, dan evidence lengkap.",
+      "Signal History default membaca closed-only TP/SL/BOTH agar tidak tercampur posisi open.",
+      "Tidak ada perubahan Signal Factory rule, scoring, TP/SL formula, atau execution."
+    ],
+    impact: "Radar dipakai untuk membaca signal aktif sekarang; Signal History dipakai untuk audit hasil yang sudah close.",
+    links: [
+      { href: "/scanner", label: "Radar" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-08",
     version: "UI-10",
     title: "Signal naming cleanup",
     status: "LIVE",

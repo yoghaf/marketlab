@@ -119,7 +119,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       {error ? (
         <div className="rounded border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : (
-        <SectionCard title="Scanner table" description="Klik Detail untuk angka evidence lengkap: price, volume, taker, OI, funding, rich, dan spread.">
+        <SectionCard title="Scanner table" description="Klik Detail untuk membuka halaman signal lengkap: posisi aktif, current R, evidence, entry, SL, dan TP.">
           <div className="table-wrap">
             <table className="ops-table scanner-table">
               <thead>
@@ -199,10 +199,12 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
       </td>
       <td>{fmtTime(item.latest_outcome_update || item.observation_time)}</td>
       <td>
-        <details className="text-xs text-slate-500">
-          <summary className="cursor-pointer font-semibold">Detail</summary>
-          <DetailPanel item={item} />
-        </details>
+        <Link
+          className="rounded border border-line px-3 py-2 text-xs font-semibold hover:bg-field"
+          href={`/signals/${encodeURIComponent(item.symbol)}?timeframe=${encodeURIComponent(String(item.timeframe || item.evidence_summary.timeframe || "15m"))}`}
+        >
+          Detail
+        </Link>
       </td>
     </tr>
   );

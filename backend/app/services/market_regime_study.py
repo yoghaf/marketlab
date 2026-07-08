@@ -115,6 +115,7 @@ class MarketRegimeStudyRunner:
             include_watch_only=self.include_watch_only,
             stage=config["stage"],
             timeframe=config["timeframe"],
+            symbol=None,
             position_lock=False,
         )
         raw_items = sorted(raw_items, key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol"))))

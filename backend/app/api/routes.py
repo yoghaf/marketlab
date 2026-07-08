@@ -292,6 +292,8 @@ def signal_candidates_performance_live(
     position_lock: bool = True,
     stage: str | None = None,
     timeframe: str | None = None,
+    symbol: str | None = None,
+    result_status: str | None = None,
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
@@ -301,6 +303,8 @@ def signal_candidates_performance_live(
         bool(position_lock),
         stage or "",
         timeframe or "",
+        symbol or "",
+        result_status or "",
         normalized_limit,
     )
     now = monotonic()
@@ -317,6 +321,8 @@ def signal_candidates_performance_live(
             position_lock=position_lock,
             stage=stage,
             timeframe=timeframe,
+            symbol=symbol,
+            result_status=result_status,
             limit=normalized_limit,
         )
     )
@@ -324,6 +330,26 @@ def signal_candidates_performance_live(
     with _SIGNAL_PERFORMANCE_CACHE_LOCK:
         _SIGNAL_PERFORMANCE_CACHE[cache_key] = (monotonic(), payload)
     return payload
+
+
+@router.get("/api/signals/detail")
+def signal_detail(
+    signal_id: str | None = None,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    db: Session = Depends(get_db),
+):
+    if not signal_id and not symbol:
+        raise HTTPException(status_code=400, detail="signal_id or symbol is required")
+    payload = SignalCandidatePerformanceService(db).detail(
+        signal_id=signal_id,
+        symbol=symbol,
+        timeframe=timeframe,
+        include_watch_only=True,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    return json_safe(payload)
 
 
 @router.get("/api/signal-candidates/quality-lab")

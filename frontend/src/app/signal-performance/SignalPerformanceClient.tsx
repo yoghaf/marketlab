@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
@@ -26,6 +27,7 @@ export function SignalPerformanceClient() {
     const query = new URLSearchParams();
     query.set("include_watch_only", String(includeWatchOnly));
     query.set("position_lock", String(positionLock));
+    query.set("result_status", "closed");
     query.set("limit", String(limit));
     if (stage) query.set("stage", stage);
     if (timeframe) query.set("timeframe", timeframe);
@@ -61,7 +63,7 @@ export function SignalPerformanceClient() {
         <MetricCard label="Fixed-risk Return" value={`${fmtSigned(aggregate?.fixed_risk_return_pct_1pct_closed)}%`} helper="Jika 1R = 1% risk" tone={Number(aggregate?.fixed_risk_return_pct_1pct_closed || 0) >= 0 ? "good" : "bad"} />
         <MetricCard label="Winrate" value={aggregate?.winrate_pct == null ? "-" : `${fmtNumber(aggregate.winrate_pct)}%`} helper="TP / (TP + SL)" tone="info" />
         <MetricCard label="TP / SL" value={`${aggregate?.tp_count ?? 0} / ${aggregate?.sl_count ?? 0}`} helper={`${aggregate?.closed_count ?? 0} closed`} />
-        <MetricCard label="Open" value={aggregate?.open_count ?? 0} helper={`${fmtSigned(aggregate?.open_unrealized_r)}R unrealized`} tone="warn" />
+        <MetricCard label="Closed" value={aggregate?.closed_count ?? 0} helper="History table only" />
         <MetricCard label="Evaluated" value={aggregate?.signals_evaluated ?? 0} helper={`${aggregate?.signals_skipped ?? 0} skipped by lock`} />
       </section>
 
@@ -151,7 +153,7 @@ export function SignalPerformanceClient() {
 
       <SectionCard
         title="Signal paper positions"
-        description="Entry/SL/TP berasal dari Signal Factory V2 log. Hasil dihitung ulang dari futures 15m candle terbaru saat halaman ini dibuka."
+        description="Hanya signal yang sudah close TP/SL/BOTH. Posisi yang masih open dibuka dari halaman detail signal di Radar."
         actions={<StatusBadge value={positionLock ? "LOCK_BY_SYMBOL" : "NO_LOCK"} />}
       >
         <div className="table-wrap">
@@ -176,7 +178,14 @@ export function SignalPerformanceClient() {
               {data?.items.map((item) => (
                 <tr key={item.signal_id}>
                   <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
-                  <td className="font-semibold">{item.symbol}</td>
+                  <td className="font-semibold">
+                    <Link
+                      className="text-blue-700 hover:underline"
+                      href={`/signals/${encodeURIComponent(item.symbol)}?signal_id=${encodeURIComponent(item.signal_id)}`}
+                    >
+                      {item.symbol}
+                    </Link>
+                  </td>
                   <td>{item.timeframe}</td>
                   <td>{labelFor(item.stage)}</td>
                   <td><StatusBadge value={item.direction} /></td>

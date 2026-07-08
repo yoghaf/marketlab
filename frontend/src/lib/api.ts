@@ -587,6 +587,8 @@ export type SignalPerformanceResponse = {
     position_lock: boolean;
     stage?: string | null;
     timeframe?: string | null;
+    symbol?: string | null;
+    result_status?: string | null;
     limit: number;
   };
   read_only: boolean;
@@ -607,6 +609,39 @@ export type SignalPerformanceResponse = {
     by_confidence: Record<string, number>;
   };
   items: SignalPerformanceItem[];
+};
+
+export type SignalDetailResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  entry_market: string;
+  entry_price_source: string;
+  evaluation_candle_interval?: string | null;
+  latest_evaluation_candle_time?: string | null;
+  item: SignalPerformanceItem & {
+    evidence_snapshot?: Record<string, string | number | null>;
+  };
+  raw_signal: {
+    signal_id: string;
+    symbol: string;
+    timeframe: string;
+    signal_timestamp?: string | null;
+    window_open_time?: string | null;
+    window_close_time?: string | null;
+    direction: string;
+    stage: string;
+    candidate_status: string;
+    confidence_tier?: string | null;
+    execution_flag?: string | null;
+    source_artifact_generated_at?: string | null;
+    observation_epoch?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+  };
+  evidence: Record<string, unknown>;
 };
 
 export type SignalQualityBucket = SignalPerformanceBucket & {

@@ -72,6 +72,8 @@ class SignalCandidatePerformanceService:
         position_lock: bool = True,
         stage: str | None = None,
         timeframe: str | None = None,
+        symbol: str | None = None,
+        result_status: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
         evaluated, skipped, latest_candle_time = self._evaluated_context(
@@ -79,8 +81,10 @@ class SignalCandidatePerformanceService:
             include_watch_only=include_watch_only,
             stage=stage,
             timeframe=timeframe,
+            symbol=symbol,
             position_lock=position_lock,
         )
+        evaluated = _filter_by_result_status(evaluated, result_status)
         aggregate = self._aggregate(evaluated, skipped)
         items = sorted(evaluated, key=lambda item: item["signal_timestamp"] or datetime.min, reverse=True)[:limit]
         return {
@@ -91,6 +95,8 @@ class SignalCandidatePerformanceService:
                 "position_lock": position_lock,
                 "stage": stage,
                 "timeframe": timeframe,
+                "symbol": symbol,
+                "result_status": result_status,
                 "limit": limit,
             },
             "read_only": True,
@@ -103,6 +109,75 @@ class SignalCandidatePerformanceService:
             "latest_futures_15m_close_time": latest_candle_time,
             "aggregate": aggregate,
             "items": items,
+        }
+
+    def detail(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        signal_id: str | None = None,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+        include_watch_only: bool = True,
+    ) -> dict[str, Any] | None:
+        signals = self._load_signals(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe=timeframe,
+            symbol=symbol,
+            signal_id=signal_id,
+        )
+        if not signals:
+            return None
+        signal = signals[0] if signal_id else signals[-1]
+        signal_time = _naive(signal.signal_timestamp)
+        symbols = {signal.symbol}
+        base_candles = self._load_15m_candles(symbols, start_time=signal_time)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_candles = self._load_1m_candles(symbols, start_time=latest_base_time or signal_time)
+        candles = _merge_candle_maps(base_candles, tail_candles)
+        item = self._evaluate_signal(
+            signal,
+            candles.get(signal.symbol, []),
+            [candle.open_time for candle in candles.get(signal.symbol, [])],
+        )
+        latest_candle_time = max(
+            (candle.close_time for rows in candles.values() for candle in rows),
+            default=None,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "entry_market": "futures",
+            "entry_price_source": "signal_forward_return_logs.price_at_signal",
+            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
+            "latest_evaluation_candle_time": latest_candle_time,
+            "item": item,
+            "raw_signal": {
+                "signal_id": signal.signal_id,
+                "symbol": signal.symbol,
+                "timeframe": signal.timeframe,
+                "signal_timestamp": signal.signal_timestamp,
+                "window_open_time": signal.window_open_time,
+                "window_close_time": signal.window_close_time,
+                "direction": signal.direction,
+                "stage": signal.stage,
+                "candidate_status": signal.candidate_status,
+                "confidence_tier": signal.confidence_tier,
+                "execution_flag": signal.execution_flag,
+                "source_artifact_generated_at": signal.source_artifact_generated_at,
+                "observation_epoch": signal.observation_epoch,
+                "created_at": signal.created_at,
+                "updated_at": signal.updated_at,
+            },
+            "evidence": signal.evidence or {},
         }
 
     def quality_lab(
@@ -121,6 +196,7 @@ class SignalCandidatePerformanceService:
             include_watch_only=include_watch_only,
             stage=stage,
             timeframe=timeframe,
+            symbol=None,
             position_lock=position_lock,
         )
         aggregate = self._aggregate(evaluated, skipped)
@@ -179,6 +255,7 @@ class SignalCandidatePerformanceService:
             include_watch_only=include_watch_only,
             stage=stage,
             timeframe=timeframe,
+            symbol=None,
             position_lock=position_lock,
         )
         baseline = _filter_study_row(
@@ -249,6 +326,7 @@ class SignalCandidatePerformanceService:
         include_watch_only: bool,
         stage: str | None,
         timeframe: str | None,
+        symbol: str | None,
         position_lock: bool,
     ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None]:
         signals = self._load_signals(
@@ -256,6 +334,8 @@ class SignalCandidatePerformanceService:
             include_watch_only=include_watch_only,
             stage=stage,
             timeframe=timeframe,
+            symbol=symbol,
+            signal_id=None,
         )
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
         symbols = {row.symbol for row in signals}
@@ -281,6 +361,8 @@ class SignalCandidatePerformanceService:
         include_watch_only: bool,
         stage: str | None,
         timeframe: str | None,
+        symbol: str | None = None,
+        signal_id: str | None = None,
     ) -> list[SignalForwardReturnLog]:
         query = (
             select(SignalForwardReturnLog)
@@ -304,6 +386,10 @@ class SignalCandidatePerformanceService:
             query = query.where(SignalForwardReturnLog.stage == stage)
         if timeframe:
             query = query.where(SignalForwardReturnLog.timeframe == timeframe)
+        if symbol:
+            query = query.where(SignalForwardReturnLog.symbol == symbol.upper())
+        if signal_id:
+            query = query.where(SignalForwardReturnLog.signal_id == signal_id)
         return list(self.db.scalars(query).all())
 
     def _load_15m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
@@ -593,6 +679,20 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
         "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
     }
+
+
+def _filter_by_result_status(items: list[dict[str, Any]], result_status: str | None) -> list[dict[str, Any]]:
+    if not result_status:
+        return items
+    normalized = result_status.upper()
+    if normalized in {"CLOSED", "COMPLETED"}:
+        return [item for item in items if item.get("result_status") in COMPLETED_OUTCOMES]
+    if normalized == "OPEN":
+        return [item for item in items if item.get("result_status") == "OPEN"]
+    if normalized == "TP_SL":
+        return [item for item in items if item.get("result_status") in {"TP_HIT", "SL_HIT"}]
+    statuses = {part.strip() for part in normalized.split(",") if part.strip()}
+    return [item for item in items if item.get("result_status") in statuses]
 
 
 def _merge_candle_maps(
