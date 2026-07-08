@@ -10,7 +10,7 @@ from typing import Any, Callable
 from sqlalchemy import asc, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.market import FuturesKline1m, SignalForwardReturnLog
+from app.models.market import FuturesKline1m, FuturesKline15m, SignalForwardReturnLog
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import utcnow
 
@@ -98,7 +98,7 @@ class SignalCandidatePerformanceService:
             "not_execution_instruction": True,
             "entry_market": "futures",
             "entry_price_source": "signal_forward_return_logs.price_at_signal",
-            "evaluation_candle_interval": "1m_closed",
+            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
             "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "aggregate": aggregate,
@@ -147,7 +147,7 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
-            "evaluation_candle_interval": "1m_closed",
+            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
             "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "aggregate": aggregate,
@@ -234,7 +234,7 @@ class SignalCandidatePerformanceService:
             "not_live_signal": True,
             "not_execution_instruction": True,
             "study_scope": "read_only_filter_study",
-            "evaluation_candle_interval": "1m_closed",
+            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
             "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "skipped_by_position_lock": dict(skipped),
@@ -258,7 +258,15 @@ class SignalCandidatePerformanceService:
             timeframe=timeframe,
         )
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
-        candles = self._load_candles({row.symbol for row in signals}, start_time=min_signal_time)
+        symbols = {row.symbol for row in signals}
+        base_candles = self._load_15m_candles(symbols, start_time=min_signal_time)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_start = latest_base_time or min_signal_time
+        tail_candles = self._load_1m_candles(symbols, start_time=tail_start)
+        candles = _merge_candle_maps(base_candles, tail_candles)
         evaluated, skipped = self._evaluate(signals, candles, position_lock=position_lock)
         latest_candle_time = max(
             (candle.close_time for rows in candles.values() for candle in rows),
@@ -298,8 +306,42 @@ class SignalCandidatePerformanceService:
             query = query.where(SignalForwardReturnLog.timeframe == timeframe)
         return list(self.db.scalars(query).all())
 
-    def _load_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
+    def _load_15m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
         if not symbols:
+            return {}
+        query = (
+            select(
+                FuturesKline15m.symbol,
+                FuturesKline15m.open_time,
+                FuturesKline15m.close_time,
+                FuturesKline15m.high,
+                FuturesKline15m.low,
+                FuturesKline15m.close,
+            )
+            .where(
+                FuturesKline15m.symbol.in_(symbols),
+                FuturesKline15m.aggregation_status == "AGG_READY",
+            )
+            .order_by(asc(FuturesKline15m.symbol), asc(FuturesKline15m.open_time))
+        )
+        if start_time is not None:
+            query = query.where(FuturesKline15m.open_time >= start_time)
+        rows = self.db.execute(query).all()
+        output: dict[str, list[PerfCandle]] = defaultdict(list)
+        for row in rows:
+            output[row.symbol].append(
+                PerfCandle(
+                    open_time=_naive(row.open_time),
+                    close_time=_naive(row.close_time),
+                    high=Decimal(row.high),
+                    low=Decimal(row.low),
+                    close=Decimal(row.close),
+                )
+            )
+        return dict(output)
+
+    def _load_1m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
+        if not symbols or start_time is None:
             return {}
         query = (
             select(
@@ -312,11 +354,10 @@ class SignalCandidatePerformanceService:
             )
             .where(
                 FuturesKline1m.symbol.in_(symbols),
+                FuturesKline1m.open_time >= start_time,
             )
             .order_by(asc(FuturesKline1m.symbol), asc(FuturesKline1m.open_time))
         )
-        if start_time is not None:
-            query = query.where(FuturesKline1m.open_time >= start_time)
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
@@ -552,6 +593,20 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
         "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
     }
+
+
+def _merge_candle_maps(
+    base_candles: dict[str, list[PerfCandle]],
+    tail_candles: dict[str, list[PerfCandle]],
+) -> dict[str, list[PerfCandle]]:
+    symbols = set(base_candles) | set(tail_candles)
+    merged: dict[str, list[PerfCandle]] = {}
+    for symbol in symbols:
+        by_open_time = {candle.open_time: candle for candle in base_candles.get(symbol, [])}
+        for candle in tail_candles.get(symbol, []):
+            by_open_time[candle.open_time] = candle
+        merged[symbol] = [by_open_time[key] for key in sorted(by_open_time)]
+    return merged
 
 
 def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | None]:
