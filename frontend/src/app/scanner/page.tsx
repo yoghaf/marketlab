@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterBar, SelectFilter } from "@/components/FilterBar";
 import { MetricCard } from "@/components/MetricCard";
@@ -47,6 +48,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
 
   return (
     <div className="space-y-5">
+      <AutoRefresh intervalSeconds={30} />
       <PageHeader
         title="Live Radar"
         badge="CURRENT SNAPSHOT - READ ONLY"

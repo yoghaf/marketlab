@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
@@ -50,7 +51,7 @@ export default async function SignalDetailPage({
   let data: SignalDetailResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchJson<SignalDetailResponse>(`/api/signals/detail?${query.toString()}`, { revalidateSeconds: 5 });
+    data = await fetchJson<SignalDetailResponse>(`/api/signals/detail?${query.toString()}`);
   } catch (err) {
     error = err instanceof Error ? err.message : "Signal detail gagal dimuat";
   }
@@ -81,6 +82,7 @@ export default async function SignalDetailPage({
 
   return (
     <div className="space-y-5">
+      <AutoRefresh intervalSeconds={30} />
       <PageHeader
         title={`${item.symbol} Signal Detail`}
         badge="READ-ONLY - BUKAN EXECUTION"

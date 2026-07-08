@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-08",
+    version: "UI-12",
+    title: "Realtime signal detail refresh",
+    status: "LIVE",
+    area: "Frontend + Ops",
+    summary: "Signal detail dan Radar sekarang refresh otomatis, sementara kline 1m dipisah dari research-loop berat.",
+    changes: [
+      "Signal detail auto-refresh setiap 30 detik agar current R dan latest eval price ikut bergerak tanpa klik manual.",
+      "Radar auto-refresh setiap 30 detik agar snapshot Signal terbaru ikut kebaca.",
+      "Kline collector VPS berjalan sebagai PM2 process terpisah sehingga data 1m tidak ikut tertahan Strategy Arena/research-loop berat.",
+      "RR/TP/SL reference tetap angka tetap dari signal; yang bergerak adalah current R, latest eval price, MFE/MAE, dan status TP/SL."
+    ],
+    impact: "Halaman detail tidak lagi diam di candle lama selama kline 1m terus masuk. Tidak ada perubahan Signal Factory rule, scoring, TP/SL, atau execution.",
+    links: [
+      { href: "/scanner", label: "Radar" },
+      { href: "/signals/LINKUSDT", label: "Signal Detail" }
+    ]
+  },
+  {
+    date: "2026-07-08",
     version: "UI-11",
     title: "Signal detail page and closed-only history",
     status: "LIVE",
