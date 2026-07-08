@@ -70,7 +70,7 @@ export default async function SignalFactoryPage({ searchParams }: { searchParams
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="Kandidat signal" value={summary?.candidate_status_counts.SIGNAL_CANDIDATE ?? 0} tone="info" />
+            <MetricCard label="Signal" value={summary?.candidate_status_counts.SIGNAL_CANDIDATE ?? 0} tone="info" />
             <MetricCard label="Radar" value={summary?.candidate_status_counts.RADAR_ONLY ?? 0} />
             <MetricCard label="Blocked" value={(summary?.candidate_status_counts.BLOCKED_DATA ?? 0) + (summary?.candidate_status_counts.TIMEFRAME_NOT_READY ?? 0)} tone="warn" />
             <MetricCard label="Conflict" value={summary?.conflict_count ?? 0} tone={summary?.conflict_count ? "warn" : "good"} />

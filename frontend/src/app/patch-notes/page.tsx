@@ -19,13 +19,32 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-08",
+    version: "UI-10",
+    title: "Signal naming cleanup",
+    status: "LIVE",
+    area: "Frontend",
+    summary: "Output final read-only di UI sekarang disebut Signal, bukan calon signal.",
+    changes: [
+      "Radar tetap berarti aktivitas awal.",
+      "Candidate tetap berarti konteks yang layak dipantau tetapi belum final.",
+      "Signal berarti output final read-only dengan entry futures reference, SL, TP, RR, dan alasan numerik.",
+      "Backend enum/API tetap memakai SIGNAL_CANDIDATE untuk kompatibilitas data; tidak ada rule, threshold, TP/SL, atau execution yang berubah."
+    ],
+    impact: "Hierarchy UI lebih jelas: Radar -> Candidate -> Signal, tanpa mengubah cara sistem mengambil keputusan.",
+    links: [
+      { href: "/scanner?tier=SIGNAL_CANDIDATE&limit=75", label: "Signal" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-08",
     version: "PERF-04",
     title: "Signal TP/SL matching uses closed 1m futures candles",
     status: "LIVE",
     area: "Signal History",
     summary: "Signal History sekarang mengecek TP/SL dari futures 1m closed candle, bukan menunggu agregasi 15m.",
     changes: [
-      "Evaluator paper-live Signal Candidate membaca futures_klines_1m untuk hit TP/SL.",
+      "Evaluator paper-live Signal membaca futures_klines_1m untuk hit TP/SL.",
       "Latest eval candle di halaman Signal History menampilkan candle evaluasi 1m terbaru.",
       "Quality Lab dan Filter Study ikut memakai evaluasi 1m yang sama.",
       "Tidak ada perubahan Signal Factory rule, threshold, entry reference, TP/SL reference, atau execution."
@@ -61,7 +80,7 @@ const patches: PatchItem[] = [
     title: "Signal Quality Lab filter and regime studies",
     status: "LIVE",
     area: "Research",
-    summary: "Halaman Quality Lab sekarang memuat Filter Study dan Market Regime Study untuk membedah Signal Candidate dari data live.",
+    summary: "Halaman Quality Lab sekarang memuat Filter Study dan Market Regime Study untuk membedah Signal dari data live.",
     changes: [
       "Filter Study 1h MID_SHORT/MID_LONG ditampilkan di Signal Quality Lab untuk melihat filter mana yang memperbaiki atau merusak hasil.",
       "Optuna filter discovery dibuat read-only untuk MID_SHORT/MID_LONG 1h; hasil validation belum layak dipromosikan menjadi rule.",
@@ -117,7 +136,7 @@ const patches: PatchItem[] = [
     title: "Signal Quality Lab",
     status: "LIVE",
     area: "Research",
-    summary: "Halaman analisis kualitas signal ditambahkan untuk membedah kenapa Signal Candidate menang atau kalah.",
+    summary: "Halaman analisis kualitas signal ditambahkan untuk membedah kenapa Signal menang atau kalah.",
     changes: [
       "Menambahkan breakdown TP/SL/R berdasarkan stage, confidence, timeframe, dan symbol.",
       "Menambahkan best signal, worst signal, open signal, dan drawdown R sederhana.",
@@ -189,19 +208,19 @@ const patches: PatchItem[] = [
   {
     date: "2026-07-06",
     version: "SCAN-04",
-    title: "Scanner focused on Signal Candidate",
+    title: "Scanner focused on Signal",
     status: "LIVE",
     area: "Scanner",
-    summary: "Scanner difokuskan ke Signal Candidate sebagai output final read-only.",
+    summary: "Scanner difokuskan ke Signal sebagai output final read-only.",
     changes: [
       "Default Radar filter diarahkan ke SIGNAL_CANDIDATE.",
-      "Signal Candidate non-15m ikut tampil jika Signal Factory menghasilkan timeframe itu.",
+      "Signal non-15m ikut tampil jika Signal Factory menghasilkan timeframe itu.",
       "Payload scanner menampilkan timeframe, entry futures reference, SL, TP, RR, timeout, dan alasan.",
       "Inactive/blocked/baseline tetap bisa diaudit lewat filter, tapi tidak mendominasi default page."
     ],
     impact: "User bisa langsung cek kandidat final tanpa terganggu Radar/Context yang belum final.",
     links: [
-      { href: "/scanner?tier=SIGNAL_CANDIDATE&limit=75", label: "Signal Candidate" },
+      { href: "/scanner?tier=SIGNAL_CANDIDATE&limit=75", label: "Signal" },
       { href: "/signal-factory", label: "Signal Factory Raw" }
     ]
   },
@@ -235,7 +254,7 @@ const patches: PatchItem[] = [
       "Early Lab menampilkan multi-horizon result 15m, 1h, 4h, dan 24h jika data tersedia.",
       "Entry, SL, TP, RR, realized R, dan token history dibuat lebih eksplisit.",
       "Position lock digunakan agar satu symbol tidak membuka banyak posisi paper bersamaan.",
-      "Result dipisah dari live Signal Candidate agar lab tidak tercampur dengan monitoring harian."
+      "Result dipisah dari live Signal agar lab tidak tercampur dengan monitoring harian."
     ],
     impact: "Definisi early bisa diuji sebagai riset tanpa mengubah rule live scanner.",
     links: [
@@ -269,7 +288,7 @@ const patches: PatchItem[] = [
     area: "Research Core",
     summary: "MarketLab mulai punya jalur research dari feature, signal factory, strategy test, sampai gate audit.",
     changes: [
-      "Signal Factory V2 menghasilkan Radar, Candidate, dan Signal Candidate read-only.",
+      "Signal Factory V2 menghasilkan Radar, Candidate, dan Signal read-only.",
       "Strategy Arena menguji setup dengan ATR/RR dan horizon berbeda.",
       "Signal Gate Audit membandingkan readiness, edge, score, ATR, dan blocker.",
       "Semua tetap read-only: tidak ada execution, order, final TP/SL live, atau position sizing."

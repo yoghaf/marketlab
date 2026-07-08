@@ -84,7 +84,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       <PageHeader
         title="Signal Quality Lab"
         badge="READ-ONLY ANALYSIS"
-        subtitle="Analisis kenapa Signal Candidate menang/kalah: TP vs SL berdasarkan angka evidence aktual, stage, confidence, symbol, drawdown R, dan best/worst signal. Ini tidak mengubah rule dan bukan execution."
+        subtitle="Analisis kenapa Signal menang/kalah: TP vs SL berdasarkan angka evidence aktual, stage, confidence, symbol, drawdown R, dan best/worst signal. Ini tidak mengubah rule dan bukan execution."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
@@ -129,7 +129,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
 
           <SectionCard
             title={`Filter Study ${filterStudy?.filters.timeframe || "1h"} ${labelFor(filterStudy?.filters.stage || "MID_SHORT")}`}
-            description="Ranking filter read-only untuk melihat mana yang memperbaiki Signal Candidate. Ini belum mengubah rule produksi."
+            description="Ranking filter read-only untuk melihat mana yang memperbaiki Signal. Ini belum mengubah rule produksi."
           >
             {filterStudyError ? (
               <div className="p-4 text-sm text-stale">{filterStudyError}</div>
@@ -373,7 +373,7 @@ function FilterStudyTable({ rows }: { rows: SignalFilterStudyRow[] }) {
           {!rows.length && (
             <tr>
               <td colSpan={11}>
-                <EmptyState title="No filter study rows" detail="Belum ada Signal Candidate sesuai target filter study." />
+                <EmptyState title="No filter study rows" detail="Belum ada Signal sesuai target filter study." />
               </td>
             </tr>
           )}

@@ -50,12 +50,12 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
       <PageHeader
         title="Live Radar"
         badge="CURRENT SNAPSHOT - READ ONLY"
-        subtitle="Snapshot kandidat terbaru per symbol. Halaman ini menjawab: token apa yang sedang masuk Radar, Candidate, atau Signal Candidate sekarang."
+        subtitle="Snapshot terbaru per symbol. Halaman ini menjawab: token apa yang sedang masuk Radar, Candidate, atau Signal sekarang."
         updatedAt={fmtTime(latestTime)}
       />
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard label="Signal Candidate" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone={(tierCounts.SIGNAL_CANDIDATE || 0) > 0 ? "good" : "warn"} />
+        <MetricCard label="Signal" value={tierCounts.SIGNAL_CANDIDATE || 0} helper="Final read-only" tone={(tierCounts.SIGNAL_CANDIDATE || 0) > 0 ? "good" : "warn"} />
         <MetricCard label="Candidate" value={tierCounts.WATCHLIST_CONTEXT || 0} helper="Pantau konteks" tone="info" />
         <MetricCard label="Radar" value={tierCounts.RADAR_ONLY || 0} helper="Aktivitas awal" />
         <MetricCard label="Risk Context" value={tierCounts.RISK_CONTEXT || 0} helper="Campuran/risiko" tone="warn" />
@@ -70,23 +70,23 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
         <div className="grid gap-4 p-4 md:grid-cols-3">
           <div>
             <div className="text-sm font-semibold text-ink">Radar</div>
-            <p className="mt-1 text-sm text-slate-600">Aktivitas awal atau konteks yang perlu dipantau, belum final sebagai Signal Candidate.</p>
+            <p className="mt-1 text-sm text-slate-600">Aktivitas awal atau konteks yang perlu dipantau, belum final sebagai Signal.</p>
           </div>
           <div>
             <div className="text-sm font-semibold text-ink">Candidate</div>
             <p className="mt-1 text-sm text-slate-600">Konteks lebih kuat dari radar, tetapi masih perlu validasi evidence, risk, atau conflict.</p>
           </div>
           <div>
-            <div className="text-sm font-semibold text-ink">Signal Candidate</div>
-            <p className="mt-1 text-sm text-slate-600">Final read-only candidate yang punya entry futures reference, SL, TP, RR, dan alasan numerik.</p>
+            <div className="text-sm font-semibold text-ink">Signal</div>
+            <p className="mt-1 text-sm text-slate-600">Final read-only signal yang punya entry futures reference, SL, TP, RR, dan alasan numerik.</p>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="Scanner controls" description="Default sekarang SIGNAL_CANDIDATE only. Filter lain hanya untuk audit, bukan fokus monitoring.">
+      <SectionCard title="Scanner controls" description="Default sekarang Signal only. Filter lain hanya untuk audit, bukan fokus monitoring.">
         <div className="space-y-4 p-4">
           <div className="flex flex-wrap gap-2 text-sm">
-            <QuickLink href="/scanner?tier=SIGNAL_CANDIDATE&limit=75" label="Signal Candidate" active={tier === "SIGNAL_CANDIDATE"} />
+            <QuickLink href="/scanner?tier=SIGNAL_CANDIDATE&limit=75" label="Signal" active={tier === "SIGNAL_CANDIDATE"} />
             <QuickLink href="/scanner?tier=WATCHLIST_CONTEXT&limit=75" label="Candidate" active={tier === "WATCHLIST_CONTEXT"} />
             <QuickLink href="/scanner?tier=RADAR_ONLY&limit=75" label="Radar" active={tier === "RADAR_ONLY"} />
             <QuickLink href="/scanner?tier=RISK_CONTEXT&limit=75" label="Risk Context" active={tier === "RISK_CONTEXT"} />

@@ -150,7 +150,7 @@ export function SignalPerformanceClient() {
       </section>
 
       <SectionCard
-        title="Signal Candidate paper positions"
+        title="Signal paper positions"
         description="Entry/SL/TP berasal dari Signal Factory V2 log. Hasil dihitung ulang dari futures 15m candle terbaru saat halaman ini dibuka."
         actions={<StatusBadge value={positionLock ? "LOCK_BY_SYMBOL" : "NO_LOCK"} />}
       >
@@ -191,7 +191,7 @@ export function SignalPerformanceClient() {
               ))}
               {!data?.items.length && (
                 <tr>
-                  <td colSpan={12}><EmptyState title="Belum ada signal" detail="Belum ada SIGNAL_CANDIDATE dengan entry, SL, dan TP sesuai filter ini." /></td>
+                  <td colSpan={12}><EmptyState title="Belum ada signal" detail="Belum ada Signal dengan entry, SL, dan TP sesuai filter ini." /></td>
                 </tr>
               )}
             </tbody>

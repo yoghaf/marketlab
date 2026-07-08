@@ -57,7 +57,7 @@ export default async function OverviewPage() {
     .slice(0, 8);
   const latestSignal = latestCandidates.find((item) => item.scanner_tier === "SIGNAL_CANDIDATE");
   const primaryAction = signalCandidateCount > 0
-    ? "Cek Signal Candidate dan evidence angka di Radar."
+    ? "Cek Signal dan evidence angka di Radar."
     : candidateCount > 0
       ? "Pantau Candidate, belum ada yang cukup kuat untuk dinaikkan."
       : "Tunggu cycle data berikutnya atau cek Data Health.";
@@ -72,18 +72,18 @@ export default async function OverviewPage() {
       />
 
       <DecisionBanner
-        title={signalCandidateCount > 0 ? "Ada Signal Candidate read-only" : candidateCount > 0 ? "Ada Candidate untuk dipantau" : "Belum ada Signal Candidate"}
-        status={`Signal Candidate: ${signalCandidateCount}`}
+        title={signalCandidateCount > 0 ? "Ada Signal read-only" : candidateCount > 0 ? "Ada Candidate untuk dipantau" : "Belum ada Signal"}
+        status={`Signal: ${signalCandidateCount}`}
         tone={gateDecision === "HAS_CANDIDATES" ? "good" : "warn"}
         description={
           signalCandidateCount > 0
-            ? "Signal Candidate tetap read-only: ada entry futures reference, risk reference, dan tidak ada order otomatis."
-            : "Radar/Candidate bisa ada walau Signal Candidate masih kosong. Itu berarti setup terpantau, tapi belum lolos quality gate final."
+            ? "Signal tetap read-only: ada entry futures reference, risk reference, dan tidak ada order otomatis."
+            : "Radar/Candidate bisa ada walau Signal masih kosong. Itu berarti setup terpantau, tapi belum lolos quality gate final."
         }
       />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <MetricCard label="Signal Candidate" value={signalCandidateCount} helper="Final read-only, bukan order" tone={signalCandidateCount ? "good" : "warn"} />
+        <MetricCard label="Signal" value={signalCandidateCount} helper="Final read-only, bukan order" tone={signalCandidateCount ? "good" : "warn"} />
         <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
         <MetricCard label="Radar" value={radarCount} helper="Aktivitas awal" tone="info" />
         <MetricCard label="Risk Context" value={riskCount} helper="Campuran/risiko" tone="warn" />
@@ -102,7 +102,7 @@ export default async function OverviewPage() {
               <div className="text-xs font-semibold uppercase text-slate-500">Fokus sekarang</div>
               <div className="mt-2 text-lg font-bold text-ink">{primaryAction}</div>
               <div className="mt-3 space-y-2 text-sm leading-6">
-                <ReasonRow label="Signal Candidate" value={`${signalCandidateCount} token`} />
+                <ReasonRow label="Signal" value={`${signalCandidateCount} token`} />
                 <ReasonRow label="Candidate" value={`${candidateCount} token`} />
                 <ReasonRow label="Risk Context" value={`${riskCount} token`} />
                 <ReasonRow label="Latest signal" value={latestSignal ? latestSignal.symbol : "-"} />
@@ -130,7 +130,7 @@ export default async function OverviewPage() {
           <div className="space-y-3 p-4">
             <PipelineStep title="Radar" value={`${radarCount} token`} description="Aktivitas awal, belum cukup untuk candidate." />
             <PipelineStep title="Candidate" value={`${candidateCount} token`} description="Konteks layak dipantau, masih butuh bukti." />
-            <PipelineStep title="Signal Candidate" value={`${signalCandidateCount} token`} description="Final read-only dengan reference futures." />
+            <PipelineStep title="Signal" value={`${signalCandidateCount} token`} description="Final read-only dengan reference futures." />
             <PipelineStep title="Forward Test" value={`${approvedCount} approved`} description="Uji paper/live-shadow, tetap bukan execution." />
           </div>
         </SectionCard>
