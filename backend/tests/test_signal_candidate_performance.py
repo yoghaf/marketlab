@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.models.market import FuturesKline15m, SignalForwardReturnLog
+from app.models.market import FuturesKline1m, SignalForwardReturnLog
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 
@@ -306,21 +306,17 @@ def _candle(
     high: str,
     low: str,
     close: str,
-) -> FuturesKline15m:
-    return FuturesKline15m(
+) -> FuturesKline1m:
+    return FuturesKline1m(
         symbol=symbol,
         open_time=open_time,
         close_time=close_time,
-        open=Decimal("100"),
-        high=Decimal(high),
-        low=Decimal(low),
-        close=Decimal(close),
+        open_price=Decimal("100"),
+        high_price=Decimal(high),
+        low_price=Decimal(low),
+        close_price=Decimal(close),
         volume=Decimal("100"),
-        source_interval="15m",
-        aggregation_status="AGG_READY",
-        actual_1m_count=15,
-        expected_1m_count=15,
-        missing_1m_count=0,
+        trade_count=1,
         created_at=open_time,
         updated_at=open_time,
     )

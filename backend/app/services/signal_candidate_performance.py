@@ -10,7 +10,7 @@ from typing import Any, Callable
 from sqlalchemy import asc, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.market import FuturesKline15m, SignalForwardReturnLog
+from app.models.market import FuturesKline1m, SignalForwardReturnLog
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import utcnow
 
@@ -98,6 +98,8 @@ class SignalCandidatePerformanceService:
             "not_execution_instruction": True,
             "entry_market": "futures",
             "entry_price_source": "signal_forward_return_logs.price_at_signal",
+            "evaluation_candle_interval": "1m_closed",
+            "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "aggregate": aggregate,
             "items": items,
@@ -145,6 +147,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "evaluation_candle_interval": "1m_closed",
+            "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "aggregate": aggregate,
             "drawdown": _drawdown_summary(evaluated),
@@ -230,6 +234,8 @@ class SignalCandidatePerformanceService:
             "not_live_signal": True,
             "not_execution_instruction": True,
             "study_scope": "read_only_filter_study",
+            "evaluation_candle_interval": "1m_closed",
+            "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "skipped_by_position_lock": dict(skipped),
             "baseline": baseline,
@@ -297,21 +303,20 @@ class SignalCandidatePerformanceService:
             return {}
         query = (
             select(
-                FuturesKline15m.symbol,
-                FuturesKline15m.open_time,
-                FuturesKline15m.close_time,
-                FuturesKline15m.high,
-                FuturesKline15m.low,
-                FuturesKline15m.close,
+                FuturesKline1m.symbol,
+                FuturesKline1m.open_time,
+                FuturesKline1m.close_time,
+                FuturesKline1m.high_price,
+                FuturesKline1m.low_price,
+                FuturesKline1m.close_price,
             )
             .where(
-                FuturesKline15m.symbol.in_(symbols),
-                FuturesKline15m.aggregation_status == "AGG_READY",
+                FuturesKline1m.symbol.in_(symbols),
             )
-            .order_by(asc(FuturesKline15m.symbol), asc(FuturesKline15m.open_time))
+            .order_by(asc(FuturesKline1m.symbol), asc(FuturesKline1m.open_time))
         )
         if start_time is not None:
-            query = query.where(FuturesKline15m.open_time >= start_time)
+            query = query.where(FuturesKline1m.open_time >= start_time)
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
@@ -319,9 +324,9 @@ class SignalCandidatePerformanceService:
                 PerfCandle(
                     open_time=_naive(row.open_time),
                     close_time=_naive(row.close_time),
-                    high=Decimal(row.high),
-                    low=Decimal(row.low),
-                    close=Decimal(row.close),
+                    high=Decimal(row.high_price),
+                    low=Decimal(row.low_price),
+                    close=Decimal(row.close_price),
                 )
             )
         return dict(output)

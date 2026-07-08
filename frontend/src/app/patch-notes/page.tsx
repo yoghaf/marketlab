@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-08",
+    version: "PERF-04",
+    title: "Signal TP/SL matching uses closed 1m futures candles",
+    status: "LIVE",
+    area: "Signal History",
+    summary: "Signal History sekarang mengecek TP/SL dari futures 1m closed candle, bukan menunggu agregasi 15m.",
+    changes: [
+      "Evaluator paper-live Signal Candidate membaca futures_klines_1m untuk hit TP/SL.",
+      "Latest eval candle di halaman Signal History menampilkan candle evaluasi 1m terbaru.",
+      "Quality Lab dan Filter Study ikut memakai evaluasi 1m yang sama.",
+      "Tidak ada perubahan Signal Factory rule, threshold, entry reference, TP/SL reference, atau execution."
+    ],
+    impact: "Status open/TP/SL lebih cepat mengikuti harga setelah candle 1m tersedia, sehingga kasus harga sudah jauh lewat TP tidak menunggu candle 15m selesai.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-08",
     version: "UI-09",
     title: "Price precision for small-token signal references",
     status: "LIVE",

@@ -594,6 +594,8 @@ export type SignalPerformanceResponse = {
   not_execution_instruction: boolean;
   entry_market: string;
   entry_price_source: string;
+  evaluation_candle_interval?: string | null;
+  latest_evaluation_candle_time?: string | null;
   latest_futures_15m_close_time?: string | null;
   aggregate: SignalPerformanceBucket & {
     signals_skipped: number;
@@ -754,6 +756,8 @@ export type SignalQualityLabResponse = {
   read_only: boolean;
   not_live_signal: boolean;
   not_execution_instruction: boolean;
+  evaluation_candle_interval?: string | null;
+  latest_evaluation_candle_time?: string | null;
   latest_futures_15m_close_time?: string | null;
   aggregate: SignalPerformanceResponse["aggregate"];
   drawdown: {

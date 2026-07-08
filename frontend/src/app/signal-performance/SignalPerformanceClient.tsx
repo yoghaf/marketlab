@@ -98,7 +98,8 @@ export function SignalPerformanceClient() {
             Include WATCH_ONLY
           </label>
           <div className="pt-6 text-sm text-slate-600">
-            Latest candle: {fmtTime(data?.latest_futures_15m_close_time)}
+            Latest eval candle: {fmtTime(data?.latest_evaluation_candle_time || data?.latest_futures_15m_close_time)}
+            <div className="text-xs text-slate-500">{data?.evaluation_candle_interval || "1m_closed"}</div>
           </div>
         </div>
         {loading && !data && (
