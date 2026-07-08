@@ -24,6 +24,24 @@ export function fmtNumber(value?: string | number | null): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num);
 }
 
+export function fmtPrice(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+
+  let maximumFractionDigits = 2;
+  if (Math.abs(num) < 0.01) maximumFractionDigits = 8;
+  else if (Math.abs(num) < 1) maximumFractionDigits = 6;
+  else if (Math.abs(num) < 100) maximumFractionDigits = 5;
+  else if (Math.abs(num) < 1000) maximumFractionDigits = 4;
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits,
+    minimumSignificantDigits: Math.abs(num) < 1 ? 3 : undefined,
+    maximumSignificantDigits: Math.abs(num) < 0.01 ? 8 : undefined
+  }).format(num);
+}
+
 export type UniverseItem = {
   symbol: string;
   rank: number;

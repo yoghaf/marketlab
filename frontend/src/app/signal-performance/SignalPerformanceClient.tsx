@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { MetricCard } from "@/components/MetricCard";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { SignalPerformanceBucket, SignalPerformanceResponse } from "@/lib/api";
+import { SignalPerformanceBucket, SignalPerformanceResponse, fmtPrice } from "@/lib/api";
 import { labelFor } from "@/lib/labels";
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
@@ -180,9 +180,9 @@ export function SignalPerformanceClient() {
                   <td>{labelFor(item.stage)}</td>
                   <td><StatusBadge value={item.direction} /></td>
                   <td><StatusBadge value={item.result_status} /></td>
-                  <td>{fmtNumber(item.entry)}</td>
-                  <td>{fmtNumber(item.stop_loss)}</td>
-                  <td>{fmtNumber(item.take_profit)}</td>
+                  <td>{fmtPrice(item.entry)}</td>
+                  <td>{fmtPrice(item.stop_loss)}</td>
+                  <td>{fmtPrice(item.take_profit)}</td>
                   <td>{item.realized_r != null ? `${fmtSigned(item.realized_r)}R` : item.unrealized_r != null ? `${fmtSigned(item.unrealized_r)}R open` : "-"}</td>
                   <td>{fmtSigned(item.mfe_r)} / {fmtSigned(item.mae_r)}</td>
                   <td>{item.result_time_wib || fmtTime(item.result_time_utc)}</td>

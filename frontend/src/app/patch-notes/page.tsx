@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-08",
+    version: "UI-09",
+    title: "Price precision for small-token signal references",
+    status: "LIVE",
+    area: "Frontend",
+    summary: "Entry, SL, dan TP untuk token harga kecil sekarang ditampilkan dengan digit cukup agar tidak terlihat sama.",
+    changes: [
+      "Menambahkan formatter harga khusus untuk price/entry/SL/TP.",
+      "Signal History memakai formatter harga baru untuk kolom Entry, SL, dan TP.",
+      "Radar memakai formatter harga baru untuk futures reference, SL, dan TP.",
+      "Tidak ada perubahan perhitungan Signal Factory, TP/SL, outcome, atau execution."
+    ],
+    impact: "Token seperti 1000SHIBUSDT tidak lagi terlihat entry dan SL sama hanya karena pembulatan tampilan.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
     date: "2026-07-07",
     version: "LAB-07",
     title: "Signal Quality Lab filter and regime studies",

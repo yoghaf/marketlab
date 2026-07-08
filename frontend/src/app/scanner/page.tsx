@@ -6,7 +6,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
+import { LiveScannerItem, LiveScannerResponse, fetchJson, fmtNumber, fmtPrice, fmtTime } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
 
 type ScannerSearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -179,9 +179,9 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
       <td className="min-w-48">
         {item.signal_status === "SIGNAL_CANDIDATE" ? (
           <div className="space-y-1 text-xs">
-            <div className="font-semibold">Futures: {fmtNumber(item.entry_price)}</div>
-            <div>SL: {fmtNumber(item.stop_loss_reference)}</div>
-            <div>TP: {fmtNumber(item.take_profit_reference)}</div>
+            <div className="font-semibold">Futures: {fmtPrice(item.entry_price)}</div>
+            <div>SL: {fmtPrice(item.stop_loss_reference)}</div>
+            <div>TP: {fmtPrice(item.take_profit_reference)}</div>
             <div>RR: {fmtNumber(item.rr)}R / Timeout: {item.timeout_minutes ?? "-"}m</div>
           </div>
         ) : (
