@@ -6,6 +6,8 @@ import {
   fetchJson
 } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 export default async function EarlyBacktestLabPage() {
   let summary: EarlyBacktestSummaryResponse | null = null;
   let eventsByHorizon: Record<string, EarlyBacktestEventsResponse | null> = {
