@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-09",
+    title: "Priority signal calibration focus",
+    status: "LIVE",
+    area: "Research",
+    summary: "Signal Quality Lab sekarang menyorot dua lane prioritas: Early Long 15m dan Mid Short 1h.",
+    changes: [
+      "Menambahkan kartu prioritas untuk Early Long 15m sebagai fokus momentum fresh long.",
+      "Menambahkan kartu prioritas untuk Mid Short 1h sebagai fokus short context yang masih layak dipantau.",
+      "Setiap kartu menampilkan sample, train/validation, baseline total R, validation average R, filter terbaik sementara, dan warning agar belum dipromosikan ke rule produksi.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Riset berikutnya lebih terarah: fokus dulu ke dua setup yang datanya paling masuk akal, bukan menyebar ke semua lane sekaligus.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-08",
     title: "Signal Calibration Lab v1",
     status: "LIVE",

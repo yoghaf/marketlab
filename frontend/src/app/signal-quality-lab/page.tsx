@@ -372,6 +372,10 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
   const readyCount = data.lanes.filter((lane) => lane.status === "READY_FOR_CALIBRATION").length;
   const promisingCount = data.top_candidates.filter((row) => row.verdict === "VALIDATION_PROMISING").length;
   const overfitCount = data.top_candidates.filter((row) => row.verdict === "TRAIN_ONLY_OVERFIT").length;
+  const priorityLanes = [
+    priorityLane(data, "EARLY_LONG", "15m", "Prioritas 1", "Momentum fresh long 15m yang saat ini validation-nya paling sehat."),
+    priorityLane(data, "MID_SHORT", "1h", "Prioritas 2", "Setup short 1h yang masih paling layak dipantau untuk filter lanjutan.")
+  ];
 
   return (
     <div className="space-y-4">
@@ -381,6 +385,11 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
         <Insight label="Promising filters" value={String(promisingCount)} />
         <Insight label="Train-only overfit" value={String(overfitCount)} />
       </div>
+      <div className="grid gap-4 px-4 xl:grid-cols-2">
+        {priorityLanes.map((lane) => (
+          <PriorityCalibrationCard key={`${lane.stage}-${lane.timeframe}`} lane={lane} />
+        ))}
+      </div>
       <div className="grid gap-4 px-4 md:grid-cols-2 xl:grid-cols-4">
         {activeLanes.slice(0, 8).map((lane) => (
           <CalibrationLaneCard key={lane.lane} lane={lane} />
@@ -389,6 +398,115 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
       <div className="border-t border-line">
         <div className="px-4 py-3 text-sm font-bold">Top calibration candidates</div>
         <CalibrationCandidateTable rows={data.top_candidates.slice(0, 18)} />
+      </div>
+    </div>
+  );
+}
+
+function priorityLane(
+  data: SignalCalibrationLabResponse,
+  stage: string,
+  timeframe: string,
+  priority: string,
+  reason: string
+): SignalCalibrationLane & { priority: string; priorityReason: string; bestFilter?: SignalCalibrationCandidate } {
+  const lane = data.lanes.find((item) => item.stage === stage && item.timeframe === timeframe);
+  const fallback: SignalCalibrationLane = {
+    lane: `${stage}_${timeframe}`,
+    stage,
+    timeframe,
+    sample_count: 0,
+    train_count: 0,
+    validation_count: 0,
+    split_method: "chronological_70_30",
+    status: "NO_DATA",
+    baseline_all: emptyCalibrationPerf(),
+    baseline_train: emptyCalibrationPerf(),
+    baseline_validation: emptyCalibrationPerf(),
+    filter_candidates: []
+  };
+  const selected = lane || fallback;
+  return {
+    ...selected,
+    priority,
+    priorityReason: reason,
+    bestFilter: bestPriorityFilter(selected)
+  };
+}
+
+function emptyCalibrationPerf() {
+  return {
+    signals_evaluated: 0,
+    open_count: 0,
+    waiting_count: 0,
+    tp_count: 0,
+    sl_count: 0,
+    both_hit_count: 0,
+    closed_count: 0,
+    total_r_closed: 0,
+    open_unrealized_r: 0,
+    total_r_with_open: 0,
+    fixed_risk_return_pct_1pct_closed: 0,
+    fixed_risk_return_pct_1pct_with_open: 0,
+    sample_count: 0,
+    top_symbol: "-",
+    top_symbol_count: 0
+  };
+}
+
+function bestPriorityFilter(lane: SignalCalibrationLane): SignalCalibrationCandidate | undefined {
+  return [...lane.filter_candidates].sort((a, b) => {
+    const rank = (value: string) => ({
+      VALIDATION_PROMISING: 5,
+      REDUCES_DAMAGE: 4,
+      NO_CLEAR_EDGE: 3,
+      TRAIN_ONLY_OVERFIT: 2,
+      VALIDATION_WORSE: 1,
+      NEED_MORE_SAMPLE: 0
+    }[value] ?? -1);
+    const rankDelta = rank(b.verdict) - rank(a.verdict);
+    if (rankDelta) return rankDelta;
+    return Number(b.validation.avg_r_delta_vs_baseline || -999) - Number(a.validation.avg_r_delta_vs_baseline || -999);
+  })[0];
+}
+
+function PriorityCalibrationCard({
+  lane
+}: {
+  lane: SignalCalibrationLane & { priority: string; priorityReason: string; bestFilter?: SignalCalibrationCandidate };
+}) {
+  const best = lane.bestFilter;
+  return (
+    <div className="rounded border border-blue-200 bg-blue-50/50 p-4 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="font-bold text-ink">{lane.priority}: {labelFor(lane.stage)} {lane.timeframe}</div>
+        <StatusBadge value={lane.status} />
+      </div>
+      <p className="mt-2 text-slate-600">{lane.priorityReason}</p>
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        <Insight label="Sample" value={`${lane.sample_count} total`} />
+        <Insight label="Train / validation" value={`${lane.train_count} / ${lane.validation_count}`} />
+        <Insight label="Baseline total" value={`${fmtSigned(lane.baseline_all.total_r_closed)}R`} />
+        <Insight label="Validation avg" value={`${fmtSigned(lane.baseline_validation.avg_r_closed)}R`} />
+      </div>
+      <div className="mt-4 rounded border border-line bg-white p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="font-semibold">Best filter sementara</div>
+          <StatusBadge value={best?.verdict || "NO_FILTER"} />
+        </div>
+        {best ? (
+          <div className="mt-2 grid gap-2 md:grid-cols-[1.6fr_1fr_1fr_1.2fr]">
+            <Insight label="Filter" value={best.label} />
+            <Insight label="Validation closed" value={`${best.validation.closed_count} rows`} />
+            <Insight label="Validation delta" value={`${fmtSigned(best.validation.avg_r_delta_vs_baseline)}R avg`} />
+            <Insight label="Top symbol" value={`${best.validation.top_symbol} (${fmtNumber(best.validation.top_symbol_share_pct)}%)`} />
+          </div>
+        ) : (
+          <p className="mt-2 text-slate-600">Belum ada filter yang bisa dibaca untuk lane ini.</p>
+        )}
+        <p className="mt-3 text-slate-600">
+          Action: pantau lane ini dan validasi filter terbaiknya. Jangan promosi ke rule produksi sampai sample validation lebih tebal dan drawdown tetap masuk akal.
+        </p>
       </div>
     </div>
   );
