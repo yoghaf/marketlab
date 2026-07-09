@@ -163,6 +163,7 @@ export function SignalPerformanceClient() {
                 <th>Time WIB</th>
                 <th>Symbol</th>
                 <th>TF</th>
+                <th>Strategy</th>
                 <th>Stage</th>
                 <th>Dir</th>
                 <th>Status</th>
@@ -187,6 +188,15 @@ export function SignalPerformanceClient() {
                     </Link>
                   </td>
                   <td>{item.timeframe}</td>
+                  <td className="min-w-44">
+                    <div className="space-y-1 text-xs">
+                      <StatusBadge value={shortStrategy(item.strategy_version)} />
+                      <StatusBadge value={item.v3_shadow_status || "V3_SHADOW_UNKNOWN"} />
+                      {item.v3_shadow_filter_label ? (
+                        <div className="text-slate-600">{item.v3_shadow_filter_label}</div>
+                      ) : null}
+                    </div>
+                  </td>
                   <td>{labelFor(item.stage)}</td>
                   <td><StatusBadge value={item.direction} /></td>
                   <td><StatusBadge value={item.result_status} /></td>
@@ -200,7 +210,7 @@ export function SignalPerformanceClient() {
               ))}
               {!data?.items.length && (
                 <tr>
-                  <td colSpan={12}><EmptyState title="Belum ada signal" detail="Belum ada Signal dengan entry, SL, dan TP sesuai filter ini." /></td>
+                  <td colSpan={13}><EmptyState title="Belum ada signal" detail="Belum ada Signal dengan entry, SL, dan TP sesuai filter ini." /></td>
                 </tr>
               )}
             </tbody>
@@ -260,6 +270,13 @@ function fmtSigned(value?: string | number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return `${num >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}`;
+}
+
+function shortStrategy(value?: string | null): string {
+  if (!value) return "V2_LIVE";
+  if (value.includes("V2") || value.includes("v2")) return "V2_LIVE";
+  if (value.includes("V3") || value.includes("v3")) return "V3";
+  return value.replace("SIGNAL_FACTORY_", "").replace("_LAYERED_SCORING_2026_07", "");
 }
 
 function fmtTime(value?: string | null): string {

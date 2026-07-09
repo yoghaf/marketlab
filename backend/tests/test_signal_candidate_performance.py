@@ -8,7 +8,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 from app.models.market import FuturesKline1m, SignalForwardReturnLog
-from app.services.signal_candidate_performance import SignalCandidatePerformanceService
+from app.services.signal_candidate_performance import (
+    FilterStudySpec,
+    SignalCandidatePerformanceService,
+    signal_factory_v3_shadow_for_candidate,
+)
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 
 
@@ -438,6 +442,58 @@ def test_calibration_lab_rejects_train_only_overfit_filter() -> None:
         assert funding["validation"]["sl_count"] == 1
         assert funding["verdict"] == "TRAIN_ONLY_OVERFIT"
         assert funding["promotion_status"] == "REJECT_OVERFIT"
+
+
+def test_v3_shadow_helper_matches_candidate_evidence() -> None:
+    filter_map = {
+        ("MID_SHORT", "1h"): [
+            {
+                "filter_id": "FUNDING_GE_75",
+                "label": "Funding percentile tinggi",
+                "expression": "funding_percentile_30d >= 75",
+                "promotion_score": 7,
+                "promotion_reasons": ["validation ok"],
+                "_spec": FilterStudySpec(
+                    "FUNDING_GE_75",
+                    "Funding percentile tinggi",
+                    "funding_percentile_30d >= 75",
+                    "funding",
+                    ("funding_percentile_30d",),
+                    lambda item: item["evidence_snapshot"]["funding_percentile_30d"] >= Decimal("75"),
+                ),
+            }
+        ]
+    }
+
+    passing = signal_factory_v3_shadow_for_candidate(
+        {
+            "setup_type": "MID_SHORT",
+            "timeframe": "1h",
+            "evidence": {"funding_percentile_30d": "82"},
+        },
+        filter_map,
+    )
+    failing = signal_factory_v3_shadow_for_candidate(
+        {
+            "setup_type": "MID_SHORT",
+            "timeframe": "1h",
+            "evidence": {"funding_percentile_30d": "20"},
+        },
+        filter_map,
+    )
+    missing = signal_factory_v3_shadow_for_candidate(
+        {
+            "setup_type": "MID_SHORT",
+            "timeframe": "1h",
+            "evidence": {},
+        },
+        filter_map,
+    )
+
+    assert passing["v3_shadow_status"] == "V3_SHADOW_PASS"
+    assert passing["v3_shadow_filter_id"] == "FUNDING_GE_75"
+    assert failing["v3_shadow_status"] == "V3_SHADOW_FAIL"
+    assert missing["v3_shadow_status"] == "V3_SHADOW_UNAVAILABLE"
 
 
 def _signal(

@@ -16,6 +16,8 @@ from app.services.utils import utcnow
 
 
 COMPLETED_OUTCOMES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE"}
+LIVE_STRATEGY_VERSION = "SIGNAL_FACTORY_V2_LIVE"
+SHADOW_STRATEGY_VERSION = "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION"
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
@@ -102,6 +104,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
             "entry_market": "futures",
             "entry_price_source": "signal_forward_return_logs.price_at_signal",
             "evaluation_candle_interval": "15m_closed_plus_1m_tail",
@@ -145,6 +149,18 @@ class SignalCandidatePerformanceService:
             candles.get(signal.symbol, []),
             [candle.open_time for candle in candles.get(signal.symbol, [])],
         )
+        item.update(
+            _v3_shadow_result_for_item(
+                item,
+                self.v3_shadow_filter_map(
+                    epoch=epoch,
+                    include_watch_only=include_watch_only,
+                    position_lock=True,
+                    min_sample=5,
+                    limit=100,
+                ),
+            )
+        )
         latest_candle_time = max(
             (candle.close_time for rows in candles.values() for candle in rows),
             default=None,
@@ -155,6 +171,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
             "entry_market": "futures",
             "entry_price_source": "signal_forward_return_logs.price_at_signal",
             "evaluation_candle_interval": "15m_closed_plus_1m_tail",
@@ -172,6 +190,11 @@ class SignalCandidatePerformanceService:
                 "candidate_status": signal.candidate_status,
                 "confidence_tier": signal.confidence_tier,
                 "execution_flag": signal.execution_flag,
+                "strategy_version": _signal_strategy_version(signal),
+                "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+                "v3_shadow_status": item.get("v3_shadow_status"),
+                "v3_shadow_filter_id": item.get("v3_shadow_filter_id"),
+                "v3_shadow_filter_label": item.get("v3_shadow_filter_label"),
                 "source_artifact_generated_at": signal.source_artifact_generated_at,
                 "observation_epoch": signal.observation_epoch,
                 "created_at": signal.created_at,
@@ -198,6 +221,7 @@ class SignalCandidatePerformanceService:
             timeframe=timeframe,
             symbol=None,
             position_lock=position_lock,
+            with_shadow=False,
         )
         aggregate = self._aggregate(evaluated, skipped)
         closed = [item for item in evaluated if item["result_status"] in COMPLETED_OUTCOMES and item.get("realized_r") is not None]
@@ -223,6 +247,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
             "evaluation_candle_interval": "15m_closed_plus_1m_tail",
             "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
@@ -257,6 +283,7 @@ class SignalCandidatePerformanceService:
             timeframe=timeframe,
             symbol=None,
             position_lock=position_lock,
+            with_shadow=False,
         )
         baseline = _filter_study_row(
             filter_id="BASELINE",
@@ -310,6 +337,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
             "study_scope": "read_only_filter_study",
             "evaluation_candle_interval": "15m_closed_plus_1m_tail",
             "latest_evaluation_candle_time": latest_candle_time,
@@ -335,6 +364,7 @@ class SignalCandidatePerformanceService:
             timeframe=None,
             symbol=None,
             position_lock=position_lock,
+            with_shadow=False,
         )
         lanes: list[dict[str, Any]] = []
         for stage in ("EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"):
@@ -371,6 +401,8 @@ class SignalCandidatePerformanceService:
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
             "study_scope": "read_only_signal_calibration_train_validation",
             "method": "Static filter candidates over logged Signal results with 70/30 chronological split.",
             "latest_evaluation_candle_time": latest_candle_time,
@@ -388,6 +420,26 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def v3_shadow_filter_map(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 5,
+        limit: int = 100,
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        evaluated, _skipped, _latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe=None,
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        return _v3_shadow_filter_map(evaluated, min_sample=min_sample, limit=limit)
+
     def _evaluated_context(
         self,
         *,
@@ -397,6 +449,7 @@ class SignalCandidatePerformanceService:
         timeframe: str | None,
         symbol: str | None,
         position_lock: bool,
+        with_shadow: bool = True,
     ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None]:
         signals = self._load_signals(
             epoch=epoch,
@@ -417,6 +470,8 @@ class SignalCandidatePerformanceService:
         tail_candles = self._load_1m_candles(symbols, start_time=tail_start)
         candles = _merge_candle_maps(base_candles, tail_candles)
         evaluated, skipped = self._evaluate(signals, candles, position_lock=position_lock)
+        if with_shadow:
+            _apply_v3_shadow(evaluated, min_sample=5)
         latest_candle_time = max(
             (candle.close_time for rows in candles.values() for candle in rows),
             default=None,
@@ -580,6 +635,15 @@ class SignalCandidatePerformanceService:
             "stage": signal.stage,
             "direction": direction,
             "candidate_status": signal.candidate_status,
+            "strategy_version": _signal_strategy_version(signal),
+            "strategy_family": "Signal Factory V2",
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "v3_shadow_status": "V3_SHADOW_NOT_EVALUATED",
+            "v3_shadow_filter_id": None,
+            "v3_shadow_filter_label": None,
+            "v3_shadow_filter_expression": None,
+            "v3_shadow_promotion_score": None,
+            "v3_shadow_reason": "V3 shadow evaluation has not been applied.",
             "confidence_tier": signal.confidence_tier,
             "execution_flag": signal.execution_flag,
             "core_score": signal.core_score,
@@ -793,6 +857,145 @@ def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | No
             value = evidence.get(field)
         snapshot[field] = _decimal_or_none(value)
     return snapshot
+
+
+def signal_factory_v3_shadow_for_candidate(
+    candidate: dict[str, Any],
+    filter_map: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any]:
+    evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+    merged = {**evidence, **candidate}
+    item = {
+        "stage": candidate.get("setup_type") or candidate.get("stage") or "UNKNOWN",
+        "timeframe": candidate.get("timeframe") or "15m",
+        "evidence_snapshot": _evidence_snapshot_from_mapping(merged),
+    }
+    return _v3_shadow_result_for_item(item, filter_map)
+
+
+def _evidence_snapshot_from_mapping(evidence: dict[str, Any]) -> dict[str, Decimal | None]:
+    snapshot: dict[str, Decimal | None] = {}
+    for field, _label in EVIDENCE_FIELDS:
+        snapshot[field] = _decimal_or_none(evidence.get(field))
+    return snapshot
+
+
+def _signal_strategy_version(signal: SignalForwardReturnLog) -> str:
+    raw_evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
+    nested = raw_evidence.get("evidence") if isinstance(raw_evidence.get("evidence"), dict) else {}
+    version = (
+        raw_evidence.get("signal_factory_version")
+        or nested.get("signal_factory_version")
+        or nested.get("logic_version")
+        or LIVE_STRATEGY_VERSION
+    )
+    return str(version)
+
+
+def _apply_v3_shadow(items: list[dict[str, Any]], *, min_sample: int) -> None:
+    filter_map = _v3_shadow_filter_map(items, min_sample=min_sample, limit=100)
+    for item in items:
+        item.update(_v3_shadow_result_for_item(item, filter_map))
+
+
+def _v3_shadow_filter_map(
+    items: list[dict[str, Any]],
+    *,
+    min_sample: int,
+    limit: int,
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    specs = {spec.filter_id: spec for spec in _filter_study_specs()}
+    filter_map: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for stage in ("EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"):
+        for timeframe in ("15m", "1h", "4h", "24h"):
+            lane_items = [
+                item
+                for item in items
+                if item.get("stage") == stage and item.get("timeframe") == timeframe
+            ]
+            lane = _calibration_lane(
+                stage=stage,
+                timeframe=timeframe,
+                items=lane_items,
+                min_sample=min_sample,
+                limit=limit,
+            )
+            selected: list[dict[str, Any]] = []
+            for row in lane["filter_candidates"]:
+                spec = specs.get(str(row.get("filter_id")))
+                if spec is None or row.get("promotion_status") != "V3_CANDIDATE":
+                    continue
+                selected.append(
+                    {
+                        "filter_id": row["filter_id"],
+                        "label": row["label"],
+                        "expression": row["expression"],
+                        "promotion_score": row["promotion_score"],
+                        "promotion_reasons": row["promotion_reasons"],
+                        "_spec": spec,
+                    }
+                )
+            filter_map[(stage, timeframe)] = selected
+    return filter_map
+
+
+def _v3_shadow_result_for_item(
+    item: dict[str, Any],
+    filter_map: dict[tuple[str, str], list[dict[str, Any]]],
+) -> dict[str, Any]:
+    stage = str(item.get("stage") or "UNKNOWN")
+    timeframe = str(item.get("timeframe") or "15m")
+    filters = filter_map.get((stage, timeframe), [])
+    base = {
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "strategy_family": "Signal Factory V2",
+        "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+        "v3_shadow_filter_count": len(filters),
+        "v3_shadow_status": "V3_SHADOW_NO_FILTER",
+        "v3_shadow_filter_id": None,
+        "v3_shadow_filter_label": None,
+        "v3_shadow_filter_expression": None,
+        "v3_shadow_promotion_score": None,
+        "v3_shadow_reason": "No V3_CANDIDATE filter exists for this stage/timeframe yet.",
+    }
+    if not filters:
+        return base
+
+    missing_fields: set[str] = set()
+    evaluated_filter_count = 0
+    for row in filters:
+        spec: FilterStudySpec = row["_spec"]
+        missing = [
+            field
+            for field in spec.required_fields
+            if (item.get("evidence_snapshot") or {}).get(field) is None
+        ]
+        if missing:
+            missing_fields.update(missing)
+            continue
+        evaluated_filter_count += 1
+        if spec.predicate(item):
+            return {
+                **base,
+                "v3_shadow_status": "V3_SHADOW_PASS",
+                "v3_shadow_filter_id": row["filter_id"],
+                "v3_shadow_filter_label": row["label"],
+                "v3_shadow_filter_expression": row["expression"],
+                "v3_shadow_promotion_score": row["promotion_score"],
+                "v3_shadow_reason": f"Matched V3 calibration filter: {row['label']}.",
+            }
+
+    if evaluated_filter_count == 0:
+        return {
+            **base,
+            "v3_shadow_status": "V3_SHADOW_UNAVAILABLE",
+            "v3_shadow_reason": "Required V3 filter evidence missing: " + ", ".join(sorted(missing_fields)),
+        }
+    return {
+        **base,
+        "v3_shadow_status": "V3_SHADOW_FAIL",
+        "v3_shadow_reason": "V3 calibration filters exist for this lane, but this signal evidence did not match them.",
+    }
 
 
 def _evidence_field_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:

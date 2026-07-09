@@ -18,6 +18,12 @@ from app.models.market import (
     MarketSignalCandidateReadonly15m,
     MarketlabActiveUniverse,
 )
+from app.services.signal_candidate_performance import (
+    LIVE_STRATEGY_VERSION,
+    SHADOW_STRATEGY_VERSION,
+    SignalCandidatePerformanceService,
+    signal_factory_v3_shadow_for_candidate,
+)
 from app.services.utils import json_safe
 
 SIGNAL_CANDIDATE_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READONLY"}
@@ -115,7 +121,12 @@ class LiveCandidateScannerService:
                     include_inactive=include_inactive,
                 )
             )
-        raw_items.extend(self._signal_factory_signal_items(include_inactive=include_inactive))
+        raw_items.extend(
+            self._signal_factory_signal_items(
+                include_inactive=include_inactive,
+                v3_shadow_filter_map=SignalCandidatePerformanceService(self.db).v3_shadow_filter_map(),
+            )
+        )
 
         items: list[dict[str, Any]] = []
         for item in sorted(_dedupe_by_symbol(raw_items), key=_item_sort_key, reverse=True):
@@ -130,7 +141,11 @@ class LiveCandidateScannerService:
                 break
         return items
 
-    def _signal_factory_signal_items(self, include_inactive: bool) -> list[dict[str, Any]]:
+    def _signal_factory_signal_items(
+        self,
+        include_inactive: bool,
+        v3_shadow_filter_map: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
+    ) -> list[dict[str, Any]]:
         artifact_dir = self.signal_factory_artifact_dir
         if artifact_dir is None:
             return []
@@ -152,7 +167,12 @@ class LiveCandidateScannerService:
             universe = universe_by_symbol.get(symbol)
             if not include_inactive and not (universe and universe.is_active):
                 continue
-            item = self._signal_factory_payload(candidate, universe, include_inactive=include_inactive)
+            item = self._signal_factory_payload(
+                candidate,
+                universe,
+                include_inactive=include_inactive,
+                v3_shadow_filter_map=v3_shadow_filter_map or {},
+            )
             if item is not None:
                 items.append(item)
         return items
@@ -162,6 +182,7 @@ class LiveCandidateScannerService:
         candidate: dict[str, Any],
         universe: MarketlabActiveUniverse | None,
         include_inactive: bool,
+        v3_shadow_filter_map: dict[tuple[str, str], list[dict[str, Any]]],
     ) -> dict[str, Any] | None:
         symbol = str(candidate.get("symbol") or "").upper()
         window_open = _parse_dt(candidate.get("window_start"))
@@ -184,6 +205,7 @@ class LiveCandidateScannerService:
         is_active = bool(universe and universe.is_active)
         inactive_warning = None if is_active else "Symbol is not in active universe"
         warning_reason = inactive_warning or "read-only signal candidate; not an execution instruction"
+        v3_shadow = signal_factory_v3_shadow_for_candidate(candidate, v3_shadow_filter_map)
         return json_safe(
             {
                 "symbol": symbol,
@@ -193,6 +215,10 @@ class LiveCandidateScannerService:
                 "universe_rank": universe.rank if universe else None,
                 "inactive_warning": inactive_warning if include_inactive else None,
                 "scanner_visibility_reason": "signal factory final read-only candidate",
+                **v3_shadow,
+                "strategy_version": candidate.get("signal_factory_version") or candidate.get("logic_version") or LIVE_STRATEGY_VERSION,
+                "strategy_family": "Signal Factory V2",
+                "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
                 "latest_actual_status": candidate.get("candidate_status"),
                 "latest_actual_observation_timestamp": window_close,
                 "using_fallback_usable_row": False,
@@ -357,6 +383,16 @@ class LiveCandidateScannerService:
                     include_inactive=include_inactive,
                     using_fallback_usable_row=using_fallback,
                 ),
+                "strategy_version": LIVE_STRATEGY_VERSION,
+                "strategy_family": "Classifier V1 + Signal Plan",
+                "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+                "v3_shadow_filter_count": 0,
+                "v3_shadow_status": "V3_SHADOW_NOT_APPLICABLE",
+                "v3_shadow_filter_id": None,
+                "v3_shadow_filter_label": None,
+                "v3_shadow_filter_expression": None,
+                "v3_shadow_promotion_score": None,
+                "v3_shadow_reason": "Legacy classifier row; V3 shadow is evaluated on Signal Factory candidates.",
                 "latest_actual_status": latest_actual_candidate.classifier_status,
                 "latest_actual_observation_timestamp": latest_actual_candidate.window_close_time,
                 "using_fallback_usable_row": using_fallback,

@@ -104,6 +104,13 @@ export default async function SignalDetailPage({
         <MetricCard label={isOpen ? "Latest eval price" : "Result price"} value={fmtPrice(item.exit_price)} helper={fmtTime(item.result_time_utc)} />
       </section>
 
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Live strategy" value={shortStrategy(item.strategy_version)} helper="Rule yang menghasilkan signal ini" tone="info" />
+        <MetricCard label="Shadow strategy" value="V3 shadow" helper="Calibration candidate, read-only" tone="warn" />
+        <MetricCard label="V3 shadow status" value={labelFor(item.v3_shadow_status || "UNKNOWN")} helper={item.v3_shadow_filter_label || item.v3_shadow_reason || "-"} tone={item.v3_shadow_status === "V3_SHADOW_PASS" ? "good" : "warn"} />
+        <MetricCard label="V3 filter score" value={item.v3_shadow_promotion_score == null ? "-" : `${item.v3_shadow_promotion_score}/7`} helper={item.v3_shadow_filter_id || "No matched filter"} />
+      </section>
+
       <SectionCard title="Signal plan" description="Informasi inti signal. Semua angka entry/SL/TP memakai futures reference, bukan spot entry.">
         <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
           <DetailItem label="Signal ID" value={item.signal_id} />
@@ -114,6 +121,8 @@ export default async function SignalDetailPage({
           <DetailItem label="Confidence" value={labelFor(item.confidence_tier || "-")} />
           <DetailItem label="Candidate status" value={item.candidate_status} />
           <DetailItem label="Execution flag" value={item.execution_flag || "-"} />
+          <DetailItem label="Strategy version" value={item.strategy_version || "-"} />
+          <DetailItem label="V3 shadow" value={item.v3_shadow_status || "-"} />
           <DetailItem label="Signal time WIB" value={item.signal_time_wib || fmtTime(item.signal_timestamp)} />
           <DetailItem label="Window open" value={fmtTime(data.raw_signal.window_open_time)} />
           <DetailItem label="Window close" value={fmtTime(data.raw_signal.window_close_time)} />
@@ -209,6 +218,13 @@ function fmtSigned(value?: string | number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return `${num >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(num)}`;
+}
+
+function shortStrategy(value?: string | null): string {
+  if (!value) return "V2_LIVE";
+  if (value.includes("V2") || value.includes("v2")) return "V2_LIVE";
+  if (value.includes("V3") || value.includes("v3")) return "V3";
+  return value.replace("SIGNAL_FACTORY_", "").replace("_LAYERED_SCORING_2026_07", "");
 }
 
 function evidenceRoot(value: Record<string, unknown>): Record<string, unknown> {

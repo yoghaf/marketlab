@@ -128,6 +128,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 <tr>
                   <th>Symbol</th>
                   <th>TF</th>
+                  <th>Strategy</th>
                   <th>Tier</th>
                   <th>Label</th>
                   <th>Arah</th>
@@ -143,7 +144,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
                 {visibleItems.map((item) => <ScannerRow key={`${item.symbol}-${item.window_open_time}-${item.scanner_tier}`} item={item} />)}
                 {!visibleItems.length && (
                   <tr>
-                    <td colSpan={11}>
+                    <td colSpan={12}>
                       <EmptyState title="Belum ada row sesuai filter" detail="Cek filter Candidate/Radar/Risk untuk konteks non-final, atau buka Signal History untuk arsip hasil signal lama." />
                     </td>
                   </tr>
@@ -165,6 +166,17 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         {!item.is_active && <div className="mt-1"><StatusBadge value="NOT_ACTIVE" /></div>}
       </td>
       <td><StatusBadge value={item.timeframe || String(item.evidence_summary.timeframe || "15m")} /></td>
+      <td className="min-w-44">
+        <div className="space-y-1 text-xs">
+          <StatusBadge value={shortStrategy(item.strategy_version)} />
+          <StatusBadge value={item.v3_shadow_status || "V3_SHADOW_UNKNOWN"} />
+          {item.v3_shadow_filter_label ? (
+            <div className="text-slate-600">{item.v3_shadow_filter_label}</div>
+          ) : (
+            <div className="text-slate-500">{compactReason(item.v3_shadow_reason || "-", 80)}</div>
+          )}
+        </div>
+      </td>
       <td><StatusBadge value={item.scanner_tier} /></td>
       <td className="max-w-56">{labelFor(item.candidate_type)}</td>
       <td><StatusBadge value={item.candidate_direction} /></td>
@@ -319,6 +331,13 @@ function userReason(item: LiveScannerItem): string {
   if (text.includes("missing atr")) return "ATR belum tersedia";
   if (text.includes("conflict")) return "Sinyal campuran";
   return item.warning_reason || item.tier_reason || "No scanner warning";
+}
+
+function shortStrategy(value?: string | null): string {
+  if (!value) return "V2_LIVE";
+  if (value.includes("V2") || value.includes("v2")) return "V2_LIVE";
+  if (value.includes("V3") || value.includes("v3")) return "V3";
+  return value.replace("SIGNAL_FACTORY_", "").replace("_LAYERED_SCORING_2026_07", "");
 }
 
 function countTiers(items: LiveScannerItem[]): Record<string, number> {

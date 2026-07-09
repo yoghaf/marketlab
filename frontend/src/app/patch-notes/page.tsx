@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-11",
+    title: "Signal Factory V3 shadow evaluation",
+    status: "LIVE",
+    area: "Research + UI",
+    summary: "Radar, Signal History, dan Signal Detail sekarang menampilkan versi strategy live V2 serta status V3 shadow calibration.",
+    changes: [
+      "Menambahkan evaluasi V3 shadow read-only dari filter Calibration Lab yang berstatus V3_CANDIDATE.",
+      "Radar menampilkan Strategy dan V3 shadow status per signal supaya jelas signal berasal dari V2 live dan apakah lolos filter V3 candidate.",
+      "Signal History closed-only menampilkan versi strategy dan status V3 shadow untuk audit TP/SL hasil lama.",
+      "Signal Detail menampilkan kartu Live strategy, Shadow strategy, V3 shadow status, dan V3 filter score.",
+      "Tidak ada perubahan Signal Factory rule, scanner selection, TP/SL formula, threshold live, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa membandingkan V2 live vs V3 shadow tanpa mengganti rule produksi. Ini tahap observasi sebelum filter V3 boleh dipromosikan.",
+    links: [
+      { href: "/scanner", label: "Radar" },
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-10",
     title: "Calibration promotion readiness",
     status: "LIVE",

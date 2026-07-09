@@ -159,6 +159,9 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(item["entry_price"], "100.000000000000000000")
         self.assertEqual(item["quality_score"], 6)
         self.assertEqual(item["evidence_summary"]["source"], "signal_factory_v1")
+        self.assertIn("V2", item["strategy_version"])
+        self.assertEqual(item["shadow_strategy_version"], "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION")
+        self.assertEqual(item["v3_shadow_status"], "V3_SHADOW_NO_FILTER")
         self.assertTrue(item["not_entry_signal"])
         self.assertTrue(item["not_execution_instruction"])
 
