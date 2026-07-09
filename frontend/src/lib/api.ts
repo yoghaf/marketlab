@@ -373,6 +373,68 @@ export type StrategyArenaResultsResponse = {
   results: StrategyArenaResult[];
 };
 
+export type StrategyOptimizationRow = {
+  stage: string;
+  timeframe: string;
+  atr_mult: string | number;
+  rr: string | number;
+  timeout_minutes: number;
+  sample_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  timeout_count: number;
+  waiting_count: number;
+  positive_timeout_count: number;
+  negative_timeout_count: number;
+  total_r?: string | number | null;
+  avg_r?: string | number | null;
+  median_r?: string | number | null;
+  winrate_pct?: string | number | null;
+  max_drawdown_r?: string | number | null;
+  current_drawdown_r?: string | number | null;
+  skipped_counts: Record<string, number>;
+  verdict: string;
+};
+
+export type StrategyOptimizationResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  entry_market: string;
+  entry_model: string;
+  atr_model: string;
+  outcome_model: string;
+  grid: {
+    atr_multipliers: string[];
+    rr_values: string[];
+    timeout_minutes: number[];
+  };
+  summary: {
+    signals_loaded: number;
+    lane_count: number;
+    grid_rows: number;
+    ready_rows: number;
+    promising_rows: number;
+    best_row?: StrategyOptimizationRow | null;
+  };
+  lanes: StrategyOptimizationRow[];
+  rows: StrategyOptimizationRow[];
+  guardrails: string[];
+};
+
 export type EarlyBacktestHorizonSummary = {
   events: number;
   ready: number;

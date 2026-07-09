@@ -47,6 +47,7 @@ from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
+from app.services.strategy_optimization_lab import StrategyOptimizationLabService
 from app.services.strategy_arena import StrategyArenaArtifactService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
 
@@ -61,6 +62,8 @@ _SIGNAL_FILTER_STUDY_CACHE_LOCK = Lock()
 _SIGNAL_FILTER_STUDY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_CALIBRATION_CACHE_LOCK = Lock()
 _SIGNAL_CALIBRATION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_STRATEGY_OPTIMIZATION_CACHE_LOCK = Lock()
+_STRATEGY_OPTIMIZATION_CACHE: dict[tuple, tuple[float, dict]] = {}
 
 
 @router.get("/health")
@@ -477,6 +480,50 @@ def signal_candidates_calibration_lab(
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_CALIBRATION_CACHE_LOCK:
         _SIGNAL_CALIBRATION_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/strategy-optimization-lab")
+def strategy_optimization_lab(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    stage: str | None = None,
+    timeframe: str | None = None,
+    min_sample: int = 20,
+    limit: int = 80,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 200))
+    normalized_min_sample = max(1, min(min_sample, 200))
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        stage or "",
+        timeframe or "",
+        normalized_min_sample,
+        normalized_limit,
+    )
+    now = monotonic()
+    with _STRATEGY_OPTIMIZATION_CACHE_LOCK:
+        cached = _STRATEGY_OPTIMIZATION_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        StrategyOptimizationLabService(db).summary(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _STRATEGY_OPTIMIZATION_CACHE_LOCK:
+        _STRATEGY_OPTIMIZATION_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

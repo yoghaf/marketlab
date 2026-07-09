@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-13",
+    title: "Strategy Optimization Lab v1",
+    status: "LIVE",
+    area: "Research + UI",
+    summary: "Menambahkan lab read-only untuk menguji kombinasi ATR multiplier, RR, dan timeout dari Signal V2 log.",
+    changes: [
+      "Menambahkan endpoint /api/strategy-optimization-lab untuk grid RR/ATR/timeout berbasis futures signal log.",
+      "ATR memakai ATR14 dari futures 1h yang sudah closed sebelum signal; outcome memakai futures 15m setelah signal.",
+      "Menambahkan halaman Strategy Optimization Lab dengan best model per lane dan top parameter grid.",
+      "Signal Quality Lab dirapikan dengan panel collapsible agar filter/calibration/regime dan sample signal tidak memenuhi halaman utama.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, V3 shadow rule, TP/SL live, threshold live, atau execution."
+    ],
+    impact: "Kita bisa mulai menjawab apakah masalah hasil signal berasal dari SL terlalu dekat, TP terlalu jauh, atau timeout yang belum pas, tanpa mengubah sistem live.",
+    links: [
+      { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-12",
     title: "Top volume rank return analysis",
     status: "LIVE",

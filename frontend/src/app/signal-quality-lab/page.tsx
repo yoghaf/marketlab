@@ -144,7 +144,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             </FilterBar>
           </SectionCard>
 
-          <SectionCard
+          <CollapsiblePanel
             title={`Filter Study ${filterStudy?.filters.timeframe || "1h"} ${labelFor(filterStudy?.filters.stage || "MID_SHORT")}`}
             description="Ranking filter read-only untuk melihat mana yang memperbaiki Signal. Ini belum mengubah rule produksi."
           >
@@ -153,9 +153,9 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             ) : (
               <FilterStudyTable rows={filterStudy?.rows || []} />
             )}
-          </SectionCard>
+          </CollapsiblePanel>
 
-          <SectionCard
+          <CollapsiblePanel
             title="Calibration Lab v1"
             description="Train/validation split untuk Early/Mid Long/Short. Tujuannya mencari filter yang bertahan di validation, bukan mengganti rule live."
           >
@@ -164,9 +164,9 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             ) : (
               <CalibrationLab data={calibrationLab} />
             )}
-          </SectionCard>
+          </CollapsiblePanel>
 
-          <SectionCard
+          <CollapsiblePanel
             title="Market Regime Study"
             description="Split read-only berdasarkan kondisi BTC, ETH, breadth market, dan volatility. Ini menjawab setup bekerja di rezim market apa, tanpa mengubah Signal Factory."
           >
@@ -175,7 +175,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             ) : (
               <MarketRegimeStudy data={marketRegimeStudy} />
             )}
-          </SectionCard>
+          </CollapsiblePanel>
 
           <section className="grid gap-4 xl:grid-cols-2">
             <SectionCard title="Fast read" description="Kesimpulan cepat dari data yang sedang difilter.">
@@ -235,43 +235,80 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             <EvidenceTable rows={data?.evidence_fields || []} />
           </SectionCard>
 
-          <SectionCard title="Quality by stage" description="Ini yang paling penting untuk memperbaiki definisi EARLY/MID berikutnya.">
-            <BucketTable rows={data?.by_stage || []} />
-          </SectionCard>
+          <CollapsiblePanel title="Quality buckets" description="Stage, confidence, timeframe, dan symbol. Buka saat perlu bedah detail lane tertentu." defaultOpen>
+            <div className="space-y-4">
+              <SectionCard title="Quality by stage" description="Ini yang paling penting untuk memperbaiki definisi EARLY/MID berikutnya.">
+                <BucketTable rows={data?.by_stage || []} />
+              </SectionCard>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Quality by confidence">
-              <BucketTable rows={data?.by_confidence || []} compact />
-            </SectionCard>
-            <SectionCard title="Quality by timeframe">
-              <BucketTable rows={data?.by_timeframe || []} compact />
-            </SectionCard>
-          </section>
+              <section className="grid gap-4 xl:grid-cols-2">
+                <SectionCard title="Quality by confidence">
+                  <BucketTable rows={data?.by_confidence || []} compact />
+                </SectionCard>
+                <SectionCard title="Quality by timeframe">
+                  <BucketTable rows={data?.by_timeframe || []} compact />
+                </SectionCard>
+              </section>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Top symbols" description="Symbol yang paling membantu total R.">
-              <BucketTable rows={data?.top_symbols || []} compact />
-            </SectionCard>
-            <SectionCard title="Weak / noisy symbols" description="Symbol yang paling merusak total R sesuai filter.">
-              <BucketTable rows={data?.weak_symbols || []} compact />
-            </SectionCard>
-          </section>
+              <section className="grid gap-4 xl:grid-cols-2">
+                <SectionCard title="Top symbols" description="Symbol yang paling membantu total R.">
+                  <BucketTable rows={data?.top_symbols || []} compact />
+                </SectionCard>
+                <SectionCard title="Weak / noisy symbols" description="Symbol yang paling merusak total R sesuai filter.">
+                  <BucketTable rows={data?.weak_symbols || []} compact />
+                </SectionCard>
+              </section>
+            </div>
+          </CollapsiblePanel>
 
-          <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Best closed signals">
-              <SignalTable rows={data?.best_signals || []} />
-            </SectionCard>
-            <SectionCard title="Worst closed signals">
-              <SignalTable rows={data?.worst_signals || []} />
-            </SectionCard>
-          </section>
+          <CollapsiblePanel title="Signal samples" description="Best/worst/open signal mentah. Ini disembunyikan default supaya halaman tidak terlalu panjang.">
+            <div className="space-y-4">
+              <section className="grid gap-4 xl:grid-cols-2">
+                <SectionCard title="Best closed signals">
+                  <SignalTable rows={data?.best_signals || []} />
+                </SectionCard>
+                <SectionCard title="Worst closed signals">
+                  <SignalTable rows={data?.worst_signals || []} />
+                </SectionCard>
+              </section>
 
-          <SectionCard title="Open signals" description="Masih berjalan, belum dihitung sebagai closed R.">
-            <SignalTable rows={data?.open_signals || []} />
-          </SectionCard>
+              <SectionCard title="Open signals" description="Masih berjalan, belum dihitung sebagai closed R.">
+                <SignalTable rows={data?.open_signals || []} />
+              </SectionCard>
+            </div>
+          </CollapsiblePanel>
         </>
       )}
     </div>
+  );
+}
+
+function CollapsiblePanel({
+  title,
+  description,
+  defaultOpen = false,
+  children
+}: {
+  title: string;
+  description?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="rounded-md border border-line bg-white" open={defaultOpen}>
+      <summary className="cursor-pointer list-none px-4 py-3 hover:bg-field">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-bold text-ink">{title}</div>
+            {description ? <div className="mt-1 text-sm text-slate-600">{description}</div> : null}
+          </div>
+          <span className="rounded border border-line px-2 py-1 text-xs font-semibold text-slate-600">Open / close</span>
+        </div>
+      </summary>
+      <div className="border-t border-line p-4">
+        {children}
+      </div>
+    </details>
   );
 }
 
