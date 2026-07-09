@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.models.market import FuturesKline1m, SignalForwardReturnLog
+from app.models.market import FuturesKline1m, MarketlabActiveUniverse, SignalForwardReturnLog
 from app.services.signal_candidate_performance import (
     FilterStudySpec,
     SignalCandidatePerformanceService,
@@ -242,6 +242,37 @@ def test_quality_lab_reads_nested_forward_log_evidence() -> None:
         assert evidence_by_field["price_return"]["available_count"] == 1
         assert evidence_by_field["price_return"]["tp_median"] == Decimal("1.25")
         assert evidence_by_field["volume_ratio_vs_lookback"]["tp_median"] == Decimal("2.50")
+
+
+def test_quality_lab_groups_return_by_volume_rank_cutoffs() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(_universe("AAAUSDT", 3))
+        db.add(_universe("BBBUSDT", 8))
+        db.add(_universe("CCCUSDT", 18))
+        db.add(_universe("DDDUSDT", 30))
+        db.add(_signal("s1", "AAAUSDT", signal_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("s2", "BBBUSDT", signal_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("s3", "CCCUSDT", signal_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(_signal("s4", "DDDUSDT", signal_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("BBBUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("CCCUSDT", signal_time, signal_time + timedelta(minutes=15), high="105", low="84", close="86"))
+        db.add(_candle("DDDUSDT", signal_time, signal_time + timedelta(minutes=15), high="111", low="99", close="109"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).quality_lab(position_lock=False, min_sample=1)
+
+        by_volume = {row["bucket"]: row for row in payload["by_volume_rank"]}
+        assert by_volume["TOP_5_VOLUME"]["signals_evaluated"] == 1
+        assert by_volume["TOP_5_VOLUME"]["total_r_closed"] == Decimal("1.5")
+        assert by_volume["TOP_10_VOLUME"]["signals_evaluated"] == 2
+        assert by_volume["TOP_20_VOLUME"]["signals_evaluated"] == 3
+        assert by_volume["ALL_VOLUME"]["signals_evaluated"] == 4
+        assert by_volume["ALL_VOLUME"]["total_r_closed"] == Decimal("3.5")
 
 
 def test_filter_study_targets_mid_short_1h_and_ranks_filters() -> None:
@@ -537,6 +568,24 @@ def _signal(
         observation_start_utc=now,
         observation_marker=True,
         evidence=evidence or {},
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _universe(symbol: str, rank: int) -> MarketlabActiveUniverse:
+    now = datetime(2026, 1, 1, 0, 0)
+    return MarketlabActiveUniverse(
+        symbol=symbol,
+        rank=rank,
+        quote_volume=Decimal("1000000") / Decimal(rank),
+        collection_tier="FULL_ACTIVE",
+        is_full_active=True,
+        is_light_watch=False,
+        is_signal_eligible=True,
+        is_active=True,
+        entered_at=now,
+        last_seen_at=now,
         created_at=now,
         updated_at=now,
     )

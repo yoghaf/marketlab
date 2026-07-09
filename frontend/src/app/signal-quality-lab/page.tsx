@@ -18,6 +18,7 @@ import {
   SignalQualityBucket,
   SignalQualityEvidenceField,
   SignalQualityLabResponse,
+  SignalQualityVolumeRankBucket,
   fetchJson,
   fmtNumber,
   fmtTime
@@ -222,6 +223,13 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
               </div>
             </SectionCard>
           </section>
+
+          <SectionCard
+            title="Top volume rank return"
+            description="Membandingkan hasil Signal jika hanya melihat token rank volume futures Top 5, Top 10, Top 20, dan All. Rank berasal dari active universe terbaru."
+          >
+            <VolumeRankTable rows={data?.by_volume_rank || []} />
+          </SectionCard>
 
           <SectionCard title="Evidence TP vs SL" description="Median dan kuartil angka evidence aktual dari signal yang TP dibanding yang SL. Pakai filter di atas untuk bedah stage/timeframe tertentu.">
             <EvidenceTable rows={data?.evidence_fields || []} />
@@ -760,6 +768,54 @@ function BucketTable({ rows, compact = false }: { rows: SignalQualityBucket[]; c
             <tr>
               <td colSpan={compact ? 8 : 9}>
                 <EmptyState title="No quality rows" detail="Belum ada signal sesuai filter ini." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function VolumeRankTable({ rows }: { rows: SignalQualityVolumeRankBucket[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Volume bucket</th>
+            <th>Flag</th>
+            <th>Scope</th>
+            <th>Sample</th>
+            <th>TP / SL / Open</th>
+            <th>Winrate</th>
+            <th>Total R</th>
+            <th>Median R</th>
+            <th>MFE / MAE</th>
+            <th>Top symbol</th>
+            <th>Missing rank</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.bucket}>
+              <td className="font-semibold">{row.label || labelFor(row.bucket)}</td>
+              <td><StatusBadge value={row.quality_flag} /></td>
+              <td className="text-sm text-slate-600">{row.rank_scope}</td>
+              <td>{row.signals_evaluated}</td>
+              <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+              <td>{row.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
+              <td>{fmtSigned(row.total_r_closed)}R</td>
+              <td>{fmtSigned(row.median_r_closed)}R</td>
+              <td>{fmtSigned(row.median_mfe_r)} / {fmtSigned(row.median_mae_r)}</td>
+              <td>{row.top_symbol} ({fmtNumber(row.top_symbol_share_pct)}%)</td>
+              <td>{row.missing_rank_count}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={11}>
+                <EmptyState title="No volume rank rows" detail="Belum ada Signal yang bisa dipetakan ke rank volume." />
               </td>
             </tr>
           )}

@@ -671,6 +671,7 @@ export type SignalDetailResponse = {
 
 export type SignalQualityBucket = SignalPerformanceBucket & {
   bucket: string;
+  label?: string;
   quality_flag: string;
   symbol_count: number;
   top_symbol: string;
@@ -680,6 +681,12 @@ export type SignalQualityBucket = SignalPerformanceBucket & {
   median_mae_r?: string | number | null;
   best_r?: string | number | null;
   worst_r?: string | number | null;
+};
+
+export type SignalQualityVolumeRankBucket = SignalQualityBucket & {
+  rank_cutoff?: number | null;
+  rank_scope: string;
+  missing_rank_count: number;
 };
 
 export type SignalQualityEvidenceField = {
@@ -908,6 +915,7 @@ export type SignalQualityLabResponse = {
   by_stage: SignalQualityBucket[];
   by_confidence: SignalQualityBucket[];
   by_timeframe: SignalQualityBucket[];
+  by_volume_rank: SignalQualityVolumeRankBucket[];
   evidence_fields: SignalQualityEvidenceField[];
   top_symbols: SignalQualityBucket[];
   weak_symbols: SignalQualityBucket[];

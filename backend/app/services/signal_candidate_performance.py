@@ -10,7 +10,7 @@ from typing import Any, Callable
 from sqlalchemy import asc, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.market import FuturesKline1m, FuturesKline15m, SignalForwardReturnLog
+from app.models.market import FuturesKline1m, FuturesKline15m, MarketlabActiveUniverse, SignalForwardReturnLog
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import utcnow
 
@@ -257,6 +257,7 @@ class SignalCandidatePerformanceService:
             "by_stage": _bucket_rows(evaluated, key="stage", min_sample=min_sample),
             "by_confidence": _bucket_rows(evaluated, key="confidence_tier", min_sample=min_sample),
             "by_timeframe": _bucket_rows(evaluated, key="timeframe", min_sample=min_sample),
+            "by_volume_rank": _volume_rank_rows(evaluated, min_sample=min_sample),
             "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
             "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
             "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
@@ -470,6 +471,7 @@ class SignalCandidatePerformanceService:
         tail_candles = self._load_1m_candles(symbols, start_time=tail_start)
         candles = _merge_candle_maps(base_candles, tail_candles)
         evaluated, skipped = self._evaluate(signals, candles, position_lock=position_lock)
+        self._apply_universe_context(evaluated, symbols)
         if with_shadow:
             _apply_v3_shadow(evaluated, min_sample=5)
         latest_candle_time = max(
@@ -477,6 +479,40 @@ class SignalCandidatePerformanceService:
             default=None,
         )
         return evaluated, skipped, latest_candle_time
+
+    def _apply_universe_context(self, items: list[dict[str, Any]], symbols: set[str]) -> None:
+        if not items or not symbols:
+            return
+        rows = self.db.execute(
+            select(
+                MarketlabActiveUniverse.symbol,
+                MarketlabActiveUniverse.rank,
+                MarketlabActiveUniverse.quote_volume,
+                MarketlabActiveUniverse.collection_tier,
+                MarketlabActiveUniverse.is_active,
+            ).where(MarketlabActiveUniverse.symbol.in_(symbols))
+        ).all()
+        universe_by_symbol = {
+            row.symbol: {
+                "universe_rank": row.rank,
+                "universe_quote_volume": row.quote_volume,
+                "collection_tier": row.collection_tier,
+                "is_active": row.is_active,
+            }
+            for row in rows
+        }
+        for item in items:
+            item.update(
+                universe_by_symbol.get(
+                    item.get("symbol"),
+                    {
+                        "universe_rank": None,
+                        "universe_quote_volume": None,
+                        "collection_tier": "UNKNOWN",
+                        "is_active": None,
+                    },
+                )
+            )
 
     def _load_signals(
         self,
@@ -1124,6 +1160,43 @@ def _bucket_rows(
         reverse=reverse,
     )
     return rows[:limit] if limit is not None else rows
+
+
+def _volume_rank_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    specs = [
+        ("TOP_5_VOLUME", "Top 5 volume rank", 5),
+        ("TOP_10_VOLUME", "Top 10 volume rank", 10),
+        ("TOP_20_VOLUME", "Top 20 volume rank", 20),
+        ("ALL_VOLUME", "All ranked/all signals", None),
+    ]
+    missing_rank_count = sum(1 for item in items if _rank_value(item) is None)
+    rows: list[dict[str, Any]] = []
+    for bucket, label, cutoff in specs:
+        if cutoff is None:
+            bucket_items = items
+            scope = "all signals in current filter"
+        else:
+            bucket_items = [item for item in items if (rank := _rank_value(item)) is not None and rank <= cutoff]
+            scope = f"universe_rank <= {cutoff}"
+        row = _bucket_summary(bucket, bucket_items, min_sample=min_sample)
+        row.update(
+            {
+                "label": label,
+                "rank_cutoff": cutoff,
+                "rank_scope": scope,
+                "missing_rank_count": missing_rank_count if cutoff is None else 0,
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _rank_value(item: dict[str, Any]) -> int | None:
+    value = item.get("universe_rank")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _bucket_summary(bucket: str, items: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any]:

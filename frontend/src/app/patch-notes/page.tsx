@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-12",
+    title: "Top volume rank return analysis",
+    status: "LIVE",
+    area: "Research",
+    summary: "Signal Quality Lab sekarang membandingkan return R Signal berdasarkan rank volume futures Top 5, Top 10, Top 20, dan All.",
+    changes: [
+      "Menambahkan agregasi read-only by_volume_rank di endpoint Signal Quality Lab.",
+      "Bucket Top 5/10/20 memakai universe_rank dari active universe terbaru, yang berasal dari ranking volume futures.",
+      "Tabel baru menampilkan sample, TP/SL/open, winrate, total R, median R, MFE/MAE, top symbol, dan missing rank.",
+      "Tidak ada perubahan Signal Factory rule, V3 shadow rule, scanner selection, TP/SL formula, threshold live, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa cek apakah signal lebih sehat di token volume besar atau justru lebih noisy, tanpa mengubah rule produksi.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-11",
     title: "Signal Factory V3 shadow evaluation",
     status: "LIVE",
