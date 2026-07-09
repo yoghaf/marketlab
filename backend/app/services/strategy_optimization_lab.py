@@ -32,22 +32,22 @@ class StrategySignal:
     signal_timestamp: datetime
     direction: str
     stage: str
-    entry: Decimal
+    entry: float
 
 
 @dataclass(frozen=True)
 class StrategyCandle:
     open_time: datetime
     close_time: datetime
-    high: Decimal
-    low: Decimal
-    close: Decimal
+    high: float
+    low: float
+    close: float
 
 
 @dataclass(frozen=True)
 class StrategyContext:
     signal: StrategySignal
-    atr_1h: Decimal | None
+    atr_1h: float | None
     futures_by_timeout: dict[int, list[StrategyCandle]]
 
 
@@ -192,7 +192,7 @@ class StrategyOptimizationLabService:
                     signal_timestamp=_naive(row.signal_timestamp),
                     direction=row.direction,
                     stage=row.stage,
-                    entry=Decimal(row.price_at_signal),
+                    entry=float(row.price_at_signal),
                 )
             )
         return output
@@ -255,10 +255,12 @@ def _grid_row(
 ) -> dict[str, Any]:
     result_counts: Counter[str] = Counter()
     skipped_counts: Counter[str] = Counter()
-    realized_values: list[Decimal] = []
+    realized_values: list[float] = []
     ordered_results: list[dict[str, Any]] = []
     locked_until: dict[str, datetime | None] = {}
     timeout_count = max(1, timeout_minutes // 15)
+    atr_mult_value = float(atr_mult)
+    rr_value = float(rr)
     for context in contexts:
         signal = context.signal
         lock_time = locked_until.get(signal.symbol)
@@ -273,10 +275,10 @@ def _grid_row(
         if not future:
             skipped_counts["MISSING_FORWARD_15M"] += 1
             continue
-        result = _evaluate_timeout_path(signal, future, risk=atr * atr_mult, rr=rr, expected_count=timeout_count)
+        result = _evaluate_timeout_path(signal, future, risk=atr * atr_mult_value, rr=rr_value, expected_count=timeout_count)
         result_counts[result["result_status"]] += 1
         if result["realized_r"] is not None:
-            realized = Decimal(result["realized_r"])
+            realized = float(result["realized_r"])
             realized_values.append(realized)
             ordered_results.append({**result, "symbol": signal.symbol})
         if position_lock:
@@ -287,19 +289,19 @@ def _grid_row(
 
     sample_count = sum(result_counts.values())
     closed_count = len(realized_values)
-    total_r = sum(realized_values, Decimal("0"))
-    avg_r = total_r / Decimal(closed_count) if closed_count else None
-    median_r = Decimal(str(median(realized_values))) if realized_values else None
+    total_r = sum(realized_values)
+    avg_r = total_r / closed_count if closed_count else None
+    median_r = float(median(realized_values)) if realized_values else None
     winrate_denominator = result_counts["TP_HIT"] + result_counts["SL_HIT"]
-    winrate = (Decimal(result_counts["TP_HIT"]) / Decimal(winrate_denominator) * Decimal("100")) if winrate_denominator else None
+    winrate = (result_counts["TP_HIT"] / winrate_denominator * 100) if winrate_denominator else None
     drawdown = _drawdown(ordered_results)
-    positive_timeout = sum(1 for row in ordered_results if row["result_status"] == "TIMEOUT_CLOSE" and Decimal(row["realized_r"]) > 0)
-    negative_timeout = sum(1 for row in ordered_results if row["result_status"] == "TIMEOUT_CLOSE" and Decimal(row["realized_r"]) < 0)
+    positive_timeout = sum(1 for row in ordered_results if row["result_status"] == "TIMEOUT_CLOSE" and float(row["realized_r"]) > 0)
+    negative_timeout = sum(1 for row in ordered_results if row["result_status"] == "TIMEOUT_CLOSE" and float(row["realized_r"]) < 0)
     return {
         "stage": lane_stage,
         "timeframe": lane_timeframe,
-        "atr_mult": atr_mult,
-        "rr": rr,
+        "atr_mult": str(atr_mult),
+        "rr": str(rr),
         "timeout_minutes": timeout_minutes,
         "sample_count": sample_count,
         "closed_count": closed_count,
@@ -353,8 +355,8 @@ def _evaluate_timeout_path(
     signal: StrategySignal,
     future: list[StrategyCandle],
     *,
-    risk: Decimal,
-    rr: Decimal,
+    risk: float,
+    rr: float,
     expected_count: int,
 ) -> dict[str, Any]:
     if risk <= 0:
@@ -377,7 +379,7 @@ def _evaluate_timeout_path(
         if tp_hit:
             return {"result_status": "TP_HIT", "result_time_utc": candle.close_time, "realized_r": rr}
         if sl_hit:
-            return {"result_status": "SL_HIT", "result_time_utc": candle.close_time, "realized_r": Decimal("-1")}
+            return {"result_status": "SL_HIT", "result_time_utc": candle.close_time, "realized_r": -1.0}
     if len(future) < expected_count:
         return {"result_status": "WAITING_DATA", "result_time_utc": None, "realized_r": None}
     latest = future[-1]
@@ -405,19 +407,19 @@ def _future_window(
     return contiguous
 
 
-def _atr_at(candles: list[StrategyCandle], close_times: list[datetime], signal_time: datetime, period: int = 14) -> Decimal | None:
+def _atr_at(candles: list[StrategyCandle], close_times: list[datetime], signal_time: datetime, period: int = 14) -> float | None:
     position = bisect_right(close_times, signal_time) - 1
     if position < period:
         return None
     window = candles[position - period : position + 1]
-    ranges: list[Decimal] = []
+    ranges: list[float] = []
     for index in range(1, len(window)):
         candle = window[index]
         previous = window[index - 1]
         ranges.append(max(candle.high - candle.low, abs(candle.high - previous.close), abs(candle.low - previous.close)))
     if len(ranges) != period:
         return None
-    atr = sum(ranges, Decimal("0")) / Decimal(period)
+    atr = sum(ranges) / period
     return atr if atr > 0 else None
 
 
@@ -430,9 +432,9 @@ def _candle_map(rows: list[Any]) -> dict[str, list[StrategyCandle]]:
             StrategyCandle(
                 open_time=_naive(row.open_time),
                 close_time=_naive(row.close_time),
-                high=Decimal(row.high),
-                low=Decimal(row.low),
-                close=Decimal(row.close),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
             )
         )
     return dict(output)
@@ -455,11 +457,11 @@ def _best_by_lane(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(best, key=_row_sort_key, reverse=True)
 
 
-def _row_sort_key(row: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal, int]:
+def _row_sort_key(row: dict[str, Any]) -> tuple[float, float, float, int]:
     return (
-        Decimal(row["total_r"]),
-        Decimal(row["avg_r"]) if row["avg_r"] is not None else Decimal("-999"),
-        Decimal(row["median_r"]) if row["median_r"] is not None else Decimal("-999"),
+        float(row["total_r"]),
+        float(row["avg_r"]) if row["avg_r"] is not None else -999.0,
+        float(row["median_r"]) if row["median_r"] is not None else -999.0,
         int(row["sample_count"]),
     )
 
@@ -467,14 +469,14 @@ def _row_sort_key(row: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal, int]:
 def _strategy_verdict(
     *,
     sample_count: int,
-    total_r: Decimal,
-    avg_r: Decimal | None,
-    median_r: Decimal | None,
+    total_r: float,
+    avg_r: float | None,
+    median_r: float | None,
     min_sample: int,
 ) -> str:
     if sample_count < min_sample:
         return "INSUFFICIENT_SAMPLE"
-    if total_r > 0 and avg_r is not None and avg_r > Decimal("0.05") and median_r is not None and median_r > Decimal("-0.10"):
+    if total_r > 0 and avg_r is not None and avg_r > 0.05 and median_r is not None and median_r > -0.10:
         return "PROMISING_TIMEOUT_MODEL"
     if total_r > 0 and avg_r is not None and avg_r > 0:
         return "MONITOR_MORE"
@@ -483,13 +485,13 @@ def _strategy_verdict(
     return "MIXED"
 
 
-def _drawdown(rows: list[dict[str, Any]]) -> dict[str, Decimal]:
+def _drawdown(rows: list[dict[str, Any]]) -> dict[str, float]:
     rows = sorted(rows, key=lambda row: row["result_time_utc"] or datetime.min)
-    cumulative = Decimal("0")
-    peak = Decimal("0")
-    max_drawdown = Decimal("0")
+    cumulative = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
     for row in rows:
-        cumulative += Decimal(row["realized_r"])
+        cumulative += float(row["realized_r"])
         peak = max(peak, cumulative)
         max_drawdown = min(max_drawdown, cumulative - peak)
     return {"max_drawdown_r": max_drawdown, "current_drawdown_r": cumulative - peak}

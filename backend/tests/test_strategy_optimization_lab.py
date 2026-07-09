@@ -32,7 +32,7 @@ def test_strategy_optimization_lab_finds_atr_rr_tp_path() -> None:
         row = rows[("1.00", "1.0", 60)]
         assert row["sample_count"] == 1
         assert row["tp_count"] == 1
-        assert row["total_r"] == Decimal("1.0")
+        assert row["total_r"] == 1.0
         assert row["verdict"] == "PROMISING_TIMEOUT_MODEL"
 
 
@@ -61,7 +61,7 @@ def test_strategy_optimization_lab_timeout_close_uses_future_15m_close() -> None
         assert row["tp_count"] == 0
         assert row["sl_count"] == 0
         assert row["positive_timeout_count"] == 1
-        assert row["total_r"] == Decimal("0.5")
+        assert row["total_r"] == 0.5
 
 
 def _add_atr_history(db, symbol: str, signal_time: datetime, *, close: str) -> None:
