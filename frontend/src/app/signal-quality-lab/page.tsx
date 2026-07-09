@@ -370,8 +370,9 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
   }
   const activeLanes = data.lanes.filter((lane) => lane.sample_count > 0);
   const readyCount = data.lanes.filter((lane) => lane.status === "READY_FOR_CALIBRATION").length;
-  const promisingCount = data.top_candidates.filter((row) => row.verdict === "VALIDATION_PROMISING").length;
-  const overfitCount = data.top_candidates.filter((row) => row.verdict === "TRAIN_ONLY_OVERFIT").length;
+  const v3CandidateCount = data.top_candidates.filter((row) => row.promotion_status === "V3_CANDIDATE").length;
+  const monitorCount = data.top_candidates.filter((row) => row.promotion_status === "MONITOR_MORE").length;
+  const overfitCount = data.top_candidates.filter((row) => row.promotion_status === "REJECT_OVERFIT").length;
   const priorityLanes = [
     priorityLane(data, "EARLY_LONG", "15m", "Prioritas 1", "Momentum fresh long 15m yang saat ini validation-nya paling sehat."),
     priorityLane(data, "MID_SHORT", "1h", "Prioritas 2", "Setup short 1h yang masih paling layak dipantau untuk filter lanjutan.")
@@ -379,11 +380,12 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 p-4 md:grid-cols-4">
+      <div className="grid gap-3 p-4 md:grid-cols-5">
         <Insight label="Active lanes" value={`${activeLanes.length}/16`} />
         <Insight label="Ready lanes" value={String(readyCount)} />
-        <Insight label="Promising filters" value={String(promisingCount)} />
-        <Insight label="Train-only overfit" value={String(overfitCount)} />
+        <Insight label="V3 candidates" value={String(v3CandidateCount)} />
+        <Insight label="Monitor more" value={String(monitorCount)} />
+        <Insight label="Reject overfit" value={String(overfitCount)} />
       </div>
       <div className="grid gap-4 px-4 xl:grid-cols-2">
         {priorityLanes.map((lane) => (
@@ -456,6 +458,12 @@ function emptyCalibrationPerf() {
 
 function bestPriorityFilter(lane: SignalCalibrationLane): SignalCalibrationCandidate | undefined {
   return [...lane.filter_candidates].sort((a, b) => {
+    const promotionRank = (value: string) => ({
+      V3_CANDIDATE: 4,
+      MONITOR_MORE: 3,
+      WEAK_FILTER: 2,
+      REJECT_OVERFIT: 1
+    }[value] ?? 0);
     const rank = (value: string) => ({
       VALIDATION_PROMISING: 5,
       REDUCES_DAMAGE: 4,
@@ -464,6 +472,8 @@ function bestPriorityFilter(lane: SignalCalibrationLane): SignalCalibrationCandi
       VALIDATION_WORSE: 1,
       NEED_MORE_SAMPLE: 0
     }[value] ?? -1);
+    const promotionDelta = promotionRank(b.promotion_status) - promotionRank(a.promotion_status);
+    if (promotionDelta) return promotionDelta;
     const rankDelta = rank(b.verdict) - rank(a.verdict);
     if (rankDelta) return rankDelta;
     return Number(b.validation.avg_r_delta_vs_baseline || -999) - Number(a.validation.avg_r_delta_vs_baseline || -999);
@@ -493,10 +503,12 @@ function PriorityCalibrationCard({
         <div className="flex flex-wrap items-center gap-2">
           <div className="font-semibold">Best filter sementara</div>
           <StatusBadge value={best?.verdict || "NO_FILTER"} />
+          {best ? <StatusBadge value={best.promotion_status} /> : null}
         </div>
         {best ? (
-          <div className="mt-2 grid gap-2 md:grid-cols-[1.6fr_1fr_1fr_1.2fr]">
+          <div className="mt-2 grid gap-2 md:grid-cols-[1.4fr_.8fr_1fr_1fr_1.2fr]">
             <Insight label="Filter" value={best.label} />
+            <Insight label="Promotion score" value={`${best.promotion_score}/7`} />
             <Insight label="Validation closed" value={`${best.validation.closed_count} rows`} />
             <Insight label="Validation delta" value={`${fmtSigned(best.validation.avg_r_delta_vs_baseline)}R avg`} />
             <Insight label="Top symbol" value={`${best.validation.top_symbol} (${fmtNumber(best.validation.top_symbol_share_pct)}%)`} />
@@ -504,8 +516,15 @@ function PriorityCalibrationCard({
         ) : (
           <p className="mt-2 text-slate-600">Belum ada filter yang bisa dibaca untuk lane ini.</p>
         )}
+        {best?.promotion_reasons?.length ? (
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-slate-600">
+            {best.promotion_reasons.slice(0, 3).map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        ) : null}
         <p className="mt-3 text-slate-600">
-          Action: pantau lane ini dan validasi filter terbaiknya. Jangan promosi ke rule produksi sampai sample validation lebih tebal dan drawdown tetap masuk akal.
+          Action: {promotionAction(best?.promotion_status)}
         </p>
       </div>
     </div>
@@ -536,6 +555,7 @@ function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[
           <tr>
             <th>Setup</th>
             <th>Filter</th>
+            <th>Promotion</th>
             <th>Verdict</th>
             <th>Train</th>
             <th>Train delta</th>
@@ -557,6 +577,10 @@ function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[
                 <div className="font-semibold">{row.label}</div>
                 <div className="text-xs text-slate-500">{row.expression}</div>
               </td>
+              <td>
+                <StatusBadge value={row.promotion_status} />
+                <div className="mt-1 text-xs text-slate-500">Score {row.promotion_score}/7</div>
+              </td>
               <td><StatusBadge value={row.verdict} /></td>
               <td>{row.train.closed_count} closed, {fmtSigned(row.train.total_r_closed)}R</td>
               <td>{fmtSigned(row.train.avg_r_delta_vs_baseline)}R avg</td>
@@ -564,12 +588,17 @@ function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[
               <td>{fmtSigned(row.validation.avg_r_delta_vs_baseline)}R avg</td>
               <td>{fmtSigned(row.validation.sl_share_delta_vs_baseline)}%</td>
               <td>{row.validation.top_symbol} ({fmtNumber(row.validation.top_symbol_share_pct)}%)</td>
-              <td className="max-w-md text-sm text-slate-600">{row.note}</td>
+              <td className="max-w-md text-sm text-slate-600">
+                <div>{row.note}</div>
+                {row.promotion_reasons?.length ? (
+                  <div className="mt-1 text-xs">{row.promotion_reasons.slice(0, 2).join(" ")}</div>
+                ) : null}
+              </td>
             </tr>
           ))}
           {!rows.length && (
             <tr>
-              <td colSpan={10}>
+              <td colSpan={11}>
                 <EmptyState title="No calibration candidates" detail="Belum ada closed sample cukup untuk train/validation." />
               </td>
             </tr>
@@ -578,6 +607,22 @@ function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[
       </table>
     </div>
   );
+}
+
+function promotionAction(status?: string) {
+  if (status === "V3_CANDIDATE") {
+    return "masuk watch riset V3. Belum mengubah rule live; tunggu sample bertambah dan cek ulang drawdown.";
+  }
+  if (status === "MONITOR_MORE") {
+    return "pantau lagi. Ada bagian yang menarik, tapi sample atau separation belum cukup untuk dipromosikan.";
+  }
+  if (status === "REJECT_OVERFIT") {
+    return "jangan dipakai. Filter bagus di train tapi gagal bertahan di validation.";
+  }
+  if (status === "WEAK_FILTER") {
+    return "lemah untuk saat ini. Jangan dipromosikan sampai validation membaik.";
+  }
+  return "belum ada filter yang layak dibaca untuk lane ini.";
 }
 
 function FilterStudyTable({ rows }: { rows: SignalFilterStudyRow[] }) {

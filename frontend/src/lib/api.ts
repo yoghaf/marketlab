@@ -760,6 +760,9 @@ export type SignalCalibrationCandidate = {
   train: SignalCalibrationPerf;
   validation: SignalCalibrationPerf;
   verdict: string;
+  promotion_status: string;
+  promotion_score: number;
+  promotion_reasons: string[];
   note: string;
 };
 

@@ -1264,7 +1264,7 @@ def _calibration_candidate(
     validation = _calibration_perf(validation_selected, baseline=baseline_validation)
     all_perf = _calibration_perf(all_selected, baseline=baseline_all)
     verdict = _calibration_verdict(train, validation, min_sample=min_sample)
-    return {
+    row = {
         "filter_id": spec.filter_id,
         "label": spec.label,
         "expression": spec.expression,
@@ -1281,6 +1281,8 @@ def _calibration_candidate(
         "verdict": verdict,
         "note": _calibration_note(verdict),
     }
+    row.update(_calibration_promotion_readiness(row, min_sample=min_sample))
+    return row
 
 
 def _apply_filter_spec(items: list[dict[str, Any]], spec: FilterStudySpec) -> tuple[list[dict[str, Any]], int]:
@@ -1399,7 +1401,75 @@ def _calibration_note(verdict: str) -> str:
     return "Belum ada edge separation yang jelas."
 
 
-def _calibration_candidate_sort_key(row: dict[str, Any]) -> tuple[int, Decimal, Decimal, int]:
+def _calibration_promotion_readiness(row: dict[str, Any], *, min_sample: int) -> dict[str, Any]:
+    verdict = str(row.get("verdict") or "")
+    train = row.get("train") or {}
+    validation = row.get("validation") or {}
+    reasons: list[str] = []
+    score = 0
+
+    train_closed = int(train.get("closed_count") or 0)
+    validation_closed = int(validation.get("closed_count") or 0)
+    if train_closed >= min_sample and validation_closed >= min_sample:
+        score += 2
+        reasons.append("Train dan validation punya closed sample minimum.")
+    else:
+        reasons.append("Closed sample train/validation belum cukup.")
+
+    avg_delta = validation.get("avg_r_delta_vs_baseline")
+    if avg_delta is not None and Decimal(avg_delta) >= Decimal("0.05"):
+        score += 2
+        reasons.append("Validation average R membaik minimal +0.05R vs baseline lane.")
+    else:
+        reasons.append("Validation average R belum cukup membaik.")
+
+    total_r = validation.get("total_r_closed")
+    if total_r is not None and Decimal(total_r) > 0:
+        score += 1
+        reasons.append("Validation total R positif.")
+    else:
+        reasons.append("Validation total R belum positif.")
+
+    sl_delta = validation.get("sl_share_delta_vs_baseline")
+    if sl_delta is None or Decimal(sl_delta) <= 0:
+        score += 1
+        reasons.append("SL share validation tidak lebih buruk dari baseline.")
+    else:
+        reasons.append("SL share validation memburuk vs baseline.")
+
+    sample_count = int(validation.get("sample_count") or 0)
+    top_share = validation.get("top_symbol_share_pct")
+    if sample_count < 10 or top_share is None or Decimal(top_share) <= Decimal("35"):
+        score += 1
+        reasons.append("Symbol concentration masih masuk batas riset.")
+    else:
+        reasons.append("Validation terlalu terkonsentrasi di satu symbol.")
+
+    if verdict == "TRAIN_ONLY_OVERFIT":
+        status = "REJECT_OVERFIT"
+    elif train_closed < min_sample or validation_closed < min_sample:
+        status = "MONITOR_MORE"
+    elif verdict == "VALIDATION_PROMISING" and score >= 6:
+        status = "V3_CANDIDATE"
+    elif score >= 4 and verdict in {"VALIDATION_PROMISING", "REDUCES_DAMAGE", "NO_CLEAR_EDGE"}:
+        status = "MONITOR_MORE"
+    else:
+        status = "WEAK_FILTER"
+
+    return {
+        "promotion_status": status,
+        "promotion_score": score,
+        "promotion_reasons": reasons,
+    }
+
+
+def _calibration_candidate_sort_key(row: dict[str, Any]) -> tuple[int, int, Decimal, Decimal, int]:
+    promotion_rank = {
+        "V3_CANDIDATE": 4,
+        "MONITOR_MORE": 3,
+        "WEAK_FILTER": 2,
+        "REJECT_OVERFIT": 1,
+    }
     verdict_rank = {
         "VALIDATION_PROMISING": 5,
         "REDUCES_DAMAGE": 4,
@@ -1413,6 +1483,7 @@ def _calibration_candidate_sort_key(row: dict[str, Any]) -> tuple[int, Decimal, 
     total_r = validation.get("total_r_closed")
     closed_count = int(validation.get("closed_count") or 0)
     return (
+        promotion_rank.get(str(row.get("promotion_status")), 0),
         verdict_rank.get(str(row.get("verdict")), -1),
         Decimal(avg_delta) if avg_delta is not None else Decimal("-999"),
         Decimal(total_r) if total_r is not None else Decimal("-999"),

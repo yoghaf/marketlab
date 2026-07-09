@@ -368,7 +368,7 @@ def test_calibration_lab_splits_train_validation_and_marks_promising_filter() ->
             )
         db.commit()
 
-        payload = SignalCandidatePerformanceService(db).calibration_lab(position_lock=False, min_sample=1, limit=10)
+        payload = SignalCandidatePerformanceService(db).calibration_lab(position_lock=False, min_sample=1, limit=50)
 
         lanes = {lane["lane"]: lane for lane in payload["lanes"]}
         lane = lanes["MID_SHORT_1h"]
@@ -382,7 +382,62 @@ def test_calibration_lab_splits_train_validation_and_marks_promising_filter() ->
         assert funding["validation"]["sl_count"] == 0
         assert funding["validation"]["avg_r_delta_vs_baseline"] > 0
         assert funding["verdict"] == "VALIDATION_PROMISING"
+        assert funding["promotion_status"] == "V3_CANDIDATE"
+        assert funding["promotion_score"] >= 6
+        assert funding["promotion_reasons"]
         assert payload["top_candidates"][0]["stage"] == "MID_SHORT"
+
+
+def test_calibration_lab_rejects_train_only_overfit_filter() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("s1", "AAAUSDT", "82", True),
+            ("s2", "BBBUSDT", "88", True),
+            ("s3", "CCCUSDT", "20", False),
+            ("s4", "DDDUSDT", "25", False),
+            ("s5", "EEEUSDT", "91", False),
+            ("s6", "FFFUSDT", "22", True),
+        ]
+        for index, (signal_id, symbol, funding, is_tp) in enumerate(rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": funding, "volume_ratio_vs_lookback": "1.20"},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).calibration_lab(position_lock=False, min_sample=1, limit=50)
+
+        lane = {lane["lane"]: lane for lane in payload["lanes"]}["MID_SHORT_1h"]
+        funding = {row["filter_id"]: row for row in lane["filter_candidates"]}["FUNDING_GE_75"]
+        assert funding["train"]["tp_count"] == 2
+        assert funding["validation"]["sl_count"] == 1
+        assert funding["verdict"] == "TRAIN_ONLY_OVERFIT"
+        assert funding["promotion_status"] == "REJECT_OVERFIT"
 
 
 def _signal(

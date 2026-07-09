@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-10",
+    title: "Calibration promotion readiness",
+    status: "LIVE",
+    area: "Research",
+    summary: "Signal Quality Lab sekarang membedakan filter V3 candidate, monitor more, reject overfit, dan weak filter.",
+    changes: [
+      "Menambahkan promotion readiness read-only di endpoint calibration-lab.",
+      "Filter baru disebut V3 candidate hanya jika train dan validation cukup, validation membaik, total R positif, SL share tidak memburuk, dan symbol concentration masih wajar.",
+      "Kartu prioritas Early Long 15m dan Mid Short 1h sekarang menampilkan promotion score serta alasan kenapa filter dipantau atau ditolak.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Riset filter jadi lebih disiplin: kita bisa lihat mana yang cukup layak dipantau untuk V3 dan mana yang hanya terlihat bagus karena overfit.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-09",
     title: "Priority signal calibration focus",
     status: "LIVE",
