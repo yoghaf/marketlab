@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-09",
+    version: "LAB-14",
+    title: "Strategy regime split",
+    status: "LIVE",
+    area: "Research + UI",
+    summary: "Strategy Optimization Lab sekarang memecah hasil RR/ATR/timeout berdasarkan BTC, ETH, breadth, dan volatility regime.",
+    changes: [
+      "Menambahkan endpoint /api/strategy-optimization-regime-split untuk melihat apakah setup seperti MID_SHORT 1h bergantung pada market bearish/risk-off.",
+      "Regime split memakai BTCUSDT/ETHUSDT closed futures 1h/4h, breadth active universe, dan average absolute return sebagai volatility proxy.",
+      "Halaman Strategy Optimization Lab menampilkan top helpful/harmful regime bucket untuk parameter yang sedang diuji.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, V3 shadow rule, TP/SL live, threshold live, atau execution."
+    ],
+    impact: "Kita bisa menjawab apakah MID_SHORT/MID_LONG benar-benar kuat atau hanya terbantu kondisi market tertentu sebelum rule dipromosikan.",
+    links: [
+      { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-09",
     version: "LAB-13",
     title: "Strategy Optimization Lab v1",
     status: "LIVE",

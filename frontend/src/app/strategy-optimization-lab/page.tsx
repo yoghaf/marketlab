@@ -6,7 +6,15 @@ import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { StrategyOptimizationResponse, StrategyOptimizationRow, fetchJson, fmtNumber, fmtTime } from "@/lib/api";
+import {
+  StrategyOptimizationResponse,
+  StrategyOptimizationRow,
+  StrategyRegimeSplitResponse,
+  StrategyRegimeSplitRow,
+  fetchJson,
+  fmtNumber,
+  fmtTime
+} from "@/lib/api";
 import { labelFor } from "@/lib/labels";
 
 type StrategyOptimizationSearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -44,6 +52,30 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
   }
 
   const best = data?.summary.best_row;
+  const regimeAtr = firstParam(params.atr_mult) || String(best?.atr_mult || "0.75");
+  const regimeRr = firstParam(params.rr) || String(best?.rr || "2.0");
+  const regimeTimeout = normalizeNumber(firstParam(params.timeout_minutes), Number(best?.timeout_minutes || 480), 15, 1440);
+  let regimeData: StrategyRegimeSplitResponse | null = null;
+  let regimeError: string | null = null;
+  if (data && !error) {
+    const regimeQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      stage,
+      timeframe,
+      atr_mult: regimeAtr,
+      rr: regimeRr,
+      timeout_minutes: String(regimeTimeout),
+      min_sample: String(minSample),
+      limit: "12"
+    });
+    try {
+      regimeData = await fetchJson<StrategyRegimeSplitResponse>(`/api/strategy-optimization-regime-split?${regimeQuery.toString()}`, { revalidateSeconds: 30 });
+    } catch (err) {
+      regimeError = err instanceof Error ? err.message : "Strategy regime split API failed";
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -100,6 +132,35 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
             <OptimizationTable rows={data?.rows || []} />
           </SectionCard>
 
+          <SectionCard
+            title="Regime split"
+            description={`Menguji parameter ${regimeAtr}x ATR / ${regimeRr}R / timeout ${regimeTimeout}m terhadap BTC, ETH, breadth, dan volatility regime.`}
+          >
+            {regimeError ? (
+              <div className="p-4 text-sm text-stale">{regimeError}</div>
+            ) : (
+              <div className="space-y-4 p-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <MetricCard label="Evaluated" value={regimeData?.summary.evaluated_events ?? 0} helper={`${regimeData?.summary.signals_loaded ?? 0} signals loaded`} />
+                  <MetricCard label="Baseline total R" value={`${fmtSigned(regimeData?.summary.baseline.total_r)}R`} helper={`${regimeData?.summary.baseline.tp_count ?? 0}/${regimeData?.summary.baseline.sl_count ?? 0} TP/SL`} tone={Number(regimeData?.summary.baseline.total_r || 0) >= 0 ? "good" : "bad"} />
+                  <MetricCard label="Baseline avg R" value={`${fmtSigned(regimeData?.summary.baseline.avg_r)}R`} helper={`median ${fmtSigned(regimeData?.summary.baseline.median_r)}R`} />
+                  <MetricCard label="Dependency" value={shortDependency(regimeData?.summary.regime_dependency)} helper={regimeData?.summary.regime_dependency || "-"} tone="warn" />
+                  <MetricCard label="Skipped" value={formatSkipped(regimeData?.summary.skipped_counts || {})} helper="Position lock / data gaps" />
+                </div>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold">Top helpful regimes</h3>
+                    <RegimeSplitTable rows={regimeData?.summary.top_helpful_regimes || []} />
+                  </div>
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold">Top harmful regimes</h3>
+                    <RegimeSplitTable rows={regimeData?.summary.top_harmful_regimes || []} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </SectionCard>
+
           <SectionCard title="Guardrails" description="Batasan study ini supaya tidak dibaca sebagai sistem trading live.">
             <div className="grid gap-3 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               {(data?.guardrails || []).map((item) => (
@@ -109,6 +170,51 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function RegimeSplitTable({ rows }: { rows: StrategyRegimeSplitRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table text-sm">
+        <thead>
+          <tr>
+            <th>Regime</th>
+            <th>Sample</th>
+            <th>TP / SL / TO</th>
+            <th>Total R</th>
+            <th>Avg Delta</th>
+            <th>Win Delta</th>
+            <th>SL Delta</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.dimension}-${row.bucket}`}>
+              <td>
+                <div className="font-semibold">{row.bucket}</div>
+                <div className="text-xs text-slate-500">{row.dimension}</div>
+              </td>
+              <td>{row.sample_count}</td>
+              <td>{row.tp_count} / {row.sl_count} / {row.timeout_count}</td>
+              <td>{fmtSigned(row.total_r)}R</td>
+              <td>{fmtSigned(row.avg_r_delta_vs_baseline)}R</td>
+              <td>{fmtSigned(row.winrate_delta_vs_baseline)}%</td>
+              <td>{fmtSigned(row.sl_share_delta_vs_baseline)}%</td>
+              <td><StatusBadge value={row.verdict || "-"} /></td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={8}>
+                <EmptyState title="No regime bucket yet" detail="Belum ada bucket regime yang cukup kuat di filter ini." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -172,6 +278,14 @@ function OptimizationTable({ rows, compact = false }: { rows: StrategyOptimizati
 function formatSkipped(value: Record<string, number>): string {
   const entries = Object.entries(value).filter(([, count]) => count > 0);
   return entries.length ? entries.map(([key, count]) => `${key}: ${count}`).join(", ") : "-";
+}
+
+function shortDependency(value?: string): string {
+  if (!value) return "-";
+  if (value.includes("BEAR_OR_WEAK")) return "Bear/weak dependent";
+  if (value.includes("BULL_OR_STRONG")) return "Bull/strong dependent";
+  if (value.includes("NO_CLEAR")) return "No clear regime";
+  return "Mixed";
 }
 
 function firstParam(value: string | string[] | undefined): string | undefined {

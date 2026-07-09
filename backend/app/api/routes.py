@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from threading import Lock
 from time import monotonic
 
@@ -47,6 +48,7 @@ from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
+from app.services.strategy_optimization_regime_split import StrategyOptimizationRegimeSplitService
 from app.services.strategy_optimization_lab import StrategyOptimizationLabService
 from app.services.strategy_arena import StrategyArenaArtifactService
 from app.services.utils import duration_seconds, json_safe, model_to_dict, utcnow
@@ -64,6 +66,8 @@ _SIGNAL_CALIBRATION_CACHE_LOCK = Lock()
 _SIGNAL_CALIBRATION_CACHE: dict[tuple, tuple[float, dict]] = {}
 _STRATEGY_OPTIMIZATION_CACHE_LOCK = Lock()
 _STRATEGY_OPTIMIZATION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_STRATEGY_REGIME_SPLIT_CACHE_LOCK = Lock()
+_STRATEGY_REGIME_SPLIT_CACHE: dict[tuple, tuple[float, dict]] = {}
 
 
 @router.get("/health")
@@ -515,17 +519,76 @@ def strategy_optimization_lab(
 
     payload = json_safe(
         StrategyOptimizationLabService(db).summary(
-              include_watch_only=include_watch_only,
-              position_lock=position_lock,
-              stage=normalized_stage,
-              timeframe=normalized_timeframe,
-              min_sample=normalized_min_sample,
-              limit=normalized_limit,
-          )
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=normalized_stage,
+            timeframe=normalized_timeframe,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
     )
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _STRATEGY_OPTIMIZATION_CACHE_LOCK:
         _STRATEGY_OPTIMIZATION_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/strategy-optimization-regime-split")
+def strategy_optimization_regime_split(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    stage: str = "MID_SHORT",
+    timeframe: str = "1h",
+    atr_mult: str = "0.75",
+    rr: str = "2.0",
+    timeout_minutes: int = 480,
+    min_sample: int = 20,
+    limit: int = 80,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 200))
+    normalized_min_sample = max(1, min(min_sample, 200))
+    normalized_timeout = max(15, min(timeout_minutes, 1440))
+    try:
+        normalized_atr_mult = Decimal(str(atr_mult))
+        normalized_rr = Decimal(str(rr))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid atr_mult or rr") from exc
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        stage,
+        timeframe,
+        str(normalized_atr_mult),
+        str(normalized_rr),
+        normalized_timeout,
+        normalized_min_sample,
+        normalized_limit,
+    )
+    now = monotonic()
+    with _STRATEGY_REGIME_SPLIT_CACHE_LOCK:
+        cached = _STRATEGY_REGIME_SPLIT_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        StrategyOptimizationRegimeSplitService(db).summary(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            atr_mult=normalized_atr_mult,
+            rr=normalized_rr,
+            timeout_minutes=normalized_timeout,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _STRATEGY_REGIME_SPLIT_CACHE_LOCK:
+        _STRATEGY_REGIME_SPLIT_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

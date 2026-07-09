@@ -435,6 +435,60 @@ export type StrategyOptimizationResponse = {
   guardrails: string[];
 };
 
+export type StrategyRegimeSplitRow = {
+  dimension?: string;
+  bucket?: string;
+  sample_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  timeout_count: number;
+  waiting_count: number;
+  positive_timeout_count: number;
+  negative_timeout_count: number;
+  total_r?: string | number | null;
+  avg_r?: string | number | null;
+  median_r?: string | number | null;
+  winrate_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  max_drawdown_r?: string | number | null;
+  avg_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  verdict?: string;
+  note?: string;
+};
+
+export type StrategyRegimeSplitResponse = {
+  generated_at_utc: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    atr_mult: string;
+    rr: string;
+    timeout_minutes: number;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  summary: {
+    signals_loaded: number;
+    evaluated_events: number;
+    skipped_counts: Record<string, number>;
+    regime_dependency: string;
+    baseline: StrategyRegimeSplitRow;
+    top_helpful_regimes: StrategyRegimeSplitRow[];
+    top_harmful_regimes: StrategyRegimeSplitRow[];
+  };
+  dimensions: Record<string, StrategyRegimeSplitRow[]>;
+  guardrails: string[];
+};
+
 export type EarlyBacktestHorizonSummary = {
   events: number;
   ready: number;
