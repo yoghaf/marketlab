@@ -44,6 +44,13 @@ class StrategyCandle:
     close: Decimal
 
 
+@dataclass(frozen=True)
+class StrategyContext:
+    signal: StrategySignal
+    atr_1h: Decimal | None
+    futures_by_timeout: dict[int, list[StrategyCandle]]
+
+
 class StrategyOptimizationLabService:
     """Read-only RR/ATR/timeout optimizer over logged Signal Factory candidates."""
 
@@ -69,8 +76,9 @@ class StrategyOptimizationLabService:
         )
         symbols = {signal.symbol for signal in signals}
         min_time = min((signal.signal_timestamp for signal in signals), default=None)
-        candles_15m = self._load_15m_candles(symbols, min_time)
-        candles_1h = self._load_1h_candles(symbols)
+        max_time = max((signal.signal_timestamp for signal in signals), default=None)
+        candles_15m = self._load_15m_candles(symbols, min_time, max_time)
+        candles_1h = self._load_1h_candles(symbols, min_time, max_time)
         open_times_15m = {symbol: [candle.open_time for candle in rows] for symbol, rows in candles_15m.items()}
         close_times_1h = {symbol: [candle.close_time for candle in rows] for symbol, rows in candles_1h.items()}
 
@@ -78,6 +86,13 @@ class StrategyOptimizationLabService:
         lanes = _group_by_lane(signals)
         for lane_key, lane_signals in lanes.items():
             lane_stage, lane_timeframe = lane_key
+            lane_contexts = _prepare_contexts(
+                lane_signals,
+                candles_15m=candles_15m,
+                candles_1h=candles_1h,
+                open_times_15m=open_times_15m,
+                close_times_1h=close_times_1h,
+            )
             for atr_mult in ATR_MULTIPLIERS:
                 for rr in RR_VALUES:
                     for timeout in TIMEOUT_MINUTES:
@@ -85,11 +100,7 @@ class StrategyOptimizationLabService:
                             _grid_row(
                                 lane_stage=lane_stage,
                                 lane_timeframe=lane_timeframe,
-                                signals=lane_signals,
-                                candles_15m=candles_15m,
-                                candles_1h=candles_1h,
-                                open_times_15m=open_times_15m,
-                                close_times_1h=close_times_1h,
+                                contexts=lane_contexts,
                                 atr_mult=atr_mult,
                                 rr=rr,
                                 timeout_minutes=timeout,
@@ -190,6 +201,7 @@ class StrategyOptimizationLabService:
         self,
         symbols: set[str],
         start_time: datetime | None,
+        max_signal_time: datetime | None,
     ) -> dict[str, list[StrategyCandle]]:
         if not symbols:
             return {}
@@ -203,9 +215,16 @@ class StrategyOptimizationLabService:
         )
         if start_time:
             query = query.where(FuturesKline15m.open_time >= start_time)
+        if max_signal_time:
+            query = query.where(FuturesKline15m.open_time <= max_signal_time + timedelta(minutes=max(TIMEOUT_MINUTES)))
         return _candle_map(self.db.scalars(query).all())
 
-    def _load_1h_candles(self, symbols: set[str]) -> dict[str, list[StrategyCandle]]:
+    def _load_1h_candles(
+        self,
+        symbols: set[str],
+        min_signal_time: datetime | None,
+        max_signal_time: datetime | None,
+    ) -> dict[str, list[StrategyCandle]]:
         if not symbols:
             return {}
         query = (
@@ -216,6 +235,10 @@ class StrategyOptimizationLabService:
             )
             .order_by(asc(FuturesKline1h.symbol), asc(FuturesKline1h.open_time))
         )
+        if min_signal_time:
+            query = query.where(FuturesKline1h.close_time >= min_signal_time - timedelta(hours=20))
+        if max_signal_time:
+            query = query.where(FuturesKline1h.close_time <= max_signal_time)
         return _candle_map(self.db.scalars(query).all())
 
 
@@ -223,11 +246,7 @@ def _grid_row(
     *,
     lane_stage: str,
     lane_timeframe: str,
-    signals: list[StrategySignal],
-    candles_15m: dict[str, list[StrategyCandle]],
-    candles_1h: dict[str, list[StrategyCandle]],
-    open_times_15m: dict[str, list[datetime]],
-    close_times_1h: dict[str, list[datetime]],
+    contexts: list[StrategyContext],
     atr_mult: Decimal,
     rr: Decimal,
     timeout_minutes: int,
@@ -240,25 +259,17 @@ def _grid_row(
     ordered_results: list[dict[str, Any]] = []
     locked_until: dict[str, datetime | None] = {}
     timeout_count = max(1, timeout_minutes // 15)
-    for signal in signals:
+    for context in contexts:
+        signal = context.signal
         lock_time = locked_until.get(signal.symbol)
         if position_lock and signal.symbol in locked_until and (lock_time is None or signal.signal_timestamp < lock_time):
             skipped_counts["ACTIVE_POSITION_LOCK"] += 1
             continue
-        atr = _atr_at(
-            candles_1h.get(signal.symbol, []),
-            close_times_1h.get(signal.symbol, []),
-            signal.signal_timestamp,
-        )
+        atr = context.atr_1h
         if atr is None:
             skipped_counts["MISSING_ATR_1H"] += 1
             continue
-        future = _future_window(
-            candles_15m.get(signal.symbol, []),
-            open_times_15m.get(signal.symbol, []),
-            signal.signal_timestamp,
-            timeout_count,
-        )
+        future = context.futures_by_timeout.get(timeout_minutes, [])
         if not future:
             skipped_counts["MISSING_FORWARD_15M"] += 1
             continue
@@ -308,6 +319,34 @@ def _grid_row(
         "skipped_counts": dict(skipped_counts),
         "verdict": _strategy_verdict(sample_count=sample_count, total_r=total_r, avg_r=avg_r, median_r=median_r, min_sample=min_sample),
     }
+
+
+def _prepare_contexts(
+    signals: list[StrategySignal],
+    *,
+    candles_15m: dict[str, list[StrategyCandle]],
+    candles_1h: dict[str, list[StrategyCandle]],
+    open_times_15m: dict[str, list[datetime]],
+    close_times_1h: dict[str, list[datetime]],
+) -> list[StrategyContext]:
+    contexts: list[StrategyContext] = []
+    for signal in signals:
+        atr = _atr_at(
+            candles_1h.get(signal.symbol, []),
+            close_times_1h.get(signal.symbol, []),
+            signal.signal_timestamp,
+        )
+        futures_by_timeout = {
+            timeout: _future_window(
+                candles_15m.get(signal.symbol, []),
+                open_times_15m.get(signal.symbol, []),
+                signal.signal_timestamp,
+                max(1, timeout // 15),
+            )
+            for timeout in TIMEOUT_MINUTES
+        }
+        contexts.append(StrategyContext(signal=signal, atr_1h=atr, futures_by_timeout=futures_by_timeout))
+    return contexts
 
 
 def _evaluate_timeout_path(
