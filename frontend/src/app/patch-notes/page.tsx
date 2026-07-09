@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-09",
+    version: "LAB-08",
+    title: "Signal Calibration Lab v1",
+    status: "LIVE",
+    area: "Research",
+    summary: "Signal Quality Lab sekarang punya calibration view train/validation untuk mencari filter Early/Mid yang bertahan di validation.",
+    changes: [
+      "Menambahkan endpoint read-only /api/signal-candidates/calibration-lab.",
+      "Calibration Lab membandingkan baseline vs filter dengan split kronologis 70/30 train dan validation.",
+      "Halaman Signal Quality Lab menampilkan active lane, ready lane, promising filter, overfit train-only, dan top calibration candidates.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa mulai mencari filter yang benar-benar memperbaiki signal berdasarkan data live, tanpa langsung mempromosikan threshold ke produksi.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
     date: "2026-07-08",
     version: "UI-12",
     title: "Realtime signal detail refresh",

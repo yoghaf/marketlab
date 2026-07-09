@@ -319,6 +319,75 @@ class SignalCandidatePerformanceService:
             "rows": rows,
         }
 
+    def calibration_lab(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 5,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe=None,
+            symbol=None,
+            position_lock=position_lock,
+        )
+        lanes: list[dict[str, Any]] = []
+        for stage in ("EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"):
+            for timeframe in ("15m", "1h", "4h", "24h"):
+                lane_items = [
+                    item
+                    for item in evaluated
+                    if item.get("stage") == stage and item.get("timeframe") == timeframe
+                ]
+                lanes.append(
+                    _calibration_lane(
+                        stage=stage,
+                        timeframe=timeframe,
+                        items=lane_items,
+                        min_sample=min_sample,
+                        limit=limit,
+                    )
+                )
+        candidates = [
+            {**candidate, "stage": lane["stage"], "timeframe": lane["timeframe"]}
+            for lane in lanes
+            for candidate in lane["filter_candidates"]
+        ]
+        candidates.sort(key=_calibration_candidate_sort_key, reverse=True)
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "study_scope": "read_only_signal_calibration_train_validation",
+            "method": "Static filter candidates over logged Signal results with 70/30 chronological split.",
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "aggregate": self._aggregate(evaluated, skipped),
+            "lanes": lanes,
+            "top_candidates": candidates[:limit],
+            "guardrails": [
+                "No Signal Factory rule changed.",
+                "No scanner behavior changed.",
+                "No outcome calculation changed.",
+                "No TP/SL formula, order, execution, leverage, or position sizing is created.",
+                "Promising filters are research-only until enough forward validation exists.",
+            ],
+        }
+
     def _evaluated_context(
         self,
         *,
@@ -1123,6 +1192,231 @@ def _sort_filter_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["sample_count"],
         ),
         reverse=True,
+    )
+
+
+def _calibration_lane(
+    *,
+    stage: str,
+    timeframe: str,
+    items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    sorted_items = sorted(
+        items,
+        key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol"))),
+    )
+    if len(sorted_items) >= 2:
+        split_index = max(1, min(len(sorted_items) - 1, int(Decimal(len(sorted_items)) * Decimal("0.70"))))
+    else:
+        split_index = len(sorted_items)
+    train_items = sorted_items[:split_index]
+    validation_items = sorted_items[split_index:]
+    baseline_all = _calibration_perf(sorted_items)
+    baseline_train = _calibration_perf(train_items)
+    baseline_validation = _calibration_perf(validation_items)
+    candidates = [
+        _calibration_candidate(
+            spec=spec,
+            all_items=sorted_items,
+            train_items=train_items,
+            validation_items=validation_items,
+            baseline_all=baseline_all,
+            baseline_train=baseline_train,
+            baseline_validation=baseline_validation,
+            min_sample=min_sample,
+        )
+        for spec in _filter_study_specs()
+    ]
+    candidates.sort(key=_calibration_candidate_sort_key, reverse=True)
+    return {
+        "lane": f"{stage}_{timeframe}",
+        "stage": stage,
+        "timeframe": timeframe,
+        "sample_count": len(sorted_items),
+        "train_count": len(train_items),
+        "validation_count": len(validation_items),
+        "split_method": "chronological_70_30",
+        "status": _calibration_lane_status(baseline_train, baseline_validation, min_sample=min_sample),
+        "baseline_all": baseline_all,
+        "baseline_train": baseline_train,
+        "baseline_validation": baseline_validation,
+        "filter_candidates": candidates[:limit],
+    }
+
+
+def _calibration_candidate(
+    *,
+    spec: FilterStudySpec,
+    all_items: list[dict[str, Any]],
+    train_items: list[dict[str, Any]],
+    validation_items: list[dict[str, Any]],
+    baseline_all: dict[str, Any],
+    baseline_train: dict[str, Any],
+    baseline_validation: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    all_selected, all_missing = _apply_filter_spec(all_items, spec)
+    train_selected, train_missing = _apply_filter_spec(train_items, spec)
+    validation_selected, validation_missing = _apply_filter_spec(validation_items, spec)
+    train = _calibration_perf(train_selected, baseline=baseline_train)
+    validation = _calibration_perf(validation_selected, baseline=baseline_validation)
+    all_perf = _calibration_perf(all_selected, baseline=baseline_all)
+    verdict = _calibration_verdict(train, validation, min_sample=min_sample)
+    return {
+        "filter_id": spec.filter_id,
+        "label": spec.label,
+        "expression": spec.expression,
+        "family": spec.family,
+        "required_fields": list(spec.required_fields),
+        "missing_data": {
+            "all": all_missing,
+            "train": train_missing,
+            "validation": validation_missing,
+        },
+        "all": all_perf,
+        "train": train,
+        "validation": validation,
+        "verdict": verdict,
+        "note": _calibration_note(verdict),
+    }
+
+
+def _apply_filter_spec(items: list[dict[str, Any]], spec: FilterStudySpec) -> tuple[list[dict[str, Any]], int]:
+    passed: list[dict[str, Any]] = []
+    missing = 0
+    for item in items:
+        evidence = item.get("evidence_snapshot") or {}
+        if any(evidence.get(field) is None for field in spec.required_fields):
+            missing += 1
+            continue
+        if spec.predicate(item):
+            passed.append(item)
+    return passed, missing
+
+
+def _calibration_perf(items: list[dict[str, Any]], baseline: dict[str, Any] | None = None) -> dict[str, Any]:
+    perf = _performance_summary(items)
+    closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES and item.get("realized_r") is not None]
+    realized_values = [Decimal(item["realized_r"]) for item in closed]
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    drawdown = _drawdown_summary(items, point_limit=1)
+    row = {
+        **perf,
+        "sample_count": len(items),
+        "median_r_closed": _median_decimal(realized_values),
+        "max_drawdown_r": drawdown["max_drawdown_r"],
+        "sl_share_pct": _sl_share(perf),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_symbol_count,
+        "top_symbol_share_pct": (Decimal(top_symbol_count) / Decimal(len(items)) * Decimal("100")) if items else None,
+    }
+    if baseline is not None:
+        row.update(
+            {
+                "sample_delta_vs_baseline": int(row["sample_count"]) - int(baseline.get("sample_count") or 0),
+                "avg_r_delta_vs_baseline": _decimal_delta(row.get("avg_r_closed"), baseline.get("avg_r_closed")),
+                "total_r_delta_vs_baseline": _decimal_delta(row.get("total_r_closed"), baseline.get("total_r_closed")),
+                "winrate_delta_vs_baseline": _decimal_delta(row.get("winrate_pct"), baseline.get("winrate_pct")),
+                "sl_share_delta_vs_baseline": _decimal_delta(row.get("sl_share_pct"), baseline.get("sl_share_pct")),
+                "max_drawdown_delta_vs_baseline": _decimal_delta(row.get("max_drawdown_r"), baseline.get("max_drawdown_r")),
+            }
+        )
+    return row
+
+
+def _decimal_delta(value: Any, baseline: Any) -> Decimal | None:
+    if value is None or baseline is None:
+        return None
+    return Decimal(value) - Decimal(baseline)
+
+
+def _calibration_lane_status(train: dict[str, Any], validation: dict[str, Any], *, min_sample: int) -> str:
+    if int(train["closed_count"]) < min_sample:
+        return "TRAIN_SAMPLE_TOO_SMALL"
+    if int(validation["closed_count"]) < min_sample:
+        return "VALIDATION_SAMPLE_TOO_SMALL"
+    return "READY_FOR_CALIBRATION"
+
+
+def _calibration_verdict(train: dict[str, Any], validation: dict[str, Any], *, min_sample: int) -> str:
+    if int(train["closed_count"]) < min_sample or int(validation["closed_count"]) < min_sample:
+        return "NEED_MORE_SAMPLE"
+    train_good = _calibration_is_good(train)
+    validation_good = _calibration_is_good(validation)
+    validation_reduces_damage = _calibration_reduces_damage(validation)
+    if train_good and validation_good:
+        return "VALIDATION_PROMISING"
+    if train_good and not validation_good:
+        return "TRAIN_ONLY_OVERFIT"
+    if validation_reduces_damage:
+        return "REDUCES_DAMAGE"
+    if validation.get("avg_r_delta_vs_baseline") is not None and Decimal(validation["avg_r_delta_vs_baseline"]) < 0:
+        return "VALIDATION_WORSE"
+    return "NO_CLEAR_EDGE"
+
+
+def _calibration_is_good(row: dict[str, Any]) -> bool:
+    avg_delta = row.get("avg_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    top_share = row.get("top_symbol_share_pct")
+    concentration_ok = (
+        int(row.get("sample_count") or 0) < 10
+        or top_share is None
+        or Decimal(top_share) <= Decimal("35")
+    )
+    return (
+        avg_delta is not None
+        and Decimal(avg_delta) >= Decimal("0.05")
+        and Decimal(row["total_r_closed"]) > 0
+        and (sl_delta is None or Decimal(sl_delta) <= 0)
+        and concentration_ok
+    )
+
+
+def _calibration_reduces_damage(row: dict[str, Any]) -> bool:
+    avg_delta = row.get("avg_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    return (
+        (avg_delta is not None and Decimal(avg_delta) > 0)
+        or (sl_delta is not None and Decimal(sl_delta) < 0)
+    )
+
+
+def _calibration_note(verdict: str) -> str:
+    if verdict == "VALIDATION_PROMISING":
+        return "Filter membaik di train dan tetap membaik di validation. Kandidat riset, belum rule produksi."
+    if verdict == "TRAIN_ONLY_OVERFIT":
+        return "Bagus di train tapi tidak bertahan di validation. Jangan dipromosikan."
+    if verdict == "REDUCES_DAMAGE":
+        return "Ada tanda mengurangi kerusakan, tapi belum cukup kuat."
+    if verdict == "VALIDATION_WORSE":
+        return "Validation lebih buruk dari baseline."
+    if verdict == "NEED_MORE_SAMPLE":
+        return "Train/validation belum punya closed sample cukup."
+    return "Belum ada edge separation yang jelas."
+
+
+def _calibration_candidate_sort_key(row: dict[str, Any]) -> tuple[int, Decimal, Decimal, int]:
+    verdict_rank = {
+        "VALIDATION_PROMISING": 5,
+        "REDUCES_DAMAGE": 4,
+        "NO_CLEAR_EDGE": 3,
+        "TRAIN_ONLY_OVERFIT": 2,
+        "VALIDATION_WORSE": 1,
+        "NEED_MORE_SAMPLE": 0,
+    }
+    validation = row.get("validation", {})
+    avg_delta = validation.get("avg_r_delta_vs_baseline")
+    total_r = validation.get("total_r_closed")
+    closed_count = int(validation.get("closed_count") or 0)
+    return (
+        verdict_rank.get(str(row.get("verdict")), -1),
+        Decimal(avg_delta) if avg_delta is not None else Decimal("-999"),
+        Decimal(total_r) if total_r is not None else Decimal("-999"),
+        closed_count,
     )
 
 

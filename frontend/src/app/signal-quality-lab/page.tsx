@@ -9,6 +9,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   MarketRegimeStudyBucket,
   MarketRegimeStudyResponse,
+  SignalCalibrationCandidate,
+  SignalCalibrationLabResponse,
+  SignalCalibrationLane,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -47,9 +50,11 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
 
   let data: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
+  let calibrationLab: SignalCalibrationLabResponse | null = null;
   let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
+  let calibrationError: string | null = null;
   let marketRegimeError: string | null = null;
   try {
     data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 20 });
@@ -68,6 +73,17 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
     filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
+  }
+  const calibrationQuery = new URLSearchParams({
+    include_watch_only: String(includeWatchOnly),
+    position_lock: String(positionLock),
+    min_sample: String(minSample),
+    limit: String(limit)
+  });
+  try {
+    calibrationLab = await fetchJson<SignalCalibrationLabResponse>(`/api/signal-candidates/calibration-lab?${calibrationQuery.toString()}`, { revalidateSeconds: 30 });
+  } catch (err) {
+    calibrationError = err instanceof Error ? err.message : "Signal Calibration Lab API failed";
   }
   try {
     marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 30 });
@@ -135,6 +151,17 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
               <div className="p-4 text-sm text-stale">{filterStudyError}</div>
             ) : (
               <FilterStudyTable rows={filterStudy?.rows || []} />
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Calibration Lab v1"
+            description="Train/validation split untuk Early/Mid Long/Short. Tujuannya mencari filter yang bertahan di validation, bukan mengganti rule live."
+          >
+            {calibrationError ? (
+              <div className="p-4 text-sm text-stale">{calibrationError}</div>
+            ) : (
+              <CalibrationLab data={calibrationLab} />
             )}
           </SectionCard>
 
@@ -323,6 +350,109 @@ function MarketRegimeTable({ rows }: { rows: (MarketRegimeStudyBucket & { lane: 
             <tr>
               <td colSpan={9}>
                 <EmptyState title="No regime rows" detail="Belum ada bucket regime yang memenuhi sample minimum." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null }) {
+  if (!data) {
+    return (
+      <EmptyState
+        title="Calibration Lab belum tersedia"
+        detail="Endpoint calibration belum mengembalikan data. Cek backend atau tunggu signal closed bertambah."
+      />
+    );
+  }
+  const activeLanes = data.lanes.filter((lane) => lane.sample_count > 0);
+  const readyCount = data.lanes.filter((lane) => lane.status === "READY_FOR_CALIBRATION").length;
+  const promisingCount = data.top_candidates.filter((row) => row.verdict === "VALIDATION_PROMISING").length;
+  const overfitCount = data.top_candidates.filter((row) => row.verdict === "TRAIN_ONLY_OVERFIT").length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 p-4 md:grid-cols-4">
+        <Insight label="Active lanes" value={`${activeLanes.length}/16`} />
+        <Insight label="Ready lanes" value={String(readyCount)} />
+        <Insight label="Promising filters" value={String(promisingCount)} />
+        <Insight label="Train-only overfit" value={String(overfitCount)} />
+      </div>
+      <div className="grid gap-4 px-4 md:grid-cols-2 xl:grid-cols-4">
+        {activeLanes.slice(0, 8).map((lane) => (
+          <CalibrationLaneCard key={lane.lane} lane={lane} />
+        ))}
+      </div>
+      <div className="border-t border-line">
+        <div className="px-4 py-3 text-sm font-bold">Top calibration candidates</div>
+        <CalibrationCandidateTable rows={data.top_candidates.slice(0, 18)} />
+      </div>
+    </div>
+  );
+}
+
+function CalibrationLaneCard({ lane }: { lane: SignalCalibrationLane }) {
+  return (
+    <div className="rounded border border-line bg-field/50 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="font-bold text-ink">{labelFor(lane.stage)} {lane.timeframe}</div>
+        <StatusBadge value={lane.status} />
+      </div>
+      <div className="mt-3 grid gap-2">
+        <Insight label="Train / validation" value={`${lane.train_count} / ${lane.validation_count}`} />
+        <Insight label="Baseline all" value={`${fmtSigned(lane.baseline_all.total_r_closed)}R`} />
+        <Insight label="Validation avg R" value={`${fmtSigned(lane.baseline_validation.avg_r_closed)}R`} />
+      </div>
+    </div>
+  );
+}
+
+function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Setup</th>
+            <th>Filter</th>
+            <th>Verdict</th>
+            <th>Train</th>
+            <th>Train delta</th>
+            <th>Validation</th>
+            <th>Validation delta</th>
+            <th>SL share delta</th>
+            <th>Top symbol</th>
+            <th>Catatan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.stage}-${row.timeframe}-${row.filter_id}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.stage || "-")}</div>
+                <div className="text-xs text-slate-500">{row.timeframe}</div>
+              </td>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.train.closed_count} closed, {fmtSigned(row.train.total_r_closed)}R</td>
+              <td>{fmtSigned(row.train.avg_r_delta_vs_baseline)}R avg</td>
+              <td>{row.validation.closed_count} closed, {fmtSigned(row.validation.total_r_closed)}R</td>
+              <td>{fmtSigned(row.validation.avg_r_delta_vs_baseline)}R avg</td>
+              <td>{fmtSigned(row.validation.sl_share_delta_vs_baseline)}%</td>
+              <td>{row.validation.top_symbol} ({fmtNumber(row.validation.top_symbol_share_pct)}%)</td>
+              <td className="max-w-md text-sm text-slate-600">{row.note}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={10}>
+                <EmptyState title="No calibration candidates" detail="Belum ada closed sample cukup untuk train/validation." />
               </td>
             </tr>
           )}

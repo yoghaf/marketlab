@@ -727,6 +727,80 @@ export type SignalFilterStudyResponse = {
   rows: SignalFilterStudyRow[];
 };
 
+export type SignalCalibrationPerf = SignalPerformanceBucket & {
+  sample_count: number;
+  median_r_closed?: string | number | null;
+  max_drawdown_r?: string | number | null;
+  sl_share_pct?: string | number | null;
+  top_symbol: string;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+  sample_delta_vs_baseline?: string | number | null;
+  avg_r_delta_vs_baseline?: string | number | null;
+  total_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  max_drawdown_delta_vs_baseline?: string | number | null;
+};
+
+export type SignalCalibrationCandidate = {
+  stage?: string;
+  timeframe?: string;
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  missing_data: {
+    all: number;
+    train: number;
+    validation: number;
+  };
+  all: SignalCalibrationPerf;
+  train: SignalCalibrationPerf;
+  validation: SignalCalibrationPerf;
+  verdict: string;
+  note: string;
+};
+
+export type SignalCalibrationLane = {
+  lane: string;
+  stage: string;
+  timeframe: string;
+  sample_count: number;
+  train_count: number;
+  validation_count: number;
+  split_method: string;
+  status: string;
+  baseline_all: SignalCalibrationPerf;
+  baseline_train: SignalCalibrationPerf;
+  baseline_validation: SignalCalibrationPerf;
+  filter_candidates: SignalCalibrationCandidate[];
+};
+
+export type SignalCalibrationLabResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  method: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  aggregate: SignalPerformanceResponse["aggregate"];
+  lanes: SignalCalibrationLane[];
+  top_candidates: SignalCalibrationCandidate[];
+  guardrails: string[];
+};
+
 export type MarketRegimeStudyBucket = SignalPerformanceBucket & {
   dimension: string;
   bucket: string;

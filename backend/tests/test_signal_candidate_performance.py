@@ -326,6 +326,65 @@ def test_filter_study_targets_mid_short_1h_and_ranks_filters() -> None:
         assert rows["VOLUME_LE_1_50"]["sample_count"] == 2
 
 
+def test_calibration_lab_splits_train_validation_and_marks_promising_filter() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("s1", "AAAUSDT", "82", True),
+            ("s2", "BBBUSDT", "30", False),
+            ("s3", "CCCUSDT", "88", True),
+            ("s4", "DDDUSDT", "35", False),
+            ("s5", "EEEUSDT", "91", True),
+            ("s6", "FFFUSDT", "25", False),
+        ]
+        for index, (signal_id, symbol, funding, is_tp) in enumerate(rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": funding, "volume_ratio_vs_lookback": "1.20"},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).calibration_lab(position_lock=False, min_sample=1, limit=10)
+
+        lanes = {lane["lane"]: lane for lane in payload["lanes"]}
+        lane = lanes["MID_SHORT_1h"]
+        assert lane["status"] == "READY_FOR_CALIBRATION"
+        assert lane["train_count"] == 4
+        assert lane["validation_count"] == 2
+        candidates = {row["filter_id"]: row for row in lane["filter_candidates"]}
+        funding = candidates["FUNDING_GE_75"]
+        assert funding["train"]["tp_count"] == 2
+        assert funding["validation"]["tp_count"] == 1
+        assert funding["validation"]["sl_count"] == 0
+        assert funding["validation"]["avg_r_delta_vs_baseline"] > 0
+        assert funding["verdict"] == "VALIDATION_PROMISING"
+        assert payload["top_candidates"][0]["stage"] == "MID_SHORT"
+
+
 def _signal(
     signal_id: str,
     symbol: str,
