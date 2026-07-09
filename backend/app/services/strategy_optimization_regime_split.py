@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from statistics import median
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.market import FuturesKline1h, FuturesKline4h, MarketlabActiveUniverse
 from app.services.market_regime_study import (
-    MarketRegimeStudyRunner,
+    candle_return_pct,
     classify_breadth,
     classify_return,
     classify_volatility,
@@ -67,7 +70,7 @@ class StrategyOptimizationRegimeSplitService:
             stage=stage,
             timeframe=timeframe,
         )
-        classifier = _RegimeClassifier(self.db)
+        classifier = _RegimeClassifier(self.db, [context.signal.signal_timestamp for context in contexts])
         events, skipped = _evaluated_events(
             contexts,
             classifier=classifier,
@@ -166,41 +169,136 @@ class StrategyOptimizationRegimeSplitService:
 
 
 class _RegimeClassifier:
-    def __init__(self, db: Session) -> None:
-        self.runner = MarketRegimeStudyRunner(db)
+    def __init__(self, db: Session, signal_times: list[datetime]) -> None:
+        self.db = db
         self.cache: dict[datetime, dict[str, Any]] = {}
+        self.min_time = min(signal_times, default=None)
+        self.max_time = max(signal_times, default=None)
+        self.symbol_returns = {
+            "1h": self._load_symbol_returns("1h"),
+            "4h": self._load_symbol_returns("4h"),
+        }
+        self.market_snapshots = {
+            "1h": self._load_market_snapshots("1h"),
+            "4h": self._load_market_snapshots("4h"),
+        }
+        self.market_times = {
+            timeframe: sorted(rows)
+            for timeframe, rows in self.market_snapshots.items()
+        }
 
     def classify(self, signal_time: datetime) -> dict[str, Any]:
         signal_time = signal_time.replace(tzinfo=None)
         if signal_time in self.cache:
             return self.cache[signal_time]
-        btc_1h = self.runner._symbol_return("1h", "BTCUSDT", signal_time)  # noqa: SLF001
-        btc_4h = self.runner._symbol_return("4h", "BTCUSDT", signal_time)  # noqa: SLF001
-        eth_1h = self.runner._symbol_return("1h", "ETHUSDT", signal_time)  # noqa: SLF001
-        eth_4h = self.runner._symbol_return("4h", "ETHUSDT", signal_time)  # noqa: SLF001
-        market_1h = self.runner._market_snapshot("1h", signal_time)  # noqa: SLF001
-        market_4h = self.runner._market_snapshot("4h", signal_time)  # noqa: SLF001
+        btc_1h = self._symbol_return_at("1h", "BTCUSDT", signal_time)
+        btc_4h = self._symbol_return_at("4h", "BTCUSDT", signal_time)
+        eth_1h = self._symbol_return_at("1h", "ETHUSDT", signal_time)
+        eth_4h = self._symbol_return_at("4h", "ETHUSDT", signal_time)
+        market_1h = self._market_snapshot_at("1h", signal_time)
+        market_4h = self._market_snapshot_at("4h", signal_time)
         regimes = {
             "btc_1h_regime": classify_return(btc_1h, bullish_threshold=0.25, bearish_threshold=-0.25),
             "btc_4h_regime": classify_return(btc_4h, bullish_threshold=0.60, bearish_threshold=-0.60),
             "eth_1h_regime": classify_return(eth_1h, bullish_threshold=0.25, bearish_threshold=-0.25),
             "eth_4h_regime": classify_return(eth_4h, bullish_threshold=0.60, bearish_threshold=-0.60),
-            "breadth_1h_regime": classify_breadth(market_1h.up_pct),
-            "breadth_4h_regime": classify_breadth(market_4h.up_pct),
-            "volatility_1h_regime": classify_volatility(market_1h.avg_abs_return_pct, high=1.25, low=0.45),
-            "volatility_4h_regime": classify_volatility(market_4h.avg_abs_return_pct, high=2.50, low=0.90),
+            "breadth_1h_regime": classify_breadth(market_1h.get("up_pct")),
+            "breadth_4h_regime": classify_breadth(market_4h.get("up_pct")),
+            "volatility_1h_regime": classify_volatility(market_1h.get("avg_abs_return_pct"), high=1.25, low=0.45),
+            "volatility_4h_regime": classify_volatility(market_4h.get("avg_abs_return_pct"), high=2.50, low=0.90),
             "btc_return_1h_pct": btc_1h,
             "btc_return_4h_pct": btc_4h,
             "eth_return_1h_pct": eth_1h,
             "eth_return_4h_pct": eth_4h,
-            "breadth_1h_up_pct": market_1h.up_pct,
-            "breadth_4h_up_pct": market_4h.up_pct,
-            "volatility_1h_avg_abs_return_pct": market_1h.avg_abs_return_pct,
-            "volatility_4h_avg_abs_return_pct": market_4h.avg_abs_return_pct,
+            "breadth_1h_up_pct": market_1h.get("up_pct"),
+            "breadth_4h_up_pct": market_4h.get("up_pct"),
+            "volatility_1h_avg_abs_return_pct": market_1h.get("avg_abs_return_pct"),
+            "volatility_4h_avg_abs_return_pct": market_4h.get("avg_abs_return_pct"),
         }
         regimes["combined_regime_1h"] = combined_regime(regimes["btc_1h_regime"], regimes["breadth_1h_regime"])
         self.cache[signal_time] = regimes
         return regimes
+
+    def _load_symbol_returns(self, timeframe: str) -> dict[str, list[tuple[datetime, float | None]]]:
+        if self.min_time is None or self.max_time is None:
+            return {}
+        model = FuturesKline1h if timeframe == "1h" else FuturesKline4h
+        lookback = timedelta(hours=2 if timeframe == "1h" else 8)
+        rows = self.db.execute(
+            select(model.symbol, model.close_time, model.open, model.close)
+            .where(
+                model.symbol.in_(["BTCUSDT", "ETHUSDT"]),
+                model.aggregation_status == "AGG_READY",
+                model.close_time >= self.min_time - lookback,
+                model.close_time <= self.max_time,
+                model.open.is_not(None),
+                model.close.is_not(None),
+            )
+            .order_by(model.symbol.asc(), model.close_time.asc())
+        ).all()
+        output: dict[str, list[tuple[datetime, float | None]]] = defaultdict(list)
+        for row in rows:
+            item = row._mapping
+            output[item["symbol"]].append((_naive(item["close_time"]), candle_return_pct(item["open"], item["close"])))
+        return dict(output)
+
+    def _load_market_snapshots(self, timeframe: str) -> dict[datetime, dict[str, float | int | None]]:
+        if self.min_time is None or self.max_time is None:
+            return {}
+        active_symbols = set(
+            self.db.scalars(select(MarketlabActiveUniverse.symbol).where(MarketlabActiveUniverse.is_active.is_(True))).all()
+        )
+        if not active_symbols:
+            return {}
+        model = FuturesKline1h if timeframe == "1h" else FuturesKline4h
+        lookback = timedelta(hours=2 if timeframe == "1h" else 8)
+        rows = self.db.execute(
+            select(model.close_time, model.open, model.close)
+            .where(
+                model.symbol.in_(active_symbols),
+                model.aggregation_status == "AGG_READY",
+                model.close_time >= self.min_time - lookback,
+                model.close_time <= self.max_time,
+                model.open.is_not(None),
+                model.close.is_not(None),
+            )
+            .order_by(model.close_time.asc())
+        ).all()
+        returns_by_time: dict[datetime, list[float]] = defaultdict(list)
+        for row in rows:
+            item = row._mapping
+            value = candle_return_pct(item["open"], item["close"])
+            if value is not None:
+                returns_by_time[_naive(item["close_time"])].append(value)
+        snapshots = {}
+        for close_time, values in returns_by_time.items():
+            up_count = sum(1 for value in values if value > 0)
+            down_count = sum(1 for value in values if value < 0)
+            snapshots[close_time] = {
+                "symbol_count": len(values),
+                "up_pct": (up_count / len(values) * 100) if values else None,
+                "down_pct": (down_count / len(values) * 100) if values else None,
+                "avg_return_pct": (sum(values) / len(values)) if values else None,
+                "avg_abs_return_pct": (sum(abs(value) for value in values) / len(values)) if values else None,
+            }
+        return snapshots
+
+    def _symbol_return_at(self, timeframe: str, symbol: str, signal_time: datetime) -> float | None:
+        rows = self.symbol_returns.get(timeframe, {}).get(symbol, [])
+        if not rows:
+            return None
+        times = [row[0] for row in rows]
+        index = bisect_right(times, signal_time) - 1
+        return rows[index][1] if index >= 0 else None
+
+    def _market_snapshot_at(self, timeframe: str, signal_time: datetime) -> dict[str, float | int | None]:
+        times = self.market_times.get(timeframe, [])
+        if not times:
+            return {}
+        index = bisect_right(times, signal_time) - 1
+        if index < 0:
+            return {}
+        return self.market_snapshots.get(timeframe, {}).get(times[index], {})
 
 
 def _evaluated_events(
@@ -380,3 +478,7 @@ def _dependency_summary(stage: str, helpful: list[dict[str, Any]]) -> str:
         if "RISK_OFF" in bucket or "BEARISH" in bucket or "BREADTH_WEAK" in bucket:
             return f"LONG_EDGE_NOT_ONLY_BULLISH_BUT_VERIFY via {dimension}={bucket}"
     return f"REGIME_DEPENDENCY_MIXED via {dimension}={bucket}"
+
+
+def _naive(value: datetime) -> datetime:
+    return value.replace(tzinfo=None)
