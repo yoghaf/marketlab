@@ -163,7 +163,15 @@ class StrategyOptimizationLabService:
         timeframe: str | None,
     ) -> list[StrategySignal]:
         query = (
-            select(SignalForwardReturnLog)
+            select(
+                SignalForwardReturnLog.signal_id,
+                SignalForwardReturnLog.symbol,
+                SignalForwardReturnLog.timeframe,
+                SignalForwardReturnLog.signal_timestamp,
+                SignalForwardReturnLog.direction,
+                SignalForwardReturnLog.stage,
+                SignalForwardReturnLog.price_at_signal,
+            )
             .where(
                 SignalForwardReturnLog.candidate_status == "SIGNAL_CANDIDATE",
                 SignalForwardReturnLog.observation_epoch == epoch,
@@ -181,18 +189,19 @@ class StrategyOptimizationLabService:
         if timeframe:
             query = query.where(SignalForwardReturnLog.timeframe == timeframe)
         output: list[StrategySignal] = []
-        for row in self.db.scalars(query).all():
-            if row.direction not in {"LONG", "SHORT"}:
+        for row in self.db.execute(query).all():
+            item = row._mapping
+            if item["direction"] not in {"LONG", "SHORT"}:
                 continue
             output.append(
                 StrategySignal(
-                    signal_id=row.signal_id,
-                    symbol=row.symbol,
-                    timeframe=row.timeframe,
-                    signal_timestamp=_naive(row.signal_timestamp),
-                    direction=row.direction,
-                    stage=row.stage,
-                    entry=float(row.price_at_signal),
+                    signal_id=item["signal_id"],
+                    symbol=item["symbol"],
+                    timeframe=item["timeframe"],
+                    signal_timestamp=_naive(item["signal_timestamp"]),
+                    direction=item["direction"],
+                    stage=item["stage"],
+                    entry=float(item["price_at_signal"]),
                 )
             )
         return output
@@ -206,7 +215,14 @@ class StrategyOptimizationLabService:
         if not symbols:
             return {}
         query = (
-            select(FuturesKline15m)
+            select(
+                FuturesKline15m.symbol,
+                FuturesKline15m.open_time,
+                FuturesKline15m.close_time,
+                FuturesKline15m.high,
+                FuturesKline15m.low,
+                FuturesKline15m.close,
+            )
             .where(
                 FuturesKline15m.symbol.in_(symbols),
                 FuturesKline15m.aggregation_status == "AGG_READY",
@@ -217,7 +233,7 @@ class StrategyOptimizationLabService:
             query = query.where(FuturesKline15m.open_time >= start_time)
         if max_signal_time:
             query = query.where(FuturesKline15m.open_time <= max_signal_time + timedelta(minutes=max(TIMEOUT_MINUTES)))
-        return _candle_map(self.db.scalars(query).all())
+        return _candle_map(self.db.execute(query).all())
 
     def _load_1h_candles(
         self,
@@ -228,7 +244,14 @@ class StrategyOptimizationLabService:
         if not symbols:
             return {}
         query = (
-            select(FuturesKline1h)
+            select(
+                FuturesKline1h.symbol,
+                FuturesKline1h.open_time,
+                FuturesKline1h.close_time,
+                FuturesKline1h.high,
+                FuturesKline1h.low,
+                FuturesKline1h.close,
+            )
             .where(
                 FuturesKline1h.symbol.in_(symbols),
                 FuturesKline1h.aggregation_status == "AGG_READY",
@@ -239,7 +262,7 @@ class StrategyOptimizationLabService:
             query = query.where(FuturesKline1h.close_time >= min_signal_time - timedelta(hours=20))
         if max_signal_time:
             query = query.where(FuturesKline1h.close_time <= max_signal_time)
-        return _candle_map(self.db.scalars(query).all())
+        return _candle_map(self.db.execute(query).all())
 
 
 def _grid_row(
@@ -426,15 +449,16 @@ def _atr_at(candles: list[StrategyCandle], close_times: list[datetime], signal_t
 def _candle_map(rows: list[Any]) -> dict[str, list[StrategyCandle]]:
     output: dict[str, list[StrategyCandle]] = defaultdict(list)
     for row in rows:
-        if row.high is None or row.low is None or row.close is None:
+        item = row._mapping if hasattr(row, "_mapping") else row
+        if item["high"] is None or item["low"] is None or item["close"] is None:
             continue
-        output[row.symbol].append(
+        output[item["symbol"]].append(
             StrategyCandle(
-                open_time=_naive(row.open_time),
-                close_time=_naive(row.close_time),
-                high=float(row.high),
-                low=float(row.low),
-                close=float(row.close),
+                open_time=_naive(item["open_time"]),
+                close_time=_naive(item["close_time"]),
+                high=float(item["high"]),
+                low=float(item["low"]),
+                close=float(item["close"]),
             )
         )
     return dict(output)
