@@ -487,19 +487,21 @@ def signal_candidates_calibration_lab(
 def strategy_optimization_lab(
     include_watch_only: bool = False,
     position_lock: bool = True,
-    stage: str | None = None,
-    timeframe: str | None = None,
+    stage: str | None = "MID_SHORT",
+    timeframe: str | None = "1h",
     min_sample: int = 20,
     limit: int = 80,
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 200))
     normalized_min_sample = max(1, min(min_sample, 200))
+    normalized_stage = None if stage in {"", "ALL"} else stage
+    normalized_timeframe = None if timeframe in {"", "ALL"} else timeframe
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
-        stage or "",
-        timeframe or "",
+        normalized_stage or "",
+        normalized_timeframe or "",
         normalized_min_sample,
         normalized_limit,
     )
@@ -513,13 +515,13 @@ def strategy_optimization_lab(
 
     payload = json_safe(
         StrategyOptimizationLabService(db).summary(
-            include_watch_only=include_watch_only,
-            position_lock=position_lock,
-            stage=stage,
-            timeframe=timeframe,
-            min_sample=normalized_min_sample,
-            limit=normalized_limit,
-        )
+              include_watch_only=include_watch_only,
+              position_lock=position_lock,
+              stage=normalized_stage,
+              timeframe=normalized_timeframe,
+              min_sample=normalized_min_sample,
+              limit=normalized_limit,
+          )
     )
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _STRATEGY_OPTIMIZATION_CACHE_LOCK:

@@ -13,13 +13,15 @@ type StrategyOptimizationSearchParams = Promise<Record<string, string | string[]
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
 const timeframes = ["15m", "1h", "4h", "24h"];
+const defaultStage = "MID_SHORT";
+const defaultTimeframe = "1h";
 
 export const dynamic = "force-dynamic";
 
 export default async function StrategyOptimizationLabPage({ searchParams }: { searchParams: StrategyOptimizationSearchParams }) {
   const params = await searchParams;
-  const stage = firstParam(params.stage);
-  const timeframe = firstParam(params.timeframe);
+  const stage = firstParam(params.stage) || defaultStage;
+  const timeframe = firstParam(params.timeframe) || defaultTimeframe;
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
   const minSample = normalizeNumber(firstParam(params.min_sample), 20, 1, 200);
@@ -72,8 +74,8 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
 
           <SectionCard title="Optimization controls" description="Filter ini hanya mengubah tampilan study. Tidak mengubah Signal Factory, scanner, atau TP/SL live.">
             <FilterBar>
-              <SelectFilter label="Stage" name="stage" value={stage || ""} options={stages} emptyLabel="All stage" />
-              <SelectFilter label="Timeframe" name="timeframe" value={timeframe || ""} options={timeframes} emptyLabel="All timeframe" />
+              <SelectFilter label="Stage" name="stage" value={stage} options={stages} emptyLabel="Default MID_SHORT" />
+              <SelectFilter label="Timeframe" name="timeframe" value={timeframe} options={timeframes} emptyLabel="Default 1h" />
               <label className="grid gap-1 text-sm">
                 <span className="font-semibold text-slate-600">Min sample</span>
                 <input className="rounded border border-line px-3 py-2" min={1} max={200} name="min_sample" type="number" defaultValue={minSample} />
