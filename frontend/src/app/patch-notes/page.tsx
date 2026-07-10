@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-25",
+    title: "Signal History Snapshot Read Model",
+    status: "LIVE",
+    area: "UI/API stability",
+    summary: "Signal History default sekarang membaca snapshot yang dibuat research-loop, bukan menghitung ulang semua posisi paper saat halaman dibuka.",
+    changes: [
+      "Menambahkan artifact Signal Performance berisi closed-only paper result default untuk halaman Signal History.",
+      "Menambahkan artifact Forward Integrity berisi audit open/waiting/stale default.",
+      "Research-loop sekarang membuat snapshot ini setelah signal forward return logger berjalan.",
+      "Endpoint Signal History otomatis memakai snapshot untuk filter default; filter audit khusus tetap bisa fallback ke live compute.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Cold-load Signal History tidak lagi perlu komputasi berat setiap dibuka, sehingga risiko 500/504 dan halaman kosong turun signifikan.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-24",
     title: "Scanner API Timeout Guard",
     status: "LIVE",

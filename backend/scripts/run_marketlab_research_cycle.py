@@ -18,6 +18,7 @@ LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_RESEARCH_LOCK_STALE_SECONDS", "720
 CORE_STEPS = [
     ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
+    ("signal_performance_snapshot", "run_signal_performance_snapshot.py"),
     ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
 ]
 

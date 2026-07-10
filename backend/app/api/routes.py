@@ -47,6 +47,7 @@ from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArti
 from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
+from app.services.signal_performance_snapshot import SignalPerformanceSnapshotService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_optimization_artifacts import StrategyOptimizationArtifactService
 from app.services.strategy_optimization_regime_split import StrategyOptimizationRegimeSplitService
@@ -316,6 +317,18 @@ def signal_candidates_performance_live(
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 500))
+    artifact_payload = _default_signal_performance_snapshot(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=stage,
+        timeframe=timeframe,
+        symbol=symbol,
+        result_status=result_status,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -380,6 +393,16 @@ def signal_forward_integrity(
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 200))
+    artifact_payload = _default_forward_integrity_snapshot(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=stage,
+        timeframe=timeframe,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -1228,6 +1251,42 @@ def _active_universe_counts(db: Session) -> dict[str, int]:
         "light_watch_count": sum(1 for row in rows if row.collection_tier == "LIGHT_WATCH"),
         "signal_eligible_count": sum(1 for row in rows if row.is_signal_eligible),
     }
+
+
+def _default_signal_performance_snapshot(
+    *,
+    include_watch_only: bool,
+    position_lock: bool,
+    stage: str | None,
+    timeframe: str | None,
+    symbol: str | None,
+    result_status: str | None,
+    limit: int,
+) -> dict | None:
+    if include_watch_only or not position_lock or stage or timeframe or symbol:
+        return None
+    if (result_status or "").lower() != "closed":
+        return None
+    try:
+        return SignalPerformanceSnapshotService().performance(limit=limit)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _default_forward_integrity_snapshot(
+    *,
+    include_watch_only: bool,
+    position_lock: bool,
+    stage: str | None,
+    timeframe: str | None,
+    limit: int,
+) -> dict | None:
+    if include_watch_only or not position_lock or stage or timeframe:
+        return None
+    try:
+        return SignalPerformanceSnapshotService().forward_integrity(limit=limit)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 def _normalize_health_status(status: str | None) -> str:
