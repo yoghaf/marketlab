@@ -19,6 +19,7 @@ from app.models.market import (
     FuturesOpenInterest,
     MarketlabActiveUniverse,
     MarketlabUniverseSnapshot,
+    SignalForwardReturnLog,
     Spot24hTicker,
     SpotBookTicker,
     SpotKline1m,
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 KLINE_INTERVAL_MS = 60_000
 KLINE_REQUEST_LIMIT = 500
 KLINE_GAP_LOOKBACK_MINUTES = 180
+SIGNAL_KLINE_LOOKBACK_HOURS = 168
 
 
 class MarketCollector:
@@ -257,6 +259,7 @@ class MarketCollector:
                 start_time_ms=start_ms,
                 end_time_ms=end_ms,
             ),
+            self._futures_kline_symbols,
         )
 
     async def collect_spot_klines_1m(self) -> CollectorRun:
@@ -573,6 +576,43 @@ class MarketCollector:
             )
             .order_by(MarketlabActiveUniverse.rank.asc())
         ).all()
+
+    def _futures_kline_symbols(self) -> list[str]:
+        active = self._active_symbols()
+        signal_symbols = self._recent_signal_symbols()
+        seen: set[str] = set()
+        symbols: list[str] = []
+        for symbol in [*active, *signal_symbols]:
+            if symbol not in seen:
+                symbols.append(symbol)
+                seen.add(symbol)
+        return symbols
+
+    def _recent_signal_symbols(self) -> list[str]:
+        cutoff = utcnow() - timedelta(hours=SIGNAL_KLINE_LOOKBACK_HOURS)
+        rows = self.db.scalars(
+            select(SignalForwardReturnLog.symbol)
+            .where(
+                SignalForwardReturnLog.candidate_status == "SIGNAL_CANDIDATE",
+                SignalForwardReturnLog.signal_timestamp >= cutoff,
+                SignalForwardReturnLog.price_at_signal.is_not(None),
+                SignalForwardReturnLog.sl_ref.is_not(None),
+                SignalForwardReturnLog.tp_ref.is_not(None),
+            )
+            .distinct()
+        ).all()
+        symbols = sorted({symbol for symbol in rows if symbol})
+        tradable = set(
+            self.db.scalars(
+                select(BinanceFuturesSymbol.symbol).where(
+                    BinanceFuturesSymbol.status == "TRADING",
+                    BinanceFuturesSymbol.contract_type == "PERPETUAL",
+                )
+            ).all()
+        )
+        if tradable:
+            symbols = [symbol for symbol in symbols if symbol in tradable]
+        return symbols
 
     def _active_spot_symbols(self) -> list[str]:
         active = self._active_symbols()

@@ -126,6 +126,7 @@ const styles: Record<string, string> = {
   BOTH_HIT_SAME_CANDLE: "border-warmup text-warmup bg-amber-50",
   EXPIRED: "border-line text-slate-700 bg-slate-50",
   UNKNOWN_FORWARD_DATA: "border-warmup text-warmup bg-amber-50",
+  STALE_FORWARD_DATA: "border-stale text-stale bg-red-50",
   CANNOT_EVALUATE: "border-stale text-stale bg-red-50",
   CANNOT_CREATE_EVENT_MISSING_REFERENCE: "border-stale text-stale bg-red-50",
   MISSING_ARTIFACT: "border-stale text-stale bg-red-50",

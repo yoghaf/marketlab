@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable
 
-from sqlalchemy import asc, or_, select
+from sqlalchemy import asc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.market import FuturesKline1m, FuturesKline15m, MarketlabActiveUniverse, SignalForwardReturnLog
@@ -18,6 +18,7 @@ from app.services.utils import utcnow
 COMPLETED_OUTCOMES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE"}
 LIVE_STRATEGY_VERSION = "SIGNAL_FACTORY_V2_LIVE"
 SHADOW_STRATEGY_VERSION = "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION"
+FORWARD_DATA_STALE_MINUTES = 30
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
@@ -144,10 +145,16 @@ class SignalCandidatePerformanceService:
         )
         tail_candles = self._load_1m_candles(symbols, start_time=latest_base_time or signal_time)
         candles = _merge_candle_maps(base_candles, tail_candles)
+        latest_candle_time = max(
+            (candle.close_time for rows in candles.values() for candle in rows),
+            default=None,
+        )
+        global_latest_candle_time = self._global_latest_candle_time()
         item = self._evaluate_signal(
             signal,
             candles.get(signal.symbol, []),
             [candle.open_time for candle in candles.get(signal.symbol, [])],
+            global_latest_candle_time=global_latest_candle_time or latest_candle_time,
         )
         item.update(
             _v3_shadow_result_for_item(
@@ -160,10 +167,6 @@ class SignalCandidatePerformanceService:
                     limit=100,
                 ),
             )
-        )
-        latest_candle_time = max(
-            (candle.close_time for rows in candles.values() for candle in rows),
-            default=None,
         )
         return {
             "generated_at_utc": utcnow(),
@@ -640,15 +643,29 @@ class SignalCandidatePerformanceService:
         tail_start = latest_base_time or min_signal_time
         tail_candles = self._load_1m_candles(symbols, start_time=tail_start)
         candles = _merge_candle_maps(base_candles, tail_candles)
-        evaluated, skipped = self._evaluate(signals, candles, position_lock=position_lock)
-        self._apply_universe_context(evaluated, symbols)
-        if with_shadow:
-            _apply_v3_shadow(evaluated, min_sample=5)
         latest_candle_time = max(
             (candle.close_time for rows in candles.values() for candle in rows),
             default=None,
         )
+        global_latest_candle_time = self._global_latest_candle_time()
+        evaluated, skipped = self._evaluate(
+            signals,
+            candles,
+            position_lock=position_lock,
+            global_latest_candle_time=global_latest_candle_time or latest_candle_time,
+        )
+        self._apply_universe_context(evaluated, symbols)
+        if with_shadow:
+            _apply_v3_shadow(evaluated, min_sample=5)
         return evaluated, skipped, latest_candle_time
+
+    def _global_latest_candle_time(self) -> datetime | None:
+        latest_15m = self.db.scalar(
+            select(func.max(FuturesKline15m.close_time)).where(FuturesKline15m.aggregation_status == "AGG_READY")
+        )
+        latest_1m = self.db.scalar(select(func.max(FuturesKline1m.close_time)))
+        values = [_naive(value) for value in (latest_15m, latest_1m) if value is not None]
+        return max(values, default=None)
 
     def _apply_universe_context(self, items: list[dict[str, Any]], symbols: set[str]) -> None:
         if not items or not symbols:
@@ -794,6 +811,7 @@ class SignalCandidatePerformanceService:
         candles: dict[str, list[PerfCandle]],
         *,
         position_lock: bool,
+        global_latest_candle_time: datetime | None,
     ) -> tuple[list[dict[str, Any]], Counter[str]]:
         items: list[dict[str, Any]] = []
         skipped: Counter[str] = Counter()
@@ -809,6 +827,7 @@ class SignalCandidatePerformanceService:
                 signal,
                 candles.get(signal.symbol, []),
                 open_times_by_symbol.get(signal.symbol, []),
+                global_latest_candle_time=global_latest_candle_time,
             )
             items.append(item)
             if position_lock:
@@ -823,6 +842,8 @@ class SignalCandidatePerformanceService:
         signal: SignalForwardReturnLog,
         candles: list[PerfCandle],
         open_times: list[datetime],
+        *,
+        global_latest_candle_time: datetime | None = None,
     ) -> dict[str, Any]:
         entry = Decimal(signal.price_at_signal)
         stop = Decimal(signal.sl_ref)
@@ -870,6 +891,12 @@ class SignalCandidatePerformanceService:
             "mfe_r": None,
             "mae_r": None,
             "candles_seen": 0,
+            "stale_forward_data": False,
+            "stale_reason": None,
+            "latest_symbol_candle_time": None,
+            "latest_symbol_candle_time_wib": None,
+            "global_latest_evaluation_candle_time": global_latest_candle_time,
+            "global_latest_evaluation_candle_time_wib": _wib_string(global_latest_candle_time),
             "not_live_signal": True,
             "not_execution_instruction": True,
         }
@@ -935,6 +962,25 @@ class SignalCandidatePerformanceService:
 
         latest = future[-1]
         unrealized = (latest.close - entry) / risk if direction == "LONG" else (entry - latest.close) / risk
+        if global_latest_candle_time is not None:
+            stale_gap = _naive(global_latest_candle_time) - _naive(latest.close_time)
+            if stale_gap > timedelta(minutes=FORWARD_DATA_STALE_MINUTES):
+                return {
+                    **base,
+                    "result_status": "STALE_FORWARD_DATA",
+                    "result_time_utc": latest.close_time,
+                    "result_time_wib": _wib_string(latest.close_time),
+                    "exit_price": latest.close,
+                    "unrealized_r": unrealized,
+                    "mfe_r": mfe,
+                    "mae_r": mae,
+                    "candles_seen": len(future),
+                    "stale_forward_data": True,
+                    "stale_reason": "Symbol futures candles are behind the global evaluation candle.",
+                    "stale_gap_minutes": Decimal(stale_gap.total_seconds()) / Decimal("60"),
+                    "latest_symbol_candle_time": latest.close_time,
+                    "latest_symbol_candle_time_wib": _wib_string(latest.close_time),
+                }
         return {
             **base,
             "result_status": "OPEN",
@@ -945,6 +991,8 @@ class SignalCandidatePerformanceService:
             "mfe_r": mfe,
             "mae_r": mae,
             "candles_seen": len(future),
+            "latest_symbol_candle_time": latest.close_time,
+            "latest_symbol_candle_time_wib": _wib_string(latest.close_time),
         }
 
     def _aggregate(self, items: list[dict[str, Any]], skipped: Counter[str]) -> dict[str, Any]:

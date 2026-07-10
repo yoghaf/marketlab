@@ -160,6 +160,30 @@ def test_detail_can_load_exact_signal_id() -> None:
         assert payload["item"]["result_status"] == "TP_HIT"
 
 
+def test_open_signal_with_symbol_candle_behind_global_latest_is_marked_stale() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        stale_time = datetime(2026, 1, 1, 0, 15)
+        fresh_time = stale_time + timedelta(hours=2)
+        db.add(_signal("stale", "AAAUSDT", stale_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("fresh", "BBBUSDT", fresh_time, "LONG", "MID_LONG", "100", "90", "115"))
+        db.add(_candle("AAAUSDT", stale_time, stale_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.add(_candle("BBBUSDT", fresh_time, fresh_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).summary(position_lock=False, symbol="AAAUSDT")
+
+        assert payload["aggregate"]["signals_evaluated"] == 1
+        item = payload["items"][0]
+        assert item["result_status"] == "STALE_FORWARD_DATA"
+        assert item["stale_forward_data"] is True
+        assert item["unrealized_r"] == Decimal("0.5")
+        assert item["latest_symbol_candle_time"] == stale_time + timedelta(minutes=15)
+        assert payload["aggregate"]["open_count"] == 0
+
+
 def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

@@ -15,6 +15,7 @@ from app.models.market import (
     FuturesKline15m,
     FuturesKline24h,
     MarketlabActiveUniverse,
+    SignalForwardReturnLog,
     SpotKline1h,
     SpotKline1m,
     SpotKline4h,
@@ -32,6 +33,7 @@ TIMEFRAMES = {
 }
 MARKETS = {"futures": FuturesKline1m, "spot": SpotKline1m}
 AGG_STATUSES = ("AGG_READY", "AGG_INCOMPLETE", "AGG_WARMUP", "AGG_STALE", "AGG_MISSING_SPOT")
+SIGNAL_KLINE_LOOKBACK_HOURS = 168
 
 
 @dataclass
@@ -58,16 +60,16 @@ class OhlcvAggregationService:
     ) -> list[AggregationResult]:
         cleaned_timeframes = [timeframe for timeframe in timeframes if timeframe in TIMEFRAMES]
         cleaned_markets = [market for market in markets if market in MARKETS]
-        active_symbols = self._active_symbols(symbols)
         results: list[AggregationResult] = []
         for market in cleaned_markets:
-            valid_spot = self._valid_spot_symbols(active_symbols) if market == "spot" else set(active_symbols)
+            market_symbols = self._symbols_for_market(market, symbols)
+            valid_spot = self._valid_spot_symbols(market_symbols) if market == "spot" else set(market_symbols)
             for timeframe in cleaned_timeframes:
                 results.append(
                     self._aggregate_market_timeframe(
                         market,
                         timeframe,
-                        active_symbols,
+                        market_symbols,
                         valid_spot,
                         limit_windows,
                         dry_run,
@@ -263,6 +265,37 @@ class OhlcvAggregationService:
             return active
         requested = {symbol.upper() for symbol in symbols}
         return [symbol for symbol in active if symbol in requested]
+
+    def _symbols_for_market(self, market: str, symbols: list[str] | None) -> list[str]:
+        active = self._active_symbols(symbols)
+        if market != "futures":
+            return active
+        signal_symbols = self._recent_signal_symbols()
+        seen: set[str] = set()
+        output: list[str] = []
+        for symbol in [*active, *signal_symbols]:
+            if symbol not in seen:
+                output.append(symbol)
+                seen.add(symbol)
+        if symbols:
+            requested = {symbol.upper() for symbol in symbols}
+            return [symbol for symbol in output if symbol in requested]
+        return output
+
+    def _recent_signal_symbols(self) -> list[str]:
+        cutoff = utcnow() - timedelta(hours=SIGNAL_KLINE_LOOKBACK_HOURS)
+        rows = self.db.scalars(
+            select(SignalForwardReturnLog.symbol)
+            .where(
+                SignalForwardReturnLog.candidate_status == "SIGNAL_CANDIDATE",
+                SignalForwardReturnLog.signal_timestamp >= cutoff,
+                SignalForwardReturnLog.price_at_signal.is_not(None),
+                SignalForwardReturnLog.sl_ref.is_not(None),
+                SignalForwardReturnLog.tp_ref.is_not(None),
+            )
+            .distinct()
+        ).all()
+        return sorted({symbol for symbol in rows if symbol})
 
     def _valid_spot_symbols(self, active_symbols: list[str]) -> set[str]:
         rows = self.db.scalars(

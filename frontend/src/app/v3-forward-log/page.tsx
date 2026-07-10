@@ -267,7 +267,7 @@ function SignalTable({ rows, empty }: { rows: SignalPerformanceItem[]; empty: st
             <td>{item.timeframe}</td>
             <td>{labelFor(item.stage)}</td>
             <td><StatusBadge value={item.result_status} /></td>
-            <td>{fmtSigned(item.result_status === "OPEN" ? item.unrealized_r : item.realized_r)}R</td>
+            <td>{fmtSigned(item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r)}R</td>
             <td>{fmtSigned(item.mfe_r)} / {fmtSigned(item.mae_r)}</td>
             <td className="text-xs">
               <div>Entry {fmtPrice(item.entry)}</div>

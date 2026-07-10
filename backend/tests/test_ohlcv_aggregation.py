@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.models.market import FuturesKline15m, FuturesKline1m, MarketlabActiveUniverse
+from app.models.market import FuturesKline15m, FuturesKline1m, MarketlabActiveUniverse, SignalForwardReturnLog
 from app.services.ohlcv_aggregation import OhlcvAggregationService
 
 
@@ -88,7 +88,56 @@ class OhlcvAggregationTest(unittest.TestCase):
 
         self.assertTrue(all(row.aggregation_status != "AGG_READY" for row in rows))
 
-    def _insert_1m_rows(self, start: datetime, count: int, skip_minutes: set[int] | None = None) -> None:
+    def test_futures_aggregation_includes_recent_signal_symbol_outside_active_universe(self) -> None:
+        signal_time = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(hours=2)
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+        self.db.add(
+            SignalForwardReturnLog(
+                signal_id="inactive-signal",
+                symbol="SIGNALUSDT",
+                timeframe="15m",
+                signal_timestamp=signal_time,
+                window_open_time=signal_time - timedelta(minutes=15),
+                window_close_time=signal_time,
+                direction="LONG",
+                stage="MID_LONG",
+                candidate_status="SIGNAL_CANDIDATE",
+                core_score=Decimal("8"),
+                evidence_score=Decimal("1"),
+                evidence_data_completeness=4,
+                confidence_tier="HIGH_CONF",
+                execution_flag="ACTIVE",
+                entry_ref="MARKET_REFERENCE_OK",
+                sl_ref=Decimal("90"),
+                tp_ref=Decimal("115"),
+                price_at_signal=Decimal("100"),
+                status_15m="READY",
+                status_1h="READY",
+                status_4h="WAITING_DATA",
+                status_24h="WAITING_DATA",
+                observation_epoch="post_stage8_v2",
+                observation_start_utc=signal_time,
+                observation_marker=True,
+                evidence={},
+                created_at=signal_time,
+                updated_at=signal_time,
+            )
+        )
+        self._insert_1m_rows(start, count=15, symbol="SIGNALUSDT")
+
+        OhlcvAggregationService(self.db).run(timeframes=["15m"], markets=["futures"], symbols=["SIGNALUSDT"])
+        row = self.db.scalar(select(FuturesKline15m).where(FuturesKline15m.symbol == "SIGNALUSDT"))
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row.aggregation_status, "AGG_READY")
+
+    def _insert_1m_rows(
+        self,
+        start: datetime,
+        count: int,
+        skip_minutes: set[int] | None = None,
+        symbol: str = "TESTUSDT",
+    ) -> None:
         skip_minutes = skip_minutes or set()
         now = datetime(2026, 1, 1, tzinfo=UTC)
         for minute in range(count):
@@ -97,7 +146,7 @@ class OhlcvAggregationTest(unittest.TestCase):
             open_time = start + timedelta(minutes=minute)
             self.db.add(
                 FuturesKline1m(
-                    symbol="TESTUSDT",
+                    symbol=symbol,
                     open_time=open_time,
                     close_time=open_time + timedelta(minutes=1),
                     open_price=Decimal(100 + minute),

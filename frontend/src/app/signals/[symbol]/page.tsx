@@ -73,12 +73,13 @@ export default async function SignalDetailPage({
   const item = data.item;
   const snapshot = item.evidence_snapshot || {};
   const rawEvidence = evidenceRoot(data.evidence);
-  const rValue = item.result_status === "OPEN" ? item.unrealized_r : item.realized_r;
+  const rValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r;
   const numericR = Number(rValue ?? 0);
   const isOpen = item.result_status === "OPEN";
+  const isStale = item.result_status === "STALE_FORWARD_DATA";
   const isTp = item.result_status === "TP_HIT";
   const isSl = item.result_status === "SL_HIT";
-  const resultTone = isOpen ? (numericR >= 0 ? "good" : "warn") : isTp ? "good" : isSl ? "bad" : "warn";
+  const resultTone = isStale ? "bad" : isOpen ? (numericR >= 0 ? "good" : "warn") : isTp ? "good" : isSl ? "bad" : "warn";
 
   return (
     <div className="space-y-5">
@@ -97,7 +98,7 @@ export default async function SignalDetailPage({
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard label="Position state" value={labelFor(item.result_status)} helper={positionText(item.result_status, rValue)} tone={resultTone} />
-        <MetricCard label={isOpen ? "Current R" : "Final R"} value={`${fmtSigned(rValue)}R`} helper={isOpen ? "Masih aktif sampai TP/SL tersentuh" : "Sudah closed"} tone={resultTone} />
+        <MetricCard label={isOpen || isStale ? "Current R" : "Final R"} value={`${fmtSigned(rValue)}R`} helper={isStale ? item.stale_reason || "Data symbol tertinggal dari market lokal terbaru" : isOpen ? "Masih aktif sampai TP/SL tersentuh" : "Sudah closed"} tone={resultTone} />
         <MetricCard label="Entry futures" value={fmtPrice(item.entry)} helper={fmtTime(item.signal_timestamp)} />
         <MetricCard label="SL reference" value={fmtPrice(item.stop_loss)} helper={`Risk ${fmtPrice(item.risk)}`} tone="bad" />
         <MetricCard label="TP reference" value={fmtPrice(item.take_profit)} helper={`RR ${fmtNumber(item.rr)}R`} tone="good" />
@@ -127,6 +128,9 @@ export default async function SignalDetailPage({
           <DetailItem label="Window open" value={fmtTime(data.raw_signal.window_open_time)} />
           <DetailItem label="Window close" value={fmtTime(data.raw_signal.window_close_time)} />
           <DetailItem label="Evaluation candle" value={data.evaluation_candle_interval || "-"} />
+          <DetailItem label="Latest symbol candle" value={item.latest_symbol_candle_time_wib || fmtTime(item.latest_symbol_candle_time)} />
+          <DetailItem label="Global latest candle" value={fmtTime(item.global_latest_evaluation_candle_time)} />
+          <DetailItem label="Stale reason" value={item.stale_reason || "-"} />
         </div>
       </SectionCard>
 
@@ -202,6 +206,7 @@ function positionText(status: string, rValue?: string | number | null): string {
   if (status === "SL_HIT") return `Closed SL, hasil ${fmtSigned(rValue)}R`;
   if (status === "BOTH_HIT_SAME_CANDLE") return "Closed, TP dan SL satu candle";
   if (status === "WAITING_DATA") return "Menunggu candle futures berikutnya";
+  if (status === "STALE_FORWARD_DATA") return `Data stale, R terakhir ${fmtSigned(rValue)}R`;
   return labelFor(status);
 }
 

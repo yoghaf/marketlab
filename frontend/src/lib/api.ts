@@ -749,6 +749,13 @@ export type SignalPerformanceItem = {
   mfe_r?: string | number | null;
   mae_r?: string | number | null;
   candles_seen: number;
+  stale_forward_data?: boolean;
+  stale_reason?: string | null;
+  stale_gap_minutes?: string | number | null;
+  latest_symbol_candle_time?: string | null;
+  latest_symbol_candle_time_wib?: string | null;
+  global_latest_evaluation_candle_time?: string | null;
+  global_latest_evaluation_candle_time_wib?: string | null;
   not_live_signal: boolean;
   not_execution_instruction: boolean;
 };

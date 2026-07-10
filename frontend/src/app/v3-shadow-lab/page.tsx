@@ -310,7 +310,7 @@ function SignalTable({ rows }: { rows: SignalPerformanceItem[] }) {
               {item.v3_shadow_filter_label && <div className="mt-1 text-xs text-slate-500">{compactReason(item.v3_shadow_filter_label, 60)}</div>}
             </td>
             <td><StatusBadge value={item.result_status} /></td>
-            <td>{fmtSigned(item.result_status === "OPEN" ? item.unrealized_r : item.realized_r)}R</td>
+            <td>{fmtSigned(item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r)}R</td>
             <td className="text-xs">
               <div>Entry {fmtPrice(item.entry)}</div>
               <div>SL {fmtPrice(item.stop_loss)}</div>
