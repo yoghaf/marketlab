@@ -59,6 +59,10 @@ router = APIRouter()
 _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
+_SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
+_SIGNAL_FORWARD_INTEGRITY_CACHE: dict[tuple, tuple[float, dict]] = {}
+_SCANNER_LIVE_CACHE_LOCK = Lock()
+_SCANNER_LIVE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_QUALITY_CACHE_LOCK = Lock()
 _SIGNAL_QUALITY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FILTER_STUDY_CACHE_LOCK = Lock()
@@ -376,13 +380,33 @@ def signal_forward_integrity(
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 200))
-    payload = SignalCandidatePerformanceService(db).forward_integrity(
-        include_watch_only=include_watch_only,
-        position_lock=position_lock,
-        stage=stage,
-        timeframe=timeframe,
-        limit=normalized_limit,
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        stage or "",
+        timeframe or "",
+        normalized_limit,
     )
+    now = monotonic()
+    with _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK:
+        cached = _SIGNAL_FORWARD_INTEGRITY_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).forward_integrity(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK:
+        _SIGNAL_FORWARD_INTEGRITY_CACHE[cache_key] = (monotonic(), payload)
     return json_safe(payload)
 
 
@@ -786,34 +810,58 @@ def scanner_live(
     limit: int = 100,
     include_blocked: bool = False,
     include_inactive: bool = False,
+    include_v3_shadow: bool = False,
     db: Session = Depends(get_db),
 ):
+    normalized_limit = max(1, min(limit, 500))
+    cache_key = (
+        tier or "",
+        candidate_type or "",
+        normalized_limit,
+        bool(include_blocked),
+        bool(include_inactive),
+        bool(include_v3_shadow),
+    )
+    now = monotonic()
+    with _SCANNER_LIVE_CACHE_LOCK:
+        cached = _SCANNER_LIVE_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
     items = LiveCandidateScannerService(db, signal_factory_artifact_dir=DEFAULT_SIGNAL_FACTORY_DIR).list_live(
         tier=tier,
         candidate_type=candidate_type,
-        limit=limit,
+        limit=normalized_limit,
         include_blocked=include_blocked,
         include_inactive=include_inactive,
+        include_v3_shadow=include_v3_shadow,
     )
     tier_counts: dict[str, int] = {}
     for item in items:
         tier_counts[item["scanner_tier"]] = tier_counts.get(item["scanner_tier"], 0) + 1
-    return json_safe(
+    payload = json_safe(
         {
             "count": len(items),
             "filters": {
                 "tier": tier,
                 "candidate_type": candidate_type,
-                "limit": limit,
+                "limit": normalized_limit,
                 "include_blocked": include_blocked,
                 "include_inactive": include_inactive,
+                "include_v3_shadow": include_v3_shadow,
             },
             "tier_counts": tier_counts,
             "read_only": True,
             "not_entry_signal": True,
             "items": items,
+            "cache": {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS},
         }
     )
+    with _SCANNER_LIVE_CACHE_LOCK:
+        _SCANNER_LIVE_CACHE[cache_key] = (monotonic(), payload)
+    return payload
 
 
 @router.get("/api/paper-signals/short-candidates")

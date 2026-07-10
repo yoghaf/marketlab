@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-24",
+    title: "Scanner API Timeout Guard",
+    status: "LIVE",
+    area: "UI/API stability",
+    summary: "Mengurangi risiko Radar dan Signal History kosong karena backend API terlalu lama menghitung ulang data live.",
+    changes: [
+      "Radar default tidak lagi menghitung V3 shadow filter map berat di setiap request; V3 audit tetap dibaca dari halaman V3 Forward Log.",
+      "Endpoint Scanner diberi cache pendek 30 detik agar auto-refresh dan klik berulang tidak menumpuk komputasi yang sama.",
+      "Endpoint Forward Integrity di Signal History juga diberi cache pendek 30 detik.",
+      "Menambahkan opsi backend include_v3_shadow untuk kebutuhan audit khusus tanpa membebani Radar default.",
+      "Tidak ada perubahan Signal Factory rule, scanner selection, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Radar dan Signal History harus lebih jarang blank/504 karena request berat tidak lagi dihitung ulang terus-menerus saat halaman dibuka atau auto-refresh.",
+    links: [
+      { href: "/scanner", label: "Radar" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-23",
     title: "V3 Shadow Quality Audit",
     status: "LIVE",

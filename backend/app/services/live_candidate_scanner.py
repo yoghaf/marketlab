@@ -103,6 +103,7 @@ class LiveCandidateScannerService:
         limit: int = 100,
         include_blocked: bool = False,
         include_inactive: bool = False,
+        include_v3_shadow: bool = False,
     ) -> list[dict[str, Any]]:
         rows = self._latest_candidate_rows(
             include_blocked=include_blocked,
@@ -124,7 +125,9 @@ class LiveCandidateScannerService:
         raw_items.extend(
             self._signal_factory_signal_items(
                 include_inactive=include_inactive,
-                v3_shadow_filter_map=SignalCandidatePerformanceService(self.db).v3_shadow_filter_map(),
+                v3_shadow_filter_map=SignalCandidatePerformanceService(self.db).v3_shadow_filter_map()
+                if include_v3_shadow
+                else None,
             )
         )
 
