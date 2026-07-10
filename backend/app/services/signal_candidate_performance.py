@@ -269,6 +269,93 @@ class SignalCandidatePerformanceService:
             "open_signals": open_items,
         }
 
+    def forward_integrity(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        stage: str | None = None,
+        timeframe: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        tracked_statuses = {"OPEN", "WAITING_DATA", "STALE_FORWARD_DATA"}
+        tracked = [item for item in evaluated if item.get("result_status") in tracked_statuses]
+        tracked = sorted(
+            tracked,
+            key=lambda item: (
+                item.get("result_status") == "STALE_FORWARD_DATA",
+                Decimal(item.get("freshness_gap_minutes") or item.get("stale_gap_minutes") or 0),
+                item.get("signal_timestamp") or datetime.min,
+            ),
+            reverse=True,
+        )
+        status_counts = Counter(str(item.get("result_status")) for item in evaluated)
+        stale_items = [item for item in tracked if item.get("result_status") == "STALE_FORWARD_DATA"]
+        waiting_items = [item for item in tracked if item.get("result_status") == "WAITING_DATA"]
+        fresh_open_items = [item for item in tracked if item.get("result_status") == "OPEN"]
+        global_latest = max(
+            (
+                _parse_dt(item.get("global_latest_evaluation_candle_time"))
+                for item in evaluated
+                if item.get("global_latest_evaluation_candle_time")
+            ),
+            default=latest_candle_time,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": stage,
+                "timeframe": timeframe,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "stale_after_minutes": FORWARD_DATA_STALE_MINUTES,
+            "latest_evaluation_candle_time": latest_candle_time,
+            "global_latest_evaluation_candle_time": global_latest,
+            "global_latest_evaluation_candle_time_wib": _wib_string(global_latest),
+            "summary": {
+                "integrity_status": "STALE_FOUND" if stale_items else "WAITING_DATA" if waiting_items else "PASS",
+                "signals_evaluated": len(evaluated),
+                "signals_skipped": sum(skipped.values()),
+                "fresh_open_count": len(fresh_open_items),
+                "stale_forward_count": len(stale_items),
+                "waiting_data_count": len(waiting_items),
+                "active_or_pending_count": len(tracked),
+                "closed_count": sum(status_counts.get(status, 0) for status in COMPLETED_OUTCOMES),
+                "tp_count": status_counts.get("TP_HIT", 0),
+                "sl_count": status_counts.get("SL_HIT", 0),
+                "both_hit_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
+                "status_counts": dict(status_counts),
+                "skip_reasons": dict(skipped),
+                "fresh_symbol_count": len({item.get("symbol") for item in fresh_open_items}),
+                "stale_symbol_count": len({item.get("symbol") for item in stale_items}),
+                "waiting_symbol_count": len({item.get("symbol") for item in waiting_items}),
+            },
+            "items": tracked[:limit],
+            "stale_items": stale_items[:limit],
+            "guardrails": [
+                "This audit only checks local futures candle freshness and paper TP/SL state.",
+                "OPEN is valid only when the symbol candle is close to the global latest futures candle.",
+                "STALE_FORWARD_DATA means paper R is a last-known value and should not be trusted as live current R.",
+                "This is read-only and does not create orders or execution instructions.",
+            ],
+        }
+
     def filter_study(
         self,
         *,
@@ -893,6 +980,8 @@ class SignalCandidatePerformanceService:
             "candles_seen": 0,
             "stale_forward_data": False,
             "stale_reason": None,
+            "stale_gap_minutes": None,
+            "freshness_gap_minutes": None,
             "latest_symbol_candle_time": None,
             "latest_symbol_candle_time_wib": None,
             "global_latest_evaluation_candle_time": global_latest_candle_time,
@@ -962,8 +1051,10 @@ class SignalCandidatePerformanceService:
 
         latest = future[-1]
         unrealized = (latest.close - entry) / risk if direction == "LONG" else (entry - latest.close) / risk
+        freshness_gap_minutes = None
         if global_latest_candle_time is not None:
             stale_gap = _naive(global_latest_candle_time) - _naive(latest.close_time)
+            freshness_gap_minutes = Decimal(stale_gap.total_seconds()) / Decimal("60")
             if stale_gap > timedelta(minutes=FORWARD_DATA_STALE_MINUTES):
                 return {
                     **base,
@@ -977,7 +1068,8 @@ class SignalCandidatePerformanceService:
                     "candles_seen": len(future),
                     "stale_forward_data": True,
                     "stale_reason": "Symbol futures candles are behind the global evaluation candle.",
-                    "stale_gap_minutes": Decimal(stale_gap.total_seconds()) / Decimal("60"),
+                    "stale_gap_minutes": freshness_gap_minutes,
+                    "freshness_gap_minutes": freshness_gap_minutes,
                     "latest_symbol_candle_time": latest.close_time,
                     "latest_symbol_candle_time_wib": _wib_string(latest.close_time),
                 }
@@ -991,6 +1083,7 @@ class SignalCandidatePerformanceService:
             "mfe_r": mfe,
             "mae_r": mae,
             "candles_seen": len(future),
+            "freshness_gap_minutes": freshness_gap_minutes,
             "latest_symbol_candle_time": latest.close_time,
             "latest_symbol_candle_time_wib": _wib_string(latest.close_time),
         }

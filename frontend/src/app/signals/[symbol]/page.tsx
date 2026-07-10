@@ -106,6 +106,13 @@ export default async function SignalDetailPage({
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Forward data" value={freshnessLabel(item.result_status)} helper={item.stale_reason || "Candle futures lokal dipakai untuk TP/SL paper-live"} tone={freshnessTone(item.result_status)} />
+        <MetricCard label="Latest symbol candle" value={item.latest_symbol_candle_time_wib || fmtTime(item.latest_symbol_candle_time)} helper="Candle terakhir untuk symbol ini" />
+        <MetricCard label="Global latest candle" value={fmtTime(item.global_latest_evaluation_candle_time)} helper="Candle terbaru di database futures" tone="info" />
+        <MetricCard label="Freshness gap" value={fmtGap(item.freshness_gap_minutes ?? item.stale_gap_minutes)} helper={`Stale jika lebih dari 30 menit`} tone={isStale ? "bad" : "good"} />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Live strategy" value={shortStrategy(item.strategy_version)} helper="Rule yang menghasilkan signal ini" tone="info" />
         <MetricCard label="Shadow strategy" value="V3 shadow" helper="Calibration candidate, read-only" tone="warn" />
         <MetricCard label="V3 shadow status" value={labelFor(item.v3_shadow_status || "UNKNOWN")} helper={item.v3_shadow_filter_label || item.v3_shadow_reason || "-"} tone={item.v3_shadow_status === "V3_SHADOW_PASS" ? "good" : "warn"} />
@@ -210,6 +217,18 @@ function positionText(status: string, rValue?: string | number | null): string {
   return labelFor(status);
 }
 
+function freshnessLabel(status: string): string {
+  if (status === "STALE_FORWARD_DATA") return "Stale";
+  if (status === "WAITING_DATA") return "Waiting data";
+  return "Fresh";
+}
+
+function freshnessTone(status: string): "neutral" | "good" | "warn" | "bad" | "info" {
+  if (status === "STALE_FORWARD_DATA") return "bad";
+  if (status === "WAITING_DATA") return "warn";
+  return "good";
+}
+
 function formatEvidenceValue(field: string, value?: string | number | null): string {
   if (value === null || value === undefined || value === "") return "-";
   if (field.includes("ratio") || field.includes("multiple") || field.includes("extension")) return `${fmtNumber(value)}x`;
@@ -223,6 +242,14 @@ function fmtSigned(value?: string | number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return `${num >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(num)}`;
+}
+
+function fmtGap(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (Math.abs(num) < 1) return "<1m";
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(num)}m`;
 }
 
 function shortStrategy(value?: string | null): string {

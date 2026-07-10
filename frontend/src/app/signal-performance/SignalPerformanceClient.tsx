@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { MetricCard } from "@/components/MetricCard";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
-import { SignalPerformanceBucket, SignalPerformanceResponse, fmtPrice } from "@/lib/api";
+import { SignalForwardIntegrityResponse, SignalPerformanceBucket, SignalPerformanceItem, SignalPerformanceResponse, fmtPrice } from "@/lib/api";
 import { labelFor } from "@/lib/labels";
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
@@ -20,6 +20,7 @@ export function SignalPerformanceClient() {
   const [positionLock, setPositionLock] = useState(true);
   const [limit, setLimit] = useState(50);
   const [data, setData] = useState<SignalPerformanceResponse | null>(null);
+  const [integrityData, setIntegrityData] = useState<SignalForwardIntegrityResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -34,12 +35,27 @@ export function SignalPerformanceClient() {
     return `/api/signal-candidates/performance/live?${query.toString()}`;
   }, [includeWatchOnly, limit, positionLock, stage, timeframe]);
 
+  const integrityPath = useMemo(() => {
+    const query = new URLSearchParams();
+    query.set("include_watch_only", String(includeWatchOnly));
+    query.set("position_lock", String(positionLock));
+    query.set("limit", "50");
+    if (stage) query.set("stage", stage);
+    if (timeframe) query.set("timeframe", timeframe);
+    return `/api/signals/forward-integrity?${query.toString()}`;
+  }, [includeWatchOnly, positionLock, stage, timeframe]);
+
   async function load() {
     setLoading(true);
     try {
-      const response = await fetch(path, { cache: "no-store" });
-      if (!response.ok) throw new Error(`API failed: ${response.status}`);
-      setData(await response.json());
+      const [performanceResponse, integrityResponse] = await Promise.all([
+        fetch(path, { cache: "no-store" }),
+        fetch(integrityPath, { cache: "no-store" })
+      ]);
+      if (!performanceResponse.ok) throw new Error(`Performance API failed: ${performanceResponse.status}`);
+      if (!integrityResponse.ok) throw new Error(`Forward integrity API failed: ${integrityResponse.status}`);
+      setData(await performanceResponse.json());
+      setIntegrityData(await integrityResponse.json());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat signal performance");
@@ -52,7 +68,7 @@ export function SignalPerformanceClient() {
     load();
     const timer = window.setInterval(load, 30_000);
     return () => window.clearInterval(timer);
-  }, [path]);
+  }, [path, integrityPath]);
 
   const aggregate = data?.aggregate;
 
@@ -111,6 +127,8 @@ export function SignalPerformanceClient() {
         )}
         {error && <div className="border-t border-line bg-red-50 p-4 text-sm text-stale">{error}</div>}
       </SectionCard>
+
+      <ForwardIntegrityPanel data={integrityData} />
 
       <SectionCard title="Performance by signal timeframe" description="Ini membagi hasil berdasarkan timeframe asal signal, bukan horizon evaluasi. Jika 4h/24h kosong berarti belum ada signal dari TF itu.">
         <div className="table-wrap">
@@ -221,6 +239,88 @@ export function SignalPerformanceClient() {
   );
 }
 
+function ForwardIntegrityPanel({ data }: { data: SignalForwardIntegrityResponse | null }) {
+  const summary = data?.summary;
+  const hasStale = Number(summary?.stale_forward_count || 0) > 0;
+  const hasWaiting = Number(summary?.waiting_data_count || 0) > 0;
+  const tone = hasStale ? "bad" : hasWaiting ? "warn" : "good";
+
+  return (
+    <SectionCard
+      title="Forward integrity audit"
+      description="Audit posisi paper yang masih open/waiting/stale. Ini memastikan current R hanya dipercaya kalau candle futures symbol masih fresh."
+      actions={<StatusBadge value={summary?.integrity_status || "UNAVAILABLE"} />}
+    >
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <MetricCard label="Fresh open" value={summary?.fresh_open_count ?? 0} helper={`${summary?.fresh_symbol_count ?? 0} symbol`} tone={tone === "good" ? "good" : "neutral"} />
+        <MetricCard label="Stale forward" value={summary?.stale_forward_count ?? 0} helper={`>${data?.stale_after_minutes ?? 30} menit gap`} tone={hasStale ? "bad" : "good"} />
+        <MetricCard label="Waiting data" value={summary?.waiting_data_count ?? 0} helper={`${summary?.waiting_symbol_count ?? 0} symbol`} tone={hasWaiting ? "warn" : "neutral"} />
+        <MetricCard label="Active/pending" value={summary?.active_or_pending_count ?? 0} helper="Open + waiting + stale" />
+        <MetricCard label="Closed checked" value={summary?.closed_count ?? 0} helper={`TP ${summary?.tp_count ?? 0} / SL ${summary?.sl_count ?? 0}`} />
+        <MetricCard label="Global latest" value={fmtTime(data?.global_latest_evaluation_candle_time || data?.latest_evaluation_candle_time)} helper="Futures candle acuan" tone="info" />
+      </div>
+      {hasStale && (
+        <div className="border-b border-line bg-red-50 p-4 text-sm text-stale">
+          Ada signal stale. Current R untuk row tersebut adalah nilai terakhir dari DB, bukan kondisi market fresh.
+        </div>
+      )}
+      <div className="table-wrap">
+        <table className="ops-table">
+          <thead>
+            <tr>
+              <th>Signal WIB</th>
+              <th>Symbol</th>
+              <th>TF</th>
+              <th>Stage</th>
+              <th>Status</th>
+              <th>Current R</th>
+              <th>Latest symbol candle</th>
+              <th>Gap</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.items.map((item) => (
+              <ForwardIntegrityRow item={item} key={item.signal_id} />
+            ))}
+            {!data?.items.length && (
+              <tr>
+                <td colSpan={9}>
+                  <EmptyState title="Tidak ada open/stale signal" detail="Semua signal yang terhitung sudah close, atau belum ada posisi paper aktif sesuai filter." />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  );
+}
+
+function ForwardIntegrityRow({ item }: { item: SignalPerformanceItem }) {
+  const rValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r;
+  return (
+    <tr>
+      <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
+      <td className="font-semibold">{item.symbol}</td>
+      <td>{item.timeframe}</td>
+      <td>{labelFor(item.stage)}</td>
+      <td><StatusBadge value={item.result_status} /></td>
+      <td>{rValue == null ? "-" : `${fmtSigned(rValue)}R`}</td>
+      <td>{item.latest_symbol_candle_time_wib || fmtTime(item.latest_symbol_candle_time)}</td>
+      <td>{fmtGap(item.freshness_gap_minutes ?? item.stale_gap_minutes)}</td>
+      <td>
+        <Link
+          className="rounded border border-line bg-white px-2 py-1 text-xs font-semibold hover:bg-field"
+          href={`/signals/${encodeURIComponent(item.symbol)}?signal_id=${encodeURIComponent(item.signal_id)}`}
+        >
+          Open
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
 function TimeframeRow({ timeframe, row }: { timeframe: string; row?: SignalPerformanceBucket }) {
   return (
     <tr>
@@ -270,6 +370,14 @@ function fmtSigned(value?: string | number | null): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   return `${num >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}`;
+}
+
+function fmtGap(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (Math.abs(num) < 1) return "<1m";
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(num)}m`;
 }
 
 function shortStrategy(value?: string | null): string {

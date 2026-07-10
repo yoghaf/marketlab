@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-18",
+    title: "Signal Forward Integrity Audit",
+    status: "LIVE",
+    area: "Signal monitoring + UI trust",
+    summary: "Menambahkan audit khusus untuk memastikan signal paper-live yang masih open memakai candle futures yang fresh, bukan data symbol yang stale.",
+    changes: [
+      "Endpoint /api/signals/forward-integrity menampilkan fresh open, stale forward, waiting data, latest global candle, dan gap menit per signal.",
+      "Signal History sekarang tetap fokus ke posisi closed, lalu punya panel Forward Integrity untuk open/waiting/stale signal.",
+      "Signal Detail menampilkan Forward data, latest symbol candle, global latest candle, dan freshness gap secara eksplisit.",
+      "Evaluator menandai STALE_FORWARD_DATA jika candle symbol tertinggal dari global latest futures candle.",
+      "Tidak ada perubahan Signal Factory rule, classifier, TP/SL formula, threshold, atau execution."
+    ],
+    impact: "Jika kasus seperti ASTER terjadi lagi, UI akan menunjukkan data stale atau close TP/SL sesuai candle futures terbaru, bukan membiarkan status Open terlihat valid.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-17",
     title: "V3 Shadow Forward Log",
     status: "LIVE",

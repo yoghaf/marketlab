@@ -366,6 +366,26 @@ def signal_detail(
     return json_safe(payload)
 
 
+@router.get("/api/signals/forward-integrity")
+def signal_forward_integrity(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    stage: str | None = None,
+    timeframe: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 200))
+    payload = SignalCandidatePerformanceService(db).forward_integrity(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=stage,
+        timeframe=timeframe,
+        limit=normalized_limit,
+    )
+    return json_safe(payload)
+
+
 @router.get("/api/signal-candidates/quality-lab")
 def signal_candidates_quality_lab(
     include_watch_only: bool = False,

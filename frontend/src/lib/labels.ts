@@ -141,6 +141,8 @@ const labels: Record<string, string> = {
   OUTCOME_INCOMPLETE: "Outcome belum lengkap",
   OUTCOME_BLOCKED: "Outcome blocked",
   STALE_FORWARD_DATA: "Data forward stale",
+  STALE_FOUND: "Ada data stale",
+  WAITING_DATA: "Menunggu data",
   ACTIVE: "Aktif",
   NOT_ACTIVE: "Tidak aktif",
   FULL_ACTIVE: "Full active",

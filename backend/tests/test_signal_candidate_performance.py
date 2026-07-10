@@ -184,6 +184,50 @@ def test_open_signal_with_symbol_candle_behind_global_latest_is_marked_stale() -
         assert payload["aggregate"]["open_count"] == 0
 
 
+def test_forward_integrity_separates_fresh_open_from_stale_forward_data() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        stale_time = datetime(2026, 1, 1, 0, 15)
+        fresh_time = stale_time + timedelta(hours=2)
+        db.add(_signal("stale", "AAAUSDT", stale_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("fresh", "BBBUSDT", fresh_time, "LONG", "MID_LONG", "100", "90", "115"))
+        db.add(_candle("AAAUSDT", stale_time, stale_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.add(_candle("BBBUSDT", fresh_time, fresh_time + timedelta(minutes=15), high="108", low="98", close="105"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).forward_integrity(position_lock=False)
+
+        summary = payload["summary"]
+        assert summary["integrity_status"] == "STALE_FOUND"
+        assert summary["fresh_open_count"] == 1
+        assert summary["stale_forward_count"] == 1
+        assert summary["active_or_pending_count"] == 2
+        stale_item = next(item for item in payload["items"] if item["symbol"] == "AAAUSDT")
+        assert stale_item["result_status"] == "STALE_FORWARD_DATA"
+        assert stale_item["freshness_gap_minutes"] == Decimal("120")
+        fresh_item = next(item for item in payload["items"] if item["symbol"] == "BBBUSDT")
+        assert fresh_item["result_status"] == "OPEN"
+
+
+def test_forward_integrity_does_not_report_closed_signal_as_open() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(_signal("closed", "AAAUSDT", signal_time, "SHORT", "MID_SHORT", "100", "110", "85"))
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="111", low="99", close="110"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).forward_integrity(position_lock=False)
+
+        assert payload["summary"]["active_or_pending_count"] == 0
+        assert payload["summary"]["sl_count"] == 1
+        assert payload["items"] == []
+
+
 def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

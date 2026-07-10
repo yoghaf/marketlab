@@ -752,6 +752,7 @@ export type SignalPerformanceItem = {
   stale_forward_data?: boolean;
   stale_reason?: string | null;
   stale_gap_minutes?: string | number | null;
+  freshness_gap_minutes?: string | number | null;
   latest_symbol_candle_time?: string | null;
   latest_symbol_candle_time_wib?: string | null;
   global_latest_evaluation_candle_time?: string | null;
@@ -807,6 +808,46 @@ export type SignalPerformanceResponse = {
     by_confidence: Record<string, number>;
   };
   items: SignalPerformanceItem[];
+};
+
+export type SignalForwardIntegrityResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  stale_after_minutes: number;
+  latest_evaluation_candle_time?: string | null;
+  global_latest_evaluation_candle_time?: string | null;
+  global_latest_evaluation_candle_time_wib?: string | null;
+  summary: {
+    integrity_status: string;
+    signals_evaluated: number;
+    signals_skipped: number;
+    fresh_open_count: number;
+    stale_forward_count: number;
+    waiting_data_count: number;
+    active_or_pending_count: number;
+    closed_count: number;
+    tp_count: number;
+    sl_count: number;
+    both_hit_count: number;
+    status_counts: Record<string, number>;
+    skip_reasons: Record<string, number>;
+    fresh_symbol_count: number;
+    stale_symbol_count: number;
+    waiting_symbol_count: number;
+  };
+  items: SignalPerformanceItem[];
+  stale_items: SignalPerformanceItem[];
+  guardrails: string[];
 };
 
 export type V3ShadowStatusRow = SignalPerformanceBucket & {
