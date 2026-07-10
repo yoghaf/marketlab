@@ -25,10 +25,32 @@ module.exports = {
       name: "marketlab-snapshot-loop",
       cwd: "/var/www/marketlab/backend",
       script: "scripts/run_snapshot_collector.py",
-      args: "--interval-seconds 120",
+      args: "--interval-seconds 300",
       interpreter: "/var/www/marketlab/backend/.venv/bin/python",
       env: {
         APP_ENV: "production",
+      },
+    },
+    {
+      name: "marketlab-kline-loop",
+      cwd: "/var/www/marketlab/backend",
+      script: "scripts/run_kline_collector.py",
+      args: "--markets futures spot --cycles 100000 --interval-seconds 60",
+      interpreter: "/var/www/marketlab/backend/.venv/bin/python",
+      env: {
+        APP_ENV: "production",
+      },
+    },
+    {
+      name: "marketlab-research-loop",
+      cwd: "/var/www/marketlab",
+      script: "backend/scripts/run_marketlab_research_loop.sh",
+      interpreter: "bash",
+      env: {
+        APP_ENV: "production",
+        MARKETLAB_LOOP_SLEEP_SECONDS: "300",
+        MARKETLAB_UNIVERSE_INTERVAL_SECONDS: "3600",
+        MARKETLAB_RICH_INTERVAL_SECONDS: "1800",
       },
     },
   ],

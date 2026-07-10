@@ -5,6 +5,8 @@ cd /var/www/marketlab/backend
 source .venv/bin/activate
 
 SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-900}"
+UNIVERSE_INTERVAL_SECONDS="${MARKETLAB_UNIVERSE_INTERVAL_SECONDS:-3600}"
+RICH_INTERVAL_SECONDS="${MARKETLAB_RICH_INTERVAL_SECONDS:-1800}"
 LONG_TF_INTERVAL_SECONDS="${MARKETLAB_LONG_TF_INTERVAL_SECONDS:-3600}"
 FULL_RESEARCH_INTERVAL_SECONDS="${MARKETLAB_FULL_RESEARCH_INTERVAL_SECONDS:-21600}"
 FAST_LIMIT_WINDOWS="${MARKETLAB_FAST_LIMIT_WINDOWS:-12}"
@@ -41,12 +43,29 @@ mark_run() {
 while true; do
   echo "[marketlab-loop] cycle start $(date -u)"
 
-  python scripts/run_collector_loop.py --cycles 1 --interval-seconds 0
-  python scripts/run_kline_collector.py --markets futures spot --cycles 1
+  if is_due "universe_refresh" "$UNIVERSE_INTERVAL_SECONDS"; then
+    echo "[marketlab-loop] universe refresh start $(date -u)"
+    if python scripts/run_universe_refresh.py; then
+      mark_run "universe_refresh"
+      echo "[marketlab-loop] universe refresh end $(date -u)"
+    else
+      echo "[marketlab-loop] universe refresh failed $(date -u)"
+    fi
+  fi
+
   python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1
+  if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
+    echo "[marketlab-loop] rich futures collector start $(date -u)"
+    if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then
+      mark_run "rich_futures"
+      echo "[marketlab-loop] rich futures collector end $(date -u)"
+    else
+      echo "[marketlab-loop] rich futures collector failed $(date -u)"
+    fi
+  else
+    echo "[marketlab-loop] rich futures collector skipped by cadence $(date -u)"
+  fi
   python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_snapshot_collector.py --cycles 1 --interval-seconds 0
   python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_feature_builder_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
   python scripts/run_feature_builder_1h.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1

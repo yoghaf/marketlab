@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-22",
+    title: "Research Loop De-duplication",
+    status: "LIVE",
+    area: "Ops performance",
+    summary: "Menghapus pekerjaan collector yang dobel dari research-loop agar proses VPS fokus ke data processing dan signal logging.",
+    changes: [
+      "Research-loop tidak lagi menjalankan full collector loop, kline collector, dan snapshot collector inline karena sudah ada PM2 loop khusus.",
+      "Menambahkan run_universe_refresh.py untuk refresh active universe secara ringan tanpa ikut mengambil kline/snapshot penuh.",
+      "Rich futures collector tetap dipakai untuk evidence, tapi diberi cadence terpisah agar tidak selalu jalan di setiap research cycle.",
+      "PM2 ecosystem sekarang mencatat kline-loop, snapshot-loop, dan research-loop; snapshot-loop default diperlambat ke 5 menit.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, threshold, realistic R, atau execution."
+    ],
+    impact: "CPU/API request berkurang karena proses yang tumpang tindih dimatikan dari research-loop, sementara core candle, snapshot, universe, dan signal tetap berjalan.",
+    links: [
+      { href: "/data-health", label: "System Health" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-21",
     title: "Collector Snapshot Conflict-Safe Upsert",
     status: "LIVE",
