@@ -503,7 +503,7 @@ class MarketCollector:
     def _store_open_interest(self, symbol: str, item: dict[str, Any]) -> dict[str, Any]:
         now = utcnow()
         event_time = ms_to_utc(item.get("time")) or now
-        action = self._upsert(
+        action = self._upsert_unique(
             FuturesOpenInterest,
             {"symbol": symbol, "event_time": event_time},
             {
@@ -520,7 +520,7 @@ class MarketCollector:
     def _store_mark_funding(self, symbol: str, item: dict[str, Any]) -> dict[str, Any]:
         now = utcnow()
         event_time = ms_to_utc(item.get("time")) or now
-        action = self._upsert(
+        action = self._upsert_unique(
             FuturesMarkFunding,
             {"symbol": symbol, "event_time": event_time},
             {
@@ -541,7 +541,7 @@ class MarketCollector:
     def _store_book_ticker(self, model, symbol: str, item: dict[str, Any]) -> dict[str, Any]:
         now = utcnow()
         event_time = ms_to_utc(item.get("time") or item.get("transactionTime")) or now
-        action = self._upsert(
+        action = self._upsert_unique(
             model,
             {"symbol": symbol, "event_time": event_time},
             {
@@ -568,6 +568,33 @@ class MarketCollector:
         row = model(**keys, **values)
         self.db.add(row)
         return "inserted"
+
+    def _upsert_unique(self, model, keys: dict[str, Any], values: dict[str, Any]) -> str:
+        exists = self.db.scalar(select(model.id).filter_by(**keys)) is not None
+        all_values = {**keys, **values}
+        update_values = {
+            key: value
+            for key, value in all_values.items()
+            if key not in set(keys) | {"created_at"}
+        }
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "sqlite":
+            statement = (
+                sqlite_insert(model)
+                .values(**all_values)
+                .on_conflict_do_update(index_elements=list(keys), set_=update_values)
+            )
+            self.db.execute(statement)
+            return "updated" if exists else "inserted"
+        if dialect == "postgresql":
+            statement = (
+                postgresql_insert(model)
+                .values(**all_values)
+                .on_conflict_do_update(index_elements=list(keys), set_=update_values)
+            )
+            self.db.execute(statement)
+            return "updated" if exists else "inserted"
+        return self._upsert(model, keys, values)
 
     def _upsert_kline(self, model, values: dict[str, Any]) -> str:
         exists = (

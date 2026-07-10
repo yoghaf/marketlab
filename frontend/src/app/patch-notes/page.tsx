@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-21",
+    title: "Collector Snapshot Conflict-Safe Upsert",
+    status: "LIVE",
+    area: "Collector stability",
+    summary: "Memperbaiki duplicate insert pada snapshot time-series seperti current open interest saat Binance mengirim timestamp yang sama lagi.",
+    changes: [
+      "Current open interest sekarang memakai conflict-safe upsert untuk key symbol + event_time.",
+      "Mark/funding current dan futures/spot book ticker ikut memakai helper conflict-safe yang sama karena punya pola unique key sejenis.",
+      "Menambahkan test agar dua payload open interest dengan timestamp sama tidak membuat duplicate atau crash.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL, realistic R, atau execution."
+    ],
+    impact: "Research/collector loop lebih stabil dan tidak membuang waktu karena traceback unique constraint saat data snapshot Binance berulang.",
+    links: [
+      { href: "/data-health", label: "System Health" },
+      { href: "/collectors", label: "Advanced" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-20",
     title: "Lean Core Loop + Legacy Research Pruning",
     status: "LIVE",

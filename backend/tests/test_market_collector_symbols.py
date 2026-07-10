@@ -6,7 +6,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 
-from app.models.market import BinanceFuturesSymbol, FuturesKline1m, MarketlabActiveUniverse, SignalForwardReturnLog
+from app.models.market import (
+    BinanceFuturesSymbol,
+    FuturesKline1m,
+    FuturesOpenInterest,
+    MarketlabActiveUniverse,
+    SignalForwardReturnLog,
+)
 from app.services.collectors import MarketCollector
 
 
@@ -74,6 +80,25 @@ def test_store_kline_uses_conflict_safe_upsert() -> None:
         rows = db.scalars(select(FuturesKline1m).where(FuturesKline1m.symbol == "ALICEUSDT")).all()
         assert len(rows) == 1
         assert rows[0].close_price.quantize(Decimal("0.000001")) == Decimal("0.134300")
+
+
+def test_store_open_interest_uses_conflict_safe_upsert() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        collector = MarketCollector(db)
+        payload = {"symbol": "ZECUSDT", "openInterest": "100.123", "time": 1783674643297}
+        updated_payload = {"symbol": "ZECUSDT", "openInterest": "101.456", "time": 1783674643297}
+
+        collector._store_open_interest("ZECUSDT", payload)
+        db.commit()
+        collector._store_open_interest("ZECUSDT", updated_payload)
+        db.commit()
+
+        rows = db.scalars(select(FuturesOpenInterest).where(FuturesOpenInterest.symbol == "ZECUSDT")).all()
+        assert len(rows) == 1
+        assert rows[0].open_interest.quantize(Decimal("0.001")) == Decimal("101.456")
 
 
 def _futures_symbol(
