@@ -990,6 +990,71 @@ export type V3ShadowForwardLaneRow = {
   read: string;
 };
 
+export type V3ShadowForwardStageDecision = {
+  stage: string;
+  timeframe: string;
+  decision: string;
+  quality_flag: string;
+  reason: string;
+  v2_evaluated: number;
+  v2_closed_count: number;
+  v2_total_r_closed?: string | number | null;
+  v2_realistic_total_r_closed?: string | number | null;
+  v2_max_drawdown_r?: string | number | null;
+  v3_signal_count: number;
+  v3_closed_count: number;
+  v3_total_r_closed?: string | number | null;
+  v3_realistic_total_r_closed?: string | number | null;
+  v3_avg_r_closed?: string | number | null;
+  v3_realistic_avg_r_closed?: string | number | null;
+  v3_winrate_pct?: string | number | null;
+  v3_max_drawdown_r?: string | number | null;
+  v3_top_symbol?: string | null;
+  v3_top_symbol_share_pct?: string | number | null;
+  v3_symbol_count?: number | null;
+  retention_pct?: string | number | null;
+  total_r_delta_vs_v2?: string | number | null;
+  avg_r_delta_vs_v2?: string | number | null;
+  realistic_total_r_delta_vs_v2?: string | number | null;
+  max_drawdown_delta_vs_v2?: string | number | null;
+  read?: string | null;
+};
+
+export type V3ShadowForwardFilterDecision = {
+  filter_id: string;
+  filter_label: string;
+  expression: string;
+  decision: string;
+  reason: string;
+  sample_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  open_count: number;
+  total_r_closed?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  avg_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  winrate_pct?: string | number | null;
+  avg_r_delta_vs_v2?: string | number | null;
+  sl_share_delta_vs_v2?: string | number | null;
+  verdict?: string | null;
+};
+
+export type V3ShadowForwardAudit = {
+  executive_verdict: string;
+  promotion_readiness: string;
+  main_findings: string[];
+  next_recommendation: string;
+  promising_stage_count: number;
+  monitor_stage_count: number;
+  promising_filter_count: number;
+  risk_flags: { flag: string; severity: string; detail: string }[];
+  stage_decisions: V3ShadowForwardStageDecision[];
+  filter_decisions: V3ShadowForwardFilterDecision[];
+  guardrails: string[];
+};
+
 export type V3ShadowForwardLogResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -1027,6 +1092,7 @@ export type V3ShadowForwardLogResponse = {
     max_drawdown_delta_v3_vs_v2?: string | number | null;
     read: string;
   };
+  audit?: V3ShadowForwardAudit;
   by_stage_timeframe: V3ShadowForwardLaneRow[];
   by_filter: V3ShadowFilterRow[];
   latest_v3_open_signals: SignalPerformanceItem[];

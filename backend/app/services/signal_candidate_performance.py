@@ -653,6 +653,8 @@ class SignalCandidatePerformanceService:
         v2_perf = v2_summary["performance"]
         v3_perf = v3_summary["performance"]
         latest_v3_time = max((_parse_dt(item.get("signal_timestamp")) for item in v3_items), default=None)
+        lane_rows = _v3_forward_lane_rows(evaluated, min_sample=min_sample)
+        filter_rows = _v3_filter_rows(v3_items, baseline=v2_perf, min_sample=min_sample, limit=limit)
         return {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
@@ -693,8 +695,15 @@ class SignalCandidatePerformanceService:
                 ),
                 "read": _v3_forward_read(v2_summary, v3_summary, min_sample=min_sample),
             },
-            "by_stage_timeframe": _v3_forward_lane_rows(evaluated, min_sample=min_sample),
-            "by_filter": _v3_filter_rows(v3_items, baseline=v2_perf, min_sample=min_sample, limit=limit),
+            "audit": _v3_forward_audit(
+                v2_summary=v2_summary,
+                v3_summary=v3_summary,
+                lane_rows=lane_rows,
+                filter_rows=filter_rows,
+                min_sample=min_sample,
+            ),
+            "by_stage_timeframe": lane_rows,
+            "by_filter": filter_rows,
             "latest_v3_open_signals": _sorted_signal_rows(v3_open, limit=limit),
             "latest_v3_closed_signals": _sorted_signal_rows(v3_closed, limit=limit),
             "latest_v3_signals": _sorted_signal_rows(v3_items, limit=limit),
@@ -1529,6 +1538,245 @@ def _v3_forward_read(v2_summary: dict[str, Any], v3_summary: dict[str, Any], *, 
     return "V3_FORWARD_INCONCLUSIVE"
 
 
+def _v3_forward_audit(
+    *,
+    v2_summary: dict[str, Any],
+    v3_summary: dict[str, Any],
+    lane_rows: list[dict[str, Any]],
+    filter_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    stage_decisions = [_v3_stage_decision(row, min_sample=min_sample) for row in lane_rows]
+    filter_decisions = [_v3_filter_decision(row, min_sample=min_sample) for row in filter_rows]
+    stage_decisions.sort(
+        key=lambda row: (
+            row["decision"] in {"CALIBRATION_CANDIDATE", "MONITOR_MORE"},
+            _decimal_or_zero(row.get("v3_realistic_total_r_closed")),
+            _decimal_or_zero(row.get("v3_total_r_closed")),
+            int(row.get("v3_closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    filter_decisions.sort(
+        key=lambda row: (
+            row["decision"] in {"V4_FILTER_CANDIDATE", "MONITOR_MORE"},
+            _decimal_or_zero(row.get("avg_r_delta_vs_v2")),
+            _decimal_or_zero(row.get("total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+
+    v2_perf = v2_summary["performance"]
+    v3_perf = v3_summary["performance"]
+    v3_closed = int(v3_perf.get("closed_count") or 0)
+    v3_total = _decimal_or_zero(v3_perf.get("total_r_closed"))
+    v3_realistic = _decimal_or_zero(v3_perf.get("realistic_total_r_closed"))
+    promising_stage_count = sum(1 for row in stage_decisions if row["decision"] == "CALIBRATION_CANDIDATE")
+    monitor_stage_count = sum(1 for row in stage_decisions if row["decision"] == "MONITOR_MORE")
+    promising_filter_count = sum(1 for row in filter_decisions if row["decision"] == "V4_FILTER_CANDIDATE")
+    risk_flags = _v3_audit_risk_flags(stage_decisions, filter_decisions, v3_summary)
+
+    if v3_closed < min_sample:
+        executive_verdict = "WAIT_MORE_SAMPLE"
+        promotion_readiness = "V3_MONITOR_ONLY"
+        next_recommendation = "Lanjut collect sample; V3 belum punya closed sample cukup untuk dibandingkan."
+    elif promising_stage_count > 0 and promising_filter_count > 0 and v3_realistic > 0:
+        executive_verdict = "HAS_CALIBRATION_CANDIDATE"
+        promotion_readiness = "V4_FILTER_STUDY_READY"
+        next_recommendation = "Gunakan lane/filter kandidat ini untuk studi V4 read-only, bukan langsung mengganti rule live."
+    elif v3_total > 0 or monitor_stage_count > 0:
+        executive_verdict = "MONITOR_MORE"
+        promotion_readiness = "V3_MONITOR_ONLY"
+        next_recommendation = "V3 punya sinyal positif campuran; tunggu sample tambahan dan cek realistic R."
+    else:
+        executive_verdict = "NO_PROMOTION_YET"
+        promotion_readiness = "KEEP_V2_LIVE_RULES"
+        next_recommendation = "Jangan promosikan V3; cari filter baru atau tunggu data live tambahan."
+
+    best_stage = next((row for row in stage_decisions if row["decision"] in {"CALIBRATION_CANDIDATE", "MONITOR_MORE"}), None)
+    best_filter = next((row for row in filter_decisions if row["decision"] in {"V4_FILTER_CANDIDATE", "MONITOR_MORE"}), None)
+    main_findings = [
+        f"V3 closed {v3_closed} dari {int(v2_perf.get('closed_count') or 0)} closed V2; ideal {v3_total}R, realistic {v3_realistic}R.",
+        (
+            f"Lane terbaik: {best_stage['stage']} {best_stage['timeframe']} ({best_stage['decision']})."
+            if best_stage
+            else "Belum ada lane V3 yang cukup bersih untuk dipromosikan."
+        ),
+        (
+            f"Filter terbaik: {best_filter['filter_label']} ({best_filter['decision']})."
+            if best_filter
+            else "Belum ada filter V3 yang layak jadi kandidat studi V4."
+        ),
+    ]
+
+    return {
+        "executive_verdict": executive_verdict,
+        "promotion_readiness": promotion_readiness,
+        "main_findings": main_findings,
+        "next_recommendation": next_recommendation,
+        "promising_stage_count": promising_stage_count,
+        "monitor_stage_count": monitor_stage_count,
+        "promising_filter_count": promising_filter_count,
+        "risk_flags": risk_flags,
+        "stage_decisions": stage_decisions,
+        "filter_decisions": filter_decisions,
+        "guardrails": [
+            "Audit ini hanya membaca hasil V2 live log dan V3 shadow filter.",
+            "CALIBRATION_CANDIDATE bukan live signal dan bukan approval execution.",
+            "Rule Signal Factory V2, scanner behavior, TP/SL reference, dan outcome logic tidak berubah.",
+        ],
+    }
+
+
+def _v3_stage_decision(row: dict[str, Any], *, min_sample: int) -> dict[str, Any]:
+    v2 = row.get("v2_live", {})
+    v3 = row.get("v3_shadow_signal", {})
+    v2_perf = v2.get("performance", {})
+    v3_perf = v3.get("performance", {})
+    v3_quality = v3.get("quality", {})
+    v3_closed = int(v3_perf.get("closed_count") or 0)
+    v3_total = _decimal_or_zero(v3_perf.get("total_r_closed"))
+    v3_realistic = _decimal_or_zero(v3_perf.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(row.get("avg_r_delta_v3_vs_v2"))
+    dd_delta = _decimal_or_none_any(row.get("max_drawdown_delta_v3_vs_v2"))
+    concentration = _decimal_or_none_any(v3_quality.get("top_symbol_share_pct"))
+
+    if v3_closed < min_sample:
+        decision = "WAIT_SAMPLE"
+        quality_flag = "SAMPLE_TOO_SMALL"
+        reason = f"Closed sample {v3_closed} masih di bawah minimum {min_sample}."
+    elif v3_realistic > 0 and v3_total > 0 and avg_delta is not None and avg_delta > 0 and (dd_delta is None or dd_delta >= 0) and (concentration is None or concentration <= Decimal("35")):
+        decision = "CALIBRATION_CANDIDATE"
+        quality_flag = "PROMISING_SHADOW"
+        reason = "Ideal R dan realistic R positif, avg R membaik vs V2, drawdown tidak memburuk, dan konsentrasi symbol tidak berlebihan."
+    elif v3_total > 0 and (avg_delta is None or avg_delta >= 0):
+        decision = "MONITOR_MORE"
+        quality_flag = "MIXED_POSITIVE"
+        reason = "Total R positif, tapi realistic/drawdown/concentration belum cukup bersih untuk kandidat kalibrasi."
+    elif v3_total < 0:
+        decision = "DO_NOT_PROMOTE"
+        quality_flag = "WEAK_SHADOW"
+        reason = "Total R V3 masih negatif."
+    else:
+        decision = "INCONCLUSIVE"
+        quality_flag = "NO_CLEAR_EDGE"
+        reason = "Belum ada gap kualitas yang jelas terhadap V2."
+
+    return {
+        "stage": row.get("stage"),
+        "timeframe": row.get("timeframe"),
+        "decision": decision,
+        "quality_flag": quality_flag,
+        "reason": reason,
+        "v2_evaluated": int(v2_perf.get("signals_evaluated") or 0),
+        "v2_closed_count": int(v2_perf.get("closed_count") or 0),
+        "v2_total_r_closed": v2_perf.get("total_r_closed"),
+        "v2_realistic_total_r_closed": v2_perf.get("realistic_total_r_closed"),
+        "v2_max_drawdown_r": v2.get("drawdown", {}).get("max_drawdown_r"),
+        "v3_signal_count": int(row.get("v3_shadow_signal_count") or 0),
+        "v3_closed_count": v3_closed,
+        "v3_total_r_closed": v3_perf.get("total_r_closed"),
+        "v3_realistic_total_r_closed": v3_perf.get("realistic_total_r_closed"),
+        "v3_avg_r_closed": v3_perf.get("avg_r_closed"),
+        "v3_realistic_avg_r_closed": v3_perf.get("realistic_avg_r_closed"),
+        "v3_winrate_pct": v3_perf.get("winrate_pct"),
+        "v3_max_drawdown_r": v3.get("drawdown", {}).get("max_drawdown_r"),
+        "v3_top_symbol": v3_quality.get("top_symbol"),
+        "v3_top_symbol_share_pct": v3_quality.get("top_symbol_share_pct"),
+        "v3_symbol_count": v3_quality.get("symbol_count"),
+        "retention_pct": row.get("v3_sample_retention_pct"),
+        "total_r_delta_vs_v2": row.get("total_r_delta_v3_vs_v2"),
+        "avg_r_delta_vs_v2": row.get("avg_r_delta_v3_vs_v2"),
+        "realistic_total_r_delta_vs_v2": _decimal_delta(
+            v3_perf.get("realistic_total_r_closed"),
+            v2_perf.get("realistic_total_r_closed"),
+        ),
+        "max_drawdown_delta_vs_v2": row.get("max_drawdown_delta_v3_vs_v2"),
+        "read": row.get("read"),
+    }
+
+
+def _v3_filter_decision(row: dict[str, Any], *, min_sample: int) -> dict[str, Any]:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero(row.get("total_r_closed"))
+    realistic_total = _decimal_or_zero(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(row.get("avg_r_delta_vs_v2"))
+    sl_delta = _decimal_or_none_any(row.get("sl_share_delta_vs_v2"))
+    if closed < min_sample:
+        decision = "WAIT_SAMPLE"
+        reason = f"Closed sample {closed} masih di bawah minimum {min_sample}."
+    elif total_r > 0 and realistic_total > 0 and avg_delta is not None and avg_delta > 0 and (sl_delta is None or sl_delta <= 0):
+        decision = "V4_FILTER_CANDIDATE"
+        reason = "Filter punya ideal/realistic R positif, avg R membaik, dan SL share tidak naik."
+    elif total_r > 0 and avg_delta is not None and avg_delta >= 0:
+        decision = "MONITOR_MORE"
+        reason = "Filter positif, tapi belum cukup bersih dari sisi realistic R atau SL share."
+    elif total_r < 0:
+        decision = "DO_NOT_PROMOTE"
+        reason = "Filter menghasilkan total R negatif."
+    else:
+        decision = "INCONCLUSIVE"
+        reason = "Belum ada pemisahan TP/SL yang jelas."
+    return {
+        "filter_id": row.get("filter_id"),
+        "filter_label": row.get("label"),
+        "expression": row.get("expression"),
+        "decision": decision,
+        "reason": reason,
+        "sample_count": int(row.get("sample_count") or 0),
+        "closed_count": closed,
+        "tp_count": int(row.get("tp_count") or 0),
+        "sl_count": int(row.get("sl_count") or 0),
+        "open_count": int(row.get("open_count") or 0),
+        "total_r_closed": row.get("total_r_closed"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "avg_r_closed": row.get("avg_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "winrate_pct": row.get("winrate_pct"),
+        "avg_r_delta_vs_v2": row.get("avg_r_delta_vs_v2"),
+        "sl_share_delta_vs_v2": row.get("sl_share_delta_vs_v2"),
+        "verdict": row.get("verdict"),
+    }
+
+
+def _v3_audit_risk_flags(
+    stage_decisions: list[dict[str, Any]],
+    filter_decisions: list[dict[str, Any]],
+    v3_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    flags: list[dict[str, Any]] = []
+    v3_perf = v3_summary["performance"]
+    penalty = _decimal_or_zero(v3_perf.get("realism_penalty_r_closed"))
+    if penalty > Decimal("5"):
+        flags.append(
+            {
+                "flag": "REALISTIC_COST_DRAG",
+                "severity": "WARN",
+                "detail": f"Realistic R turun {penalty}R dari ideal; spread/fee/slippage perlu tetap dipantau.",
+            }
+        )
+    for decision in stage_decisions:
+        share = _decimal_or_none_any(decision.get("v3_top_symbol_share_pct"))
+        if share is not None and share > Decimal("35") and int(decision.get("v3_signal_count") or 0) > 0:
+            flags.append(
+                {
+                    "flag": "HIGH_SYMBOL_CONCENTRATION",
+                    "severity": "WARN",
+                    "detail": f"{decision.get('stage')} {decision.get('timeframe')} didominasi {decision.get('v3_top_symbol')} ({share}%).",
+                }
+            )
+    if not any(decision["decision"] == "V4_FILTER_CANDIDATE" for decision in filter_decisions):
+        flags.append(
+            {
+                "flag": "NO_FILTER_CANDIDATE_YET",
+                "severity": "INFO",
+                "detail": "Belum ada filter V3 yang cukup bersih untuk studi V4.",
+            }
+        )
+    return flags
+
+
 def _sorted_signal_rows(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
     return sorted(
         items,
@@ -1840,6 +2088,15 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _decimal_or_none_any(value: Any) -> Decimal | None:
+    return _decimal_or_none(value)
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    parsed = _decimal_or_none(value)
+    return parsed if parsed is not None else Decimal("0")
 
 
 def _avg_decimal(values: list[Decimal]) -> Decimal | None:

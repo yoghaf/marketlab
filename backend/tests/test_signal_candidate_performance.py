@@ -738,6 +738,11 @@ def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
         assert forward["logging_model"] == "derived_shadow_lane_from_v2_signal_forward_log"
         assert forward["not_live_signal"] is True
         assert forward["not_execution_instruction"] is True
+        assert forward["audit"]["executive_verdict"] == "HAS_CALIBRATION_CANDIDATE"
+        assert forward["audit"]["promotion_readiness"] == "V4_FILTER_STUDY_READY"
+        assert forward["audit"]["stage_decisions"][0]["decision"] == "CALIBRATION_CANDIDATE"
+        assert forward["audit"]["filter_decisions"][0]["decision"] == "V4_FILTER_CANDIDATE"
+        assert "bukan live signal" in forward["audit"]["guardrails"][1]
 
 
 def _signal(

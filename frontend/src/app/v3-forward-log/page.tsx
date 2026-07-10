@@ -9,9 +9,12 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   SignalPerformanceItem,
   V3ShadowFilterRow,
+  V3ShadowForwardAudit,
+  V3ShadowForwardFilterDecision,
   V3ShadowForwardLaneRow,
   V3ShadowForwardLogResponse,
   V3ShadowForwardLaneSummary,
+  V3ShadowForwardStageDecision,
   fetchJson,
   fmtNumber,
   fmtPrice,
@@ -112,6 +115,8 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
             </SectionCard>
           </section>
 
+          {data?.audit ? <V3AuditPanel audit={data.audit} /> : null}
+
           <SectionCard title="Lane comparison" description="Baca ini untuk melihat apakah MID_LONG/MID_SHORT V3 benar-benar lebih bersih daripada baseline V2.">
             <LaneTable rows={data?.by_stage_timeframe || []} />
           </SectionCard>
@@ -142,6 +147,59 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
   );
 }
 
+function V3AuditPanel({ audit }: { audit: V3ShadowForwardAudit }) {
+  return (
+    <SectionCard title="V3/V4 decision audit" description="Ringkasan apakah V3 layak dipantau sebagai kandidat kalibrasi berikutnya. Tetap read-only, bukan pengganti rule live.">
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <Insight label="Verdict" value={labelFor(audit.executive_verdict)} />
+        <Insight label="Readiness" value={labelFor(audit.promotion_readiness)} />
+        <Insight label="Stage kandidat" value={`${audit.promising_stage_count} kandidat / ${audit.monitor_stage_count} monitor`} />
+        <Insight label="Filter kandidat" value={audit.promising_filter_count} />
+      </div>
+      <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-[1fr_1fr]">
+        <div>
+          <h3 className="text-sm font-bold text-ink">Temuan utama</h3>
+          <ul className="mt-2 grid gap-2 text-sm text-slate-700">
+            {audit.main_findings.map((finding) => (
+              <li className="rounded border border-line bg-field/40 p-3" key={finding}>{finding}</li>
+            ))}
+          </ul>
+          <div className="mt-3 rounded border border-line bg-yellow-50 p-3 text-sm font-semibold text-slate-700">
+            {audit.next_recommendation}
+          </div>
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-ink">Risk flags</h3>
+          <div className="mt-2 grid gap-2 text-sm">
+            {audit.risk_flags.length ? audit.risk_flags.map((flag) => (
+              <div className="rounded border border-line bg-white p-3" key={`${flag.flag}-${flag.detail}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge value={flag.severity} />
+                  <span className="font-semibold">{labelFor(flag.flag)}</span>
+                </div>
+                <p className="mt-1 text-slate-600">{flag.detail}</p>
+              </div>
+            )) : <EmptyState title="Tidak ada risk flag utama" />}
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-line">
+        <h3 className="px-4 pt-4 text-sm font-bold text-ink">Stage/timeframe decision</h3>
+        <StageDecisionTable rows={audit.stage_decisions} />
+      </div>
+      <div className="border-t border-line">
+        <h3 className="px-4 pt-4 text-sm font-bold text-ink">Filter decision</h3>
+        <FilterDecisionTable rows={audit.filter_decisions} />
+      </div>
+      <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
+        {audit.guardrails.map((item) => (
+          <div className="rounded border border-line bg-field/40 p-3 font-semibold text-slate-700" key={item}>{item}</div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
 function ForwardSummary({ summary }: { summary?: V3ShadowForwardLaneSummary }) {
   const perf = summary?.performance;
   const drawdown = summary?.drawdown;
@@ -158,6 +216,84 @@ function ForwardSummary({ summary }: { summary?: V3ShadowForwardLaneSummary }) {
       <Insight label="Median R" value={`${fmtSigned(quality?.median_r_closed)}R`} />
       <Insight label="Top symbol" value={`${quality?.top_symbol || "-"} ${quality?.top_symbol_share_pct == null ? "" : `(${fmtNumber(quality.top_symbol_share_pct)}%)`}`} />
     </div>
+  );
+}
+
+function StageDecisionTable({ rows }: { rows: V3ShadowForwardStageDecision[] }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>Lane</th>
+          <th>Decision</th>
+          <th>V3 sample</th>
+          <th>Ideal R</th>
+          <th>Realistic R</th>
+          <th>Avg delta</th>
+          <th>DD delta</th>
+          <th>Top symbol</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${row.stage}-${row.timeframe}-audit`}>
+            <td>
+              <div className="font-semibold">{labelFor(row.stage)}</div>
+              <div className="text-xs text-slate-500">{row.timeframe}</div>
+            </td>
+            <td><StatusBadge value={row.decision} /></td>
+            <td>{row.v3_signal_count} / closed {row.v3_closed_count}</td>
+            <td>{fmtSigned(row.v3_total_r_closed)}R</td>
+            <td>{fmtSigned(row.v3_realistic_total_r_closed)}R</td>
+            <td>{fmtSigned(row.avg_r_delta_vs_v2)}R</td>
+            <td>{fmtSigned(row.max_drawdown_delta_vs_v2)}R</td>
+            <td>{row.v3_top_symbol || "-"} {row.v3_top_symbol_share_pct == null ? "" : `(${fmtNumber(row.v3_top_symbol_share_pct)}%)`}</td>
+            <td className="max-w-[28rem] text-xs text-slate-600">{row.reason}</td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={9} title="Belum ada stage decision" />}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function FilterDecisionTable({ rows }: { rows: V3ShadowForwardFilterDecision[] }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>Filter</th>
+          <th>Decision</th>
+          <th>Sample</th>
+          <th>TP / SL / Open</th>
+          <th>Ideal R</th>
+          <th>Realistic R</th>
+          <th>Avg delta</th>
+          <th>SL delta</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${row.filter_id}-decision`}>
+            <td>
+              <div className="font-semibold">{row.filter_label}</div>
+              <div className="text-xs text-slate-500">{compactReason(row.expression || "-", 100)}</div>
+            </td>
+            <td><StatusBadge value={row.decision} /></td>
+            <td>{row.sample_count} / closed {row.closed_count}</td>
+            <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+            <td>{fmtSigned(row.total_r_closed)}R</td>
+            <td>{fmtSigned(row.realistic_total_r_closed)}R</td>
+            <td>{fmtSigned(row.avg_r_delta_vs_v2)}R</td>
+            <td>{fmtSigned(row.sl_share_delta_vs_v2)}%</td>
+            <td className="max-w-[28rem] text-xs text-slate-600">{row.reason}</td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={9} title="Belum ada filter decision" />}
+      </tbody>
+    </TableShell>
   );
 }
 

@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-23",
+    title: "V3 Shadow Quality Audit",
+    status: "LIVE",
+    area: "Signal research",
+    summary: "Menambahkan panel audit ke V3 Forward Log untuk membedakan monitoring biasa dengan keputusan riset lane/filter yang layak dipantau.",
+    changes: [
+      "Endpoint V3 Forward Log sekarang mengirim audit read-only berisi executive verdict, readiness, temuan utama, risk flags, stage decision, dan filter decision.",
+      "Halaman V3 Forward Log menampilkan V3/V4 decision audit agar terlihat lane mana yang layak dipantau, mana yang lemah, dan alasannya.",
+      "Decision memakai label riset seperti CALIBRATION_CANDIDATE, MONITOR_MORE, DO_NOT_PROMOTE, dan WAIT_SAMPLE; tidak ada live signal atau execution.",
+      "Audit ikut membandingkan ideal R, realistic R, drawdown delta, dan konsentrasi symbol supaya filter yang terlihat bagus tidak langsung dipercaya mentah.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa membaca apakah V3 shadow hanya terlihat bagus karena sample kecil/konsentrasi/biaya realistis, atau memang layak masuk studi V4 berikutnya.",
+    links: [
+      { href: "/v3-forward-log", label: "V3 Forward Log" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-22",
     title: "Research Loop De-duplication",
     status: "LIVE",
