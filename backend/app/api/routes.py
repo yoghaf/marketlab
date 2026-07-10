@@ -65,6 +65,8 @@ _SIGNAL_FILTER_STUDY_CACHE_LOCK = Lock()
 _SIGNAL_FILTER_STUDY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_CALIBRATION_CACHE_LOCK = Lock()
 _SIGNAL_CALIBRATION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_V3_SHADOW_COMPARISON_CACHE_LOCK = Lock()
+_V3_SHADOW_COMPARISON_CACHE: dict[tuple, tuple[float, dict]] = {}
 _STRATEGY_OPTIMIZATION_CACHE_LOCK = Lock()
 _STRATEGY_OPTIMIZATION_CACHE: dict[tuple, tuple[float, dict]] = {}
 _STRATEGY_REGIME_SPLIT_CACHE_LOCK = Lock()
@@ -485,6 +487,52 @@ def signal_candidates_calibration_lab(
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_CALIBRATION_CACHE_LOCK:
         _SIGNAL_CALIBRATION_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/v3-shadow/comparison")
+def v3_shadow_comparison(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    stage: str | None = None,
+    timeframe: str | None = None,
+    min_sample: int = 5,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 200))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    normalized_stage = None if stage in {"", "ALL"} else stage
+    normalized_timeframe = None if timeframe in {"", "ALL"} else timeframe
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_stage or "",
+        normalized_timeframe or "",
+        normalized_min_sample,
+        normalized_limit,
+    )
+    now = monotonic()
+    with _V3_SHADOW_COMPARISON_CACHE_LOCK:
+        cached = _V3_SHADOW_COMPARISON_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).v3_shadow_comparison(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=normalized_stage,
+            timeframe=normalized_timeframe,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _V3_SHADOW_COMPARISON_CACHE_LOCK:
+        _V3_SHADOW_COMPARISON_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

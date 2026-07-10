@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-16",
+    title: "V3 Shadow Comparison Lab",
+    status: "LIVE",
+    area: "Research + UI",
+    summary: "Menambahkan halaman V3 Shadow Lab untuk membandingkan semua Signal V2 dengan subset yang lolos V3 shadow filter.",
+    changes: [
+      "Menambahkan endpoint /api/v3-shadow/comparison untuk melihat V2 baseline vs V3_SHADOW_PASS.",
+      "Halaman /v3-shadow-lab menampilkan V2 evaluated, V2 total R, V3 pass count, V3 total R, avg R delta, dan verdict research-only.",
+      "Comparison dipecah berdasarkan V3 status, lane stage/timeframe, dan filter V3 yang berkontribusi.",
+      "Tabel contoh latest pass/fail signal membantu audit signal mana yang lolos filter V3 tanpa mengubah rule live.",
+      "Radar dan Signal Detail tetap memakai field V3 shadow yang sudah ada; patch ini hanya menambah comparison lab."
+    ],
+    impact: "Kita bisa memutuskan apakah V3 filter benar-benar memperbaiki kualitas Signal sebelum dipromosikan, tanpa mengubah Signal Factory V2 atau execution.",
+    links: [
+      { href: "/v3-shadow-lab", label: "V3 Shadow Lab" },
+      { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-15",
     title: "Strategy optimization artifacts + V3 shadow snapshot",
     status: "LIVE",

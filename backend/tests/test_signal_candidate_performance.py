@@ -527,6 +527,56 @@ def test_v3_shadow_helper_matches_candidate_evidence() -> None:
     assert missing["v3_shadow_status"] == "V3_SHADOW_UNAVAILABLE"
 
 
+def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        for index in range(30):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            is_high_funding = index < 10 or index >= 25
+            symbol = f"SYM{index:02d}USDT"
+            db.add(
+                _signal(
+                    f"sig-{index}",
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": "82" if is_high_funding else "20"},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_high_funding else "111",
+                    low="84" if is_high_funding else "98",
+                    close="86" if is_high_funding else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).v3_shadow_comparison(position_lock=False, min_sample=5)
+
+        assert payload["summary"]["v3_pass_count"] == 15
+        assert payload["summary"]["v3_fail_count"] == 15
+        assert payload["summary"]["v2_live"]["tp_count"] == 15
+        assert payload["summary"]["v2_live"]["sl_count"] == 15
+        assert payload["summary"]["v3_shadow_pass"]["tp_count"] == 15
+        assert payload["summary"]["v3_shadow_pass"]["sl_count"] == 0
+        assert payload["summary"]["read"] == "V3_SHADOW_IMPROVES_V2"
+        by_status = {row["bucket"]: row for row in payload["by_v3_status"]}
+        assert by_status["V3_SHADOW_PASS"]["verdict"] == "BETTER_THAN_V2_BASELINE"
+        assert payload["by_filter"][0]["filter_id"] == "FUNDING_GE_75"
+
+
 def _signal(
     signal_id: str,
     symbol: str,

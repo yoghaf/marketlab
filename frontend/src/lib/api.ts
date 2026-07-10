@@ -802,6 +802,90 @@ export type SignalPerformanceResponse = {
   items: SignalPerformanceItem[];
 };
 
+export type V3ShadowStatusRow = SignalPerformanceBucket & {
+  bucket: string;
+  sample_count: number;
+  sample_retention_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  avg_r_delta_vs_v2?: string | number | null;
+  total_r_delta_vs_v2?: string | number | null;
+  winrate_delta_vs_v2?: string | number | null;
+  sl_share_delta_vs_v2?: string | number | null;
+  verdict: string;
+};
+
+export type V3ShadowLaneRow = {
+  stage: string;
+  timeframe: string;
+  v2_live: SignalPerformanceBucket;
+  v3_shadow_pass: SignalPerformanceBucket;
+  v3_pass_count: number;
+  v3_fail_count: number;
+  v3_unavailable_count: number;
+  v3_no_filter_count: number;
+  sample_retention_pct?: string | number | null;
+  avg_r_delta_v3_pass_vs_v2?: string | number | null;
+  total_r_delta_v3_pass_vs_v2?: string | number | null;
+  winrate_delta_v3_pass_vs_v2?: string | number | null;
+  sl_share_delta_v3_pass_vs_v2?: string | number | null;
+  verdict: string;
+};
+
+export type V3ShadowFilterRow = SignalPerformanceBucket & {
+  filter_id: string;
+  label: string;
+  expression: string;
+  sample_count: number;
+  sample_retention_pct?: string | number | null;
+  avg_r_delta_vs_v2?: string | number | null;
+  winrate_delta_vs_v2?: string | number | null;
+  sl_share_delta_vs_v2?: string | number | null;
+  verdict: string;
+};
+
+export type V3ShadowComparisonResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    v2_live: SignalPerformanceBucket;
+    v3_shadow_pass: SignalPerformanceBucket;
+    v3_pass_count: number;
+    v3_fail_count: number;
+    v3_unavailable_count: number;
+    v3_no_filter_count: number;
+    v3_not_evaluated_count: number;
+    sample_retention_pct?: string | number | null;
+    total_r_delta_v3_pass_vs_v2?: string | number | null;
+    avg_r_delta_v3_pass_vs_v2?: string | number | null;
+    winrate_delta_v3_pass_vs_v2?: string | number | null;
+    sl_share_delta_v3_pass_vs_v2?: string | number | null;
+    read: string;
+  };
+  by_v3_status: V3ShadowStatusRow[];
+  by_lane: V3ShadowLaneRow[];
+  by_filter: V3ShadowFilterRow[];
+  latest_pass_signals: SignalPerformanceItem[];
+  latest_fail_signals: SignalPerformanceItem[];
+  guardrails: string[];
+};
+
 export type SignalDetailResponse = {
   generated_at_utc: string;
   epoch: string;

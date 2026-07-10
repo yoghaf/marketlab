@@ -441,6 +441,95 @@ class SignalCandidatePerformanceService:
         )
         return _v3_shadow_filter_map(evaluated, min_sample=min_sample, limit=limit)
 
+    def v3_shadow_comparison(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        stage: str | None = None,
+        timeframe: str | None = None,
+        min_sample: int = 5,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=True,
+        )
+        v2 = _performance_summary(evaluated)
+        pass_items = [item for item in evaluated if item.get("v3_shadow_status") == "V3_SHADOW_PASS"]
+        fail_items = [item for item in evaluated if item.get("v3_shadow_status") == "V3_SHADOW_FAIL"]
+        unavailable_items = [item for item in evaluated if item.get("v3_shadow_status") == "V3_SHADOW_UNAVAILABLE"]
+        no_filter_items = [item for item in evaluated if item.get("v3_shadow_status") == "V3_SHADOW_NO_FILTER"]
+        not_evaluated_items = [
+            item
+            for item in evaluated
+            if item.get("v3_shadow_status")
+            not in {"V3_SHADOW_PASS", "V3_SHADOW_FAIL", "V3_SHADOW_UNAVAILABLE", "V3_SHADOW_NO_FILTER"}
+        ]
+        v3_pass = _performance_summary(pass_items)
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": stage,
+                "timeframe": timeframe,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "study_scope": "read_only_v3_shadow_comparison",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "v2_live": v2,
+                "v3_shadow_pass": v3_pass,
+                "v3_pass_count": len(pass_items),
+                "v3_fail_count": len(fail_items),
+                "v3_unavailable_count": len(unavailable_items),
+                "v3_no_filter_count": len(no_filter_items),
+                "v3_not_evaluated_count": len(not_evaluated_items),
+                "sample_retention_pct": (Decimal(len(pass_items)) / Decimal(len(evaluated)) * Decimal("100")) if evaluated else None,
+                "total_r_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("total_r_closed"), v2.get("total_r_closed")),
+                "avg_r_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("avg_r_closed"), v2.get("avg_r_closed")),
+                "winrate_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("winrate_pct"), v2.get("winrate_pct")),
+                "sl_share_delta_v3_pass_vs_v2": _decimal_delta(_sl_share(v3_pass), _sl_share(v2)),
+                "read": _v3_comparison_read(v2, v3_pass, len(pass_items), min_sample=min_sample),
+            },
+            "by_v3_status": _v3_status_rows(
+                {
+                    "V3_SHADOW_PASS": pass_items,
+                    "V3_SHADOW_FAIL": fail_items,
+                    "V3_SHADOW_UNAVAILABLE": unavailable_items,
+                    "V3_SHADOW_NO_FILTER": no_filter_items,
+                    "V3_SHADOW_OTHER": not_evaluated_items,
+                },
+                baseline=v2,
+                min_sample=min_sample,
+            ),
+            "by_lane": _v3_lane_rows(evaluated, min_sample=min_sample),
+            "by_filter": _v3_filter_rows(pass_items, baseline=v2, min_sample=min_sample, limit=limit),
+            "latest_pass_signals": _sorted_signal_rows(pass_items, limit=limit),
+            "latest_fail_signals": _sorted_signal_rows(fail_items, limit=min(limit, 25)),
+            "guardrails": [
+                "Signal Factory V2 live rules are unchanged.",
+                "V3 shadow filters are comparison-only and do not block or promote live signals.",
+                "No TP/SL formula, outcome logic, scanner behavior, order, leverage, or execution is changed.",
+            ],
+        }
+
     def _evaluated_context(
         self,
         *,
@@ -848,6 +937,154 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
         "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
     }
+
+
+def _v3_status_rows(
+    groups: dict[str, list[dict[str, Any]]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows = []
+    for status, items in groups.items():
+        perf = _performance_summary(items)
+        row = {
+            "bucket": status,
+            "sample_count": len(items),
+            "sample_retention_pct": _retention(len(items), int(baseline.get("signals_evaluated") or 0)),
+            "sl_share_pct": _sl_share(perf),
+            "avg_r_delta_vs_v2": _decimal_delta(perf.get("avg_r_closed"), baseline.get("avg_r_closed")),
+            "total_r_delta_vs_v2": _decimal_delta(perf.get("total_r_closed"), baseline.get("total_r_closed")),
+            "winrate_delta_vs_v2": _decimal_delta(perf.get("winrate_pct"), baseline.get("winrate_pct")),
+            "sl_share_delta_vs_v2": _decimal_delta(_sl_share(perf), _sl_share(baseline)),
+            **perf,
+        }
+        row["verdict"] = _v3_bucket_verdict(row, min_sample=min_sample)
+        rows.append(row)
+    return sorted(rows, key=lambda row: (int(row.get("sample_count") or 0), Decimal(row.get("total_r_closed") or 0)), reverse=True)
+
+
+def _v3_lane_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[(str(item.get("stage") or "UNKNOWN"), str(item.get("timeframe") or "UNKNOWN"))].append(item)
+    rows = []
+    for (stage, timeframe), lane_items in groups.items():
+        baseline = _performance_summary(lane_items)
+        pass_items = [item for item in lane_items if item.get("v3_shadow_status") == "V3_SHADOW_PASS"]
+        v3_pass = _performance_summary(pass_items)
+        row = {
+            "stage": stage,
+            "timeframe": timeframe,
+            "v2_live": baseline,
+            "v3_shadow_pass": v3_pass,
+            "v3_pass_count": len(pass_items),
+            "v3_fail_count": sum(1 for item in lane_items if item.get("v3_shadow_status") == "V3_SHADOW_FAIL"),
+            "v3_unavailable_count": sum(1 for item in lane_items if item.get("v3_shadow_status") == "V3_SHADOW_UNAVAILABLE"),
+            "v3_no_filter_count": sum(1 for item in lane_items if item.get("v3_shadow_status") == "V3_SHADOW_NO_FILTER"),
+            "sample_retention_pct": _retention(len(pass_items), len(lane_items)),
+            "avg_r_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("avg_r_closed"), baseline.get("avg_r_closed")),
+            "total_r_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("total_r_closed"), baseline.get("total_r_closed")),
+            "winrate_delta_v3_pass_vs_v2": _decimal_delta(v3_pass.get("winrate_pct"), baseline.get("winrate_pct")),
+            "sl_share_delta_v3_pass_vs_v2": _decimal_delta(_sl_share(v3_pass), _sl_share(baseline)),
+        }
+        row["verdict"] = _v3_comparison_read(baseline, v3_pass, len(pass_items), min_sample=min_sample)
+        rows.append(row)
+    return sorted(
+        rows,
+        key=lambda row: (
+            Decimal(row.get("avg_r_delta_v3_pass_vs_v2") or Decimal("-999")),
+            Decimal(row.get("v3_shadow_pass", {}).get("total_r_closed") or 0),
+            int(row.get("v3_pass_count") or 0),
+        ),
+        reverse=True,
+    )
+
+
+def _v3_filter_rows(
+    pass_items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    labels: dict[str, str] = {}
+    expressions: dict[str, str] = {}
+    for item in pass_items:
+        filter_id = str(item.get("v3_shadow_filter_id") or "UNKNOWN_FILTER")
+        groups[filter_id].append(item)
+        labels[filter_id] = str(item.get("v3_shadow_filter_label") or filter_id)
+        expressions[filter_id] = str(item.get("v3_shadow_filter_expression") or "")
+    rows = []
+    for filter_id, items in groups.items():
+        perf = _performance_summary(items)
+        row = {
+            "filter_id": filter_id,
+            "label": labels.get(filter_id, filter_id),
+            "expression": expressions.get(filter_id, ""),
+            "sample_count": len(items),
+            "sample_retention_pct": _retention(len(items), int(baseline.get("signals_evaluated") or 0)),
+            "avg_r_delta_vs_v2": _decimal_delta(perf.get("avg_r_closed"), baseline.get("avg_r_closed")),
+            "winrate_delta_vs_v2": _decimal_delta(perf.get("winrate_pct"), baseline.get("winrate_pct")),
+            "sl_share_delta_vs_v2": _decimal_delta(_sl_share(perf), _sl_share(baseline)),
+            **perf,
+        }
+        row["verdict"] = _v3_bucket_verdict(row, min_sample=min_sample)
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("sample_count") or 0) >= min_sample,
+            Decimal(row.get("avg_r_delta_vs_v2") or Decimal("-999")),
+            Decimal(row.get("total_r_closed") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _sorted_signal_rows(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol") or "")),
+        reverse=True,
+    )[:limit]
+
+
+def _retention(count: int, total: int) -> Decimal | None:
+    if total <= 0:
+        return None
+    return Decimal(count) / Decimal(total) * Decimal("100")
+
+
+def _v3_comparison_read(v2: dict[str, Any], v3_pass: dict[str, Any], pass_count: int, *, min_sample: int) -> str:
+    if pass_count < min_sample:
+        return "V3_SAMPLE_TOO_SMALL"
+    avg_delta = _decimal_delta(v3_pass.get("avg_r_closed"), v2.get("avg_r_closed"))
+    sl_delta = _decimal_delta(_sl_share(v3_pass), _sl_share(v2))
+    total_r = Decimal(v3_pass.get("total_r_closed") or 0)
+    if avg_delta is not None and avg_delta > Decimal("0.05") and (sl_delta is None or sl_delta <= 0) and total_r > 0:
+        return "V3_SHADOW_IMPROVES_V2"
+    if avg_delta is not None and avg_delta > 0:
+        return "V3_SHADOW_MONITOR_MORE"
+    if avg_delta is not None and avg_delta < 0:
+        return "V3_SHADOW_WEAKER_THAN_V2"
+    return "V3_SHADOW_INCONCLUSIVE"
+
+
+def _v3_bucket_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("closed_count") or 0) < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    avg_delta = row.get("avg_r_delta_vs_v2")
+    sl_delta = row.get("sl_share_delta_vs_v2")
+    total_r = Decimal(row.get("total_r_closed") or 0)
+    if avg_delta is not None and Decimal(avg_delta) > Decimal("0.05") and total_r > 0 and (sl_delta is None or Decimal(sl_delta) <= 0):
+        return "BETTER_THAN_V2_BASELINE"
+    if avg_delta is not None and Decimal(avg_delta) > 0:
+        return "MONITOR_MORE"
+    if avg_delta is not None and Decimal(avg_delta) < 0:
+        return "WEAKER_THAN_V2_BASELINE"
+    return "INCONCLUSIVE"
 
 
 def _filter_by_result_status(items: list[dict[str, Any]], result_status: str | None) -> list[dict[str, Any]]:
