@@ -740,12 +740,26 @@ export type SignalPerformanceItem = {
   take_profit?: string | number | null;
   risk?: string | number | null;
   rr?: string | number | null;
+  realistic_model_version?: string | null;
+  realistic_fee_pct_per_side?: string | number | null;
+  realistic_slippage_pct_per_side?: string | number | null;
+  realistic_futures_spread_pct?: string | number | null;
+  realistic_spread_source?: string | null;
+  realistic_round_trip_cost_pct_estimate?: string | number | null;
+  realistic_cost_r_estimate?: string | number | null;
+  realistic_fill_quality?: string | null;
   result_status: string;
   result_time_utc?: string | null;
   result_time_wib?: string | null;
   exit_price?: string | number | null;
   realized_r?: string | number | null;
   unrealized_r?: string | number | null;
+  realistic_result_status?: string | null;
+  realistic_entry_price?: string | number | null;
+  realistic_exit_price?: string | number | null;
+  realistic_realized_r?: string | number | null;
+  realistic_unrealized_r?: string | number | null;
+  realism_penalty_r?: string | number | null;
   mfe_r?: string | number | null;
   mae_r?: string | number | null;
   candles_seen: number;
@@ -773,9 +787,15 @@ export type SignalPerformanceBucket = {
   total_r_closed: string | number;
   open_unrealized_r: string | number;
   total_r_with_open: string | number;
+  realistic_total_r_closed?: string | number;
+  realistic_open_unrealized_r?: string | number;
+  realistic_total_r_with_open?: string | number;
+  realism_penalty_r_closed?: string | number;
+  realism_penalty_r_with_open?: string | number;
   fixed_risk_return_pct_1pct_closed: string | number;
   fixed_risk_return_pct_1pct_with_open: string | number;
   avg_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
 };
 
 export type SignalPerformanceResponse = {

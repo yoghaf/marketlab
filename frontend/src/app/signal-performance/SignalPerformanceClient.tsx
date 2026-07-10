@@ -75,12 +75,12 @@ export function SignalPerformanceClient() {
   return (
     <div className="space-y-5">
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <MetricCard label="Total R Closed" value={`${fmtSigned(aggregate?.total_r_closed)}R`} helper="TP/SL/BOTH closed only" tone={Number(aggregate?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
-        <MetricCard label="Fixed-risk Return" value={`${fmtSigned(aggregate?.fixed_risk_return_pct_1pct_closed)}%`} helper="Jika 1R = 1% risk" tone={Number(aggregate?.fixed_risk_return_pct_1pct_closed || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label="Ideal R Closed" value={`${fmtSigned(aggregate?.total_r_closed)}R`} helper="Candle high/low ideal" tone={Number(aggregate?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label="Realistic R Closed" value={`${fmtSigned(aggregate?.realistic_total_r_closed)}R`} helper="Fee + spread + slippage" tone={Number(aggregate?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label="Realism penalty" value={`${fmtSigned(aggregate?.realism_penalty_r_closed)}R`} helper="Selisih ideal vs realistic" tone={Number(aggregate?.realism_penalty_r_closed || 0) > 0 ? "warn" : "good"} />
         <MetricCard label="Winrate" value={aggregate?.winrate_pct == null ? "-" : `${fmtNumber(aggregate.winrate_pct)}%`} helper="TP / (TP + SL)" tone="info" />
         <MetricCard label="TP / SL" value={`${aggregate?.tp_count ?? 0} / ${aggregate?.sl_count ?? 0}`} helper={`${aggregate?.closed_count ?? 0} closed`} />
-        <MetricCard label="Closed" value={aggregate?.closed_count ?? 0} helper="History table only" />
-        <MetricCard label="Evaluated" value={aggregate?.signals_evaluated ?? 0} helper={`${aggregate?.signals_skipped ?? 0} skipped by lock`} />
+        <MetricCard label="Open realistic" value={`${fmtSigned(aggregate?.realistic_open_unrealized_r)}R`} helper={`${aggregate?.open_count ?? 0} open / ${aggregate?.signals_skipped ?? 0} skipped`} tone="warn" />
       </section>
 
       <SectionCard
@@ -140,11 +140,11 @@ export function SignalPerformanceClient() {
                 <th>TP</th>
                 <th>SL</th>
                 <th>Open</th>
-                <th>Waiting</th>
                 <th>Winrate</th>
-                <th>Total R</th>
-                <th>Fixed-risk 1%</th>
-                <th>With Open</th>
+                <th>Ideal R</th>
+                <th>Realistic R</th>
+                <th>Penalty</th>
+                <th>Realistic with open</th>
               </tr>
             </thead>
             <tbody>
@@ -188,7 +188,10 @@ export function SignalPerformanceClient() {
                 <th>Entry</th>
                 <th>SL</th>
                 <th>TP</th>
-                <th>R</th>
+                <th>Ideal R</th>
+                <th>Realistic R</th>
+                <th>Penalty</th>
+                <th>Fill</th>
                 <th>MFE/MAE</th>
                 <th>Result Time</th>
               </tr>
@@ -222,13 +225,16 @@ export function SignalPerformanceClient() {
                   <td>{fmtPrice(item.stop_loss)}</td>
                   <td>{fmtPrice(item.take_profit)}</td>
                   <td>{item.realized_r != null ? `${fmtSigned(item.realized_r)}R` : item.unrealized_r != null ? `${fmtSigned(item.unrealized_r)}R open` : "-"}</td>
+                  <td>{item.realistic_realized_r != null ? `${fmtSigned(item.realistic_realized_r)}R` : item.realistic_unrealized_r != null ? `${fmtSigned(item.realistic_unrealized_r)}R open` : "-"}</td>
+                  <td>{item.realism_penalty_r == null ? "-" : `${fmtSigned(item.realism_penalty_r)}R`}</td>
+                  <td><StatusBadge value={item.realistic_fill_quality || "FILL_UNKNOWN"} /></td>
                   <td>{fmtSigned(item.mfe_r)} / {fmtSigned(item.mae_r)}</td>
                   <td>{item.result_time_wib || fmtTime(item.result_time_utc)}</td>
                 </tr>
               ))}
               {!data?.items.length && (
                 <tr>
-                  <td colSpan={13}><EmptyState title="Belum ada signal" detail="Belum ada Signal dengan entry, SL, dan TP sesuai filter ini." /></td>
+                  <td colSpan={16}><EmptyState title="Belum ada signal" detail="Belum ada Signal dengan entry, SL, dan TP sesuai filter ini." /></td>
                 </tr>
               )}
             </tbody>
@@ -273,7 +279,9 @@ function ForwardIntegrityPanel({ data }: { data: SignalForwardIntegrityResponse 
               <th>TF</th>
               <th>Stage</th>
               <th>Status</th>
-              <th>Current R</th>
+              <th>Ideal R</th>
+              <th>Realistic R</th>
+              <th>Fill</th>
               <th>Latest symbol candle</th>
               <th>Gap</th>
               <th>Detail</th>
@@ -285,7 +293,7 @@ function ForwardIntegrityPanel({ data }: { data: SignalForwardIntegrityResponse 
             ))}
             {!data?.items.length && (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={11}>
                   <EmptyState title="Tidak ada open/stale signal" detail="Semua signal yang terhitung sudah close, atau belum ada posisi paper aktif sesuai filter." />
                 </td>
               </tr>
@@ -299,6 +307,7 @@ function ForwardIntegrityPanel({ data }: { data: SignalForwardIntegrityResponse 
 
 function ForwardIntegrityRow({ item }: { item: SignalPerformanceItem }) {
   const rValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r;
+  const realisticRValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.realistic_unrealized_r : item.realistic_realized_r;
   return (
     <tr>
       <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
@@ -307,6 +316,8 @@ function ForwardIntegrityRow({ item }: { item: SignalPerformanceItem }) {
       <td>{labelFor(item.stage)}</td>
       <td><StatusBadge value={item.result_status} /></td>
       <td>{rValue == null ? "-" : `${fmtSigned(rValue)}R`}</td>
+      <td>{realisticRValue == null ? "-" : `${fmtSigned(realisticRValue)}R`}</td>
+      <td><StatusBadge value={item.realistic_fill_quality || "FILL_UNKNOWN"} /></td>
       <td>{item.latest_symbol_candle_time_wib || fmtTime(item.latest_symbol_candle_time)}</td>
       <td>{fmtGap(item.freshness_gap_minutes ?? item.stale_gap_minutes)}</td>
       <td>
@@ -329,11 +340,11 @@ function TimeframeRow({ timeframe, row }: { timeframe: string; row?: SignalPerfo
       <td>{row?.tp_count ?? 0}</td>
       <td>{row?.sl_count ?? 0}</td>
       <td>{row?.open_count ?? 0}</td>
-      <td>{row?.waiting_count ?? 0}</td>
       <td>{row?.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
       <td>{fmtSigned(row?.total_r_closed)}R</td>
-      <td>{fmtSigned(row?.fixed_risk_return_pct_1pct_closed)}%</td>
-      <td>{fmtSigned(row?.total_r_with_open)}R</td>
+      <td>{fmtSigned(row?.realistic_total_r_closed)}R</td>
+      <td>{fmtSigned(row?.realism_penalty_r_closed)}R</td>
+      <td>{fmtSigned(row?.realistic_total_r_with_open)}R</td>
     </tr>
   );
 }

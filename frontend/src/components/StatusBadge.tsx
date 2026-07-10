@@ -123,6 +123,7 @@ const styles: Record<string, string> = {
   NEITHER_CLOSE_AT_HORIZON: "border-line text-slate-700 bg-slate-50",
   TP_HIT: "border-ready text-ready bg-emerald-50",
   SL_HIT: "border-stale text-stale bg-red-50",
+  SL_HIT_CONSERVATIVE: "border-stale text-stale bg-red-50",
   BOTH_HIT_SAME_CANDLE: "border-warmup text-warmup bg-amber-50",
   EXPIRED: "border-line text-slate-700 bg-slate-50",
   UNKNOWN_FORWARD_DATA: "border-warmup text-warmup bg-amber-50",
@@ -139,6 +140,11 @@ const styles: Record<string, string> = {
   RUNNING: "border-blue-700 text-blue-700 bg-blue-50",
   PASS: "border-ready text-ready bg-emerald-50",
   FAIL: "border-stale text-stale bg-red-50",
+  FILL_GOOD: "border-ready text-ready bg-emerald-50",
+  FILL_ACCEPTABLE: "border-warmup text-warmup bg-amber-50",
+  FILL_BAD: "border-stale text-stale bg-red-50",
+  FILL_UNKNOWN: "border-missing text-missing bg-gray-50",
+  SPREAD_UNKNOWN: "border-warmup text-warmup bg-amber-50",
   INFO: "border-blue-700 text-blue-700 bg-blue-50",
   UNAVAILABLE: "border-missing text-missing bg-gray-50"
 };

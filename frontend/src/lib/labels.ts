@@ -41,6 +41,7 @@ const labels: Record<string, string> = {
   NEITHER_CLOSE_AT_HORIZON: "Close di horizon",
   TP_HIT: "Target referensi tersentuh",
   SL_HIT: "Stop referensi tersentuh",
+  SL_HIT_CONSERVATIVE: "Stop konservatif",
   BOTH_HIT_SAME_CANDLE: "Target dan stop satu candle",
   EXPIRED: "Expired",
   UNKNOWN_FORWARD_DATA: "Data forward belum cukup",
@@ -149,6 +150,11 @@ const labels: Record<string, string> = {
   LIGHT_WATCH: "Light watch",
   PASS: "Pass",
   FAIL: "Fail",
+  FILL_GOOD: "Fill realistis bagus",
+  FILL_ACCEPTABLE: "Fill realistis cukup",
+  FILL_BAD: "Fill realistis buruk",
+  FILL_UNKNOWN: "Fill belum jelas",
+  SPREAD_UNKNOWN: "Spread belum diketahui",
   INFO: "Info",
   UNAVAILABLE: "Belum tersedia"
 };

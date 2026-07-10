@@ -107,6 +107,88 @@ def test_summary_can_filter_closed_only_rows() -> None:
         assert payload["items"][0]["signal_id"] == "s1"
 
 
+def test_realistic_execution_adds_fee_spread_and_slippage_penalty() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(
+            _signal(
+                "tp",
+                "AAAUSDT",
+                signal_time,
+                "LONG",
+                "EARLY_LONG",
+                "100",
+                "90",
+                "115",
+                evidence={"futures_spread_pct": "0.10"},
+            )
+        )
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).summary(position_lock=False)
+
+        item = payload["items"][0]
+        assert item["result_status"] == "TP_HIT"
+        assert item["realized_r"] == Decimal("1.5")
+        assert item["realistic_model_version"] == "REALISTIC_PAPER_EXECUTION_V1"
+        assert item["realistic_fill_quality"] == "FILL_GOOD"
+        assert item["realistic_realized_r"] < item["realized_r"]
+        assert item["realism_penalty_r"] > Decimal("0")
+        assert payload["aggregate"]["realistic_total_r_closed"] < payload["aggregate"]["total_r_closed"]
+        assert payload["aggregate"]["realism_penalty_r_closed"] > Decimal("0")
+
+
+def test_realistic_execution_marks_missing_spread_quality() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(_signal("tp", "AAAUSDT", signal_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.commit()
+
+        item = SignalCandidatePerformanceService(db).summary(position_lock=False)["items"][0]
+
+        assert item["realistic_fill_quality"] == "SPREAD_UNKNOWN"
+        assert item["realistic_spread_source"] == "missing"
+        assert item["realistic_futures_spread_pct"] is None
+
+
+def test_realistic_execution_treats_both_hit_same_candle_as_conservative_stop() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        db.add(
+            _signal(
+                "both",
+                "AAAUSDT",
+                signal_time,
+                "LONG",
+                "EARLY_LONG",
+                "100",
+                "90",
+                "115",
+                evidence={"futures_spread_pct": "0.10"},
+            )
+        )
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="89", close="100"))
+        db.commit()
+
+        item = SignalCandidatePerformanceService(db).summary(position_lock=False)["items"][0]
+
+        assert item["result_status"] == "BOTH_HIT_SAME_CANDLE"
+        assert item["realized_r"] == Decimal("0")
+        assert item["realistic_result_status"] == "SL_HIT_CONSERVATIVE"
+        assert item["realistic_realized_r"] < Decimal("-1")
+
+
 def test_detail_returns_latest_symbol_signal_with_current_open_r() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

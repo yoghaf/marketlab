@@ -19,6 +19,11 @@ COMPLETED_OUTCOMES = {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE"}
 LIVE_STRATEGY_VERSION = "SIGNAL_FACTORY_V2_LIVE"
 SHADOW_STRATEGY_VERSION = "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION"
 FORWARD_DATA_STALE_MINUTES = 30
+REALISTIC_MODEL_VERSION = "REALISTIC_PAPER_EXECUTION_V1"
+REALISTIC_FEE_PCT_PER_SIDE = Decimal("0.05")
+REALISTIC_SLIPPAGE_PCT_PER_SIDE = Decimal("0.02")
+REALISTIC_FILL_GOOD_MAX_COST_R = Decimal("0.15")
+REALISTIC_FILL_ACCEPTABLE_MAX_COST_R = Decimal("0.35")
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
@@ -940,6 +945,8 @@ class SignalCandidatePerformanceService:
         direction = signal.direction
         position = bisect_left(open_times, signal_time)
         future = candles[position:]
+        evidence_snapshot = _evidence_snapshot(signal)
+        realistic_assumptions = _realistic_assumptions(entry=entry, risk=risk, evidence_snapshot=evidence_snapshot)
         base = {
             "signal_id": signal.signal_id,
             "symbol": signal.symbol,
@@ -963,18 +970,25 @@ class SignalCandidatePerformanceService:
             "core_score": signal.core_score,
             "evidence_score": signal.evidence_score,
             "evidence_data_completeness": signal.evidence_data_completeness,
-            "evidence_snapshot": _evidence_snapshot(signal),
+            "evidence_snapshot": evidence_snapshot,
             "entry": entry,
             "stop_loss": stop,
             "take_profit": target,
             "risk": risk,
             "rr": abs(target - entry) / risk if risk > 0 else None,
+            **realistic_assumptions,
             "result_status": "WAITING_DATA",
             "result_time_utc": None,
             "result_time_wib": None,
             "exit_price": None,
             "realized_r": None,
             "unrealized_r": None,
+            "realistic_result_status": "WAITING_DATA",
+            "realistic_entry_price": None,
+            "realistic_exit_price": None,
+            "realistic_realized_r": None,
+            "realistic_unrealized_r": None,
+            "realism_penalty_r": None,
             "mfe_r": None,
             "mae_r": None,
             "candles_seen": 0,
@@ -1010,6 +1024,16 @@ class SignalCandidatePerformanceService:
                 mfe = max(mfe, (entry - candle.low) / risk)
                 mae = min(mae, (entry - candle.high) / risk)
             if tp_hit and sl_hit:
+                realistic_fields = _realistic_result_fields(
+                    base,
+                    entry=entry,
+                    exit_reference=stop,
+                    risk=risk,
+                    direction=direction,
+                    ideal_status="BOTH_HIT_SAME_CANDLE",
+                    ideal_r=Decimal("0"),
+                    conservative_status="SL_HIT_CONSERVATIVE",
+                )
                 return {
                     **base,
                     "result_status": "BOTH_HIT_SAME_CANDLE",
@@ -1018,24 +1042,45 @@ class SignalCandidatePerformanceService:
                     "exit_price": candle.close,
                     "realized_r": Decimal("0"),
                     "unrealized_r": None,
+                    **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
                     "candles_seen": index,
                 }
             if tp_hit:
+                ideal_r = abs(target - entry) / risk
+                realistic_fields = _realistic_result_fields(
+                    base,
+                    entry=entry,
+                    exit_reference=target,
+                    risk=risk,
+                    direction=direction,
+                    ideal_status="TP_HIT",
+                    ideal_r=ideal_r,
+                )
                 return {
                     **base,
                     "result_status": "TP_HIT",
                     "result_time_utc": candle.close_time,
                     "result_time_wib": _wib_string(candle.close_time),
                     "exit_price": target,
-                    "realized_r": abs(target - entry) / risk,
+                    "realized_r": ideal_r,
                     "unrealized_r": None,
+                    **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
                     "candles_seen": index,
                 }
             if sl_hit:
+                realistic_fields = _realistic_result_fields(
+                    base,
+                    entry=entry,
+                    exit_reference=stop,
+                    risk=risk,
+                    direction=direction,
+                    ideal_status="SL_HIT",
+                    ideal_r=Decimal("-1"),
+                )
                 return {
                     **base,
                     "result_status": "SL_HIT",
@@ -1044,6 +1089,7 @@ class SignalCandidatePerformanceService:
                     "exit_price": stop,
                     "realized_r": Decimal("-1"),
                     "unrealized_r": None,
+                    **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
                     "candles_seen": index,
@@ -1051,6 +1097,16 @@ class SignalCandidatePerformanceService:
 
         latest = future[-1]
         unrealized = (latest.close - entry) / risk if direction == "LONG" else (entry - latest.close) / risk
+        realistic_open_fields = _realistic_result_fields(
+            base,
+            entry=entry,
+            exit_reference=latest.close,
+            risk=risk,
+            direction=direction,
+            ideal_status="OPEN",
+            ideal_r=unrealized,
+            realized=False,
+        )
         freshness_gap_minutes = None
         if global_latest_candle_time is not None:
             stale_gap = _naive(global_latest_candle_time) - _naive(latest.close_time)
@@ -1063,6 +1119,7 @@ class SignalCandidatePerformanceService:
                     "result_time_wib": _wib_string(latest.close_time),
                     "exit_price": latest.close,
                     "unrealized_r": unrealized,
+                    **{**realistic_open_fields, "realistic_result_status": "STALE_FORWARD_DATA"},
                     "mfe_r": mfe,
                     "mae_r": mae,
                     "candles_seen": len(future),
@@ -1080,6 +1137,7 @@ class SignalCandidatePerformanceService:
             "result_time_wib": _wib_string(latest.close_time),
             "exit_price": latest.close,
             "unrealized_r": unrealized,
+            **realistic_open_fields,
             "mfe_r": mfe,
             "mae_r": mae,
             "candles_seen": len(future),
@@ -1129,20 +1187,132 @@ def _wib_string(value: datetime | None) -> str | None:
     return f"{wib:%Y-%m-%d %H:%M:%S} WIB"
 
 
+def _realistic_assumptions(
+    *,
+    entry: Decimal,
+    risk: Decimal,
+    evidence_snapshot: dict[str, Decimal | None],
+) -> dict[str, Any]:
+    spread_pct_raw = evidence_snapshot.get("futures_spread_pct")
+    spread_pct = Decimal(spread_pct_raw) if spread_pct_raw is not None else None
+    used_spread_pct = spread_pct if spread_pct is not None else Decimal("0")
+    round_trip_pct = (REALISTIC_FEE_PCT_PER_SIDE * Decimal("2")) + (
+        REALISTIC_SLIPPAGE_PCT_PER_SIDE * Decimal("2")
+    ) + used_spread_pct
+    cost_r = (entry * (round_trip_pct / Decimal("100")) / risk) if risk > 0 else None
+    if spread_pct is None:
+        fill_quality = "SPREAD_UNKNOWN"
+    elif cost_r is None:
+        fill_quality = "FILL_UNKNOWN"
+    elif cost_r <= REALISTIC_FILL_GOOD_MAX_COST_R:
+        fill_quality = "FILL_GOOD"
+    elif cost_r <= REALISTIC_FILL_ACCEPTABLE_MAX_COST_R:
+        fill_quality = "FILL_ACCEPTABLE"
+    else:
+        fill_quality = "FILL_BAD"
+    return {
+        "realistic_model_version": REALISTIC_MODEL_VERSION,
+        "realistic_fee_pct_per_side": REALISTIC_FEE_PCT_PER_SIDE,
+        "realistic_slippage_pct_per_side": REALISTIC_SLIPPAGE_PCT_PER_SIDE,
+        "realistic_futures_spread_pct": spread_pct,
+        "realistic_spread_source": "signal_evidence.futures_spread_pct" if spread_pct is not None else "missing",
+        "realistic_round_trip_cost_pct_estimate": round_trip_pct,
+        "realistic_cost_r_estimate": cost_r,
+        "realistic_fill_quality": fill_quality,
+    }
+
+
+def _realistic_result_fields(
+    base: dict[str, Any],
+    *,
+    entry: Decimal,
+    exit_reference: Decimal,
+    risk: Decimal,
+    direction: str,
+    ideal_status: str,
+    ideal_r: Decimal,
+    conservative_status: str | None = None,
+    realized: bool = True,
+) -> dict[str, Any]:
+    entry_price = _realistic_entry_price(entry, direction, base)
+    exit_price = _realistic_exit_price(exit_reference, direction, base)
+    if entry_price is None or exit_price is None or risk <= 0:
+        realistic_r = None
+    else:
+        gross_r = (exit_price - entry_price) / risk if direction == "LONG" else (entry_price - exit_price) / risk
+        fee_r = ((entry_price + exit_price) * (REALISTIC_FEE_PCT_PER_SIDE / Decimal("100"))) / risk
+        realistic_r = gross_r - fee_r
+    fields = {
+        "realistic_result_status": conservative_status or ideal_status,
+        "realistic_entry_price": entry_price,
+        "realistic_exit_price": exit_price,
+        "realism_penalty_r": (ideal_r - realistic_r) if realistic_r is not None else None,
+    }
+    if realized:
+        fields["realistic_realized_r"] = realistic_r
+        fields["realistic_unrealized_r"] = None
+    else:
+        fields["realistic_realized_r"] = None
+        fields["realistic_unrealized_r"] = realistic_r
+    return fields
+
+
+def _realistic_entry_price(entry: Decimal, direction: str, base: dict[str, Any]) -> Decimal | None:
+    impact_pct = _realistic_price_impact_pct(base)
+    if impact_pct is None:
+        return None
+    if direction == "LONG":
+        return entry * (Decimal("1") + impact_pct)
+    if direction == "SHORT":
+        return entry * (Decimal("1") - impact_pct)
+    return None
+
+
+def _realistic_exit_price(exit_reference: Decimal, direction: str, base: dict[str, Any]) -> Decimal | None:
+    impact_pct = _realistic_price_impact_pct(base)
+    if impact_pct is None:
+        return None
+    if direction == "LONG":
+        return exit_reference * (Decimal("1") - impact_pct)
+    if direction == "SHORT":
+        return exit_reference * (Decimal("1") + impact_pct)
+    return None
+
+
+def _realistic_price_impact_pct(base: dict[str, Any]) -> Decimal | None:
+    spread_pct = base.get("realistic_futures_spread_pct")
+    used_spread_pct = Decimal(spread_pct) if spread_pct is not None else Decimal("0")
+    half_spread_pct = used_spread_pct / Decimal("2")
+    total_pct = half_spread_pct + REALISTIC_SLIPPAGE_PCT_PER_SIDE
+    return total_pct / Decimal("100")
+
+
 def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     status_counts = Counter(str(item["result_status"]) for item in items)
     closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES]
     wins = [item for item in closed if item["result_status"] == "TP_HIT"]
     losses = [item for item in closed if item["result_status"] == "SL_HIT"]
     realized_values = [Decimal(item["realized_r"]) for item in closed if item.get("realized_r") is not None]
+    realistic_realized_values = [
+        Decimal(item["realistic_realized_r"])
+        for item in closed
+        if item.get("realistic_realized_r") is not None
+    ]
     open_values = [
         Decimal(item["unrealized_r"])
         for item in items
         if item["result_status"] == "OPEN" and item.get("unrealized_r") is not None
     ]
+    realistic_open_values = [
+        Decimal(item["realistic_unrealized_r"])
+        for item in items
+        if item["result_status"] == "OPEN" and item.get("realistic_unrealized_r") is not None
+    ]
     completed_for_winrate = len(wins) + len(losses)
     total_r_closed = sum(realized_values, Decimal("0"))
+    realistic_total_r_closed = sum(realistic_realized_values, Decimal("0"))
     total_unrealized_r = sum(open_values, Decimal("0"))
+    realistic_total_unrealized_r = sum(realistic_open_values, Decimal("0"))
     return {
         "signals_evaluated": len(items),
         "open_count": status_counts.get("OPEN", 0),
@@ -1155,9 +1325,20 @@ def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
         "total_r_closed": total_r_closed,
         "open_unrealized_r": total_unrealized_r,
         "total_r_with_open": total_r_closed + total_unrealized_r,
+        "realistic_total_r_closed": realistic_total_r_closed,
+        "realistic_open_unrealized_r": realistic_total_unrealized_r,
+        "realistic_total_r_with_open": realistic_total_r_closed + realistic_total_unrealized_r,
+        "realism_penalty_r_closed": total_r_closed - realistic_total_r_closed,
+        "realism_penalty_r_with_open": (
+            (total_r_closed + total_unrealized_r)
+            - (realistic_total_r_closed + realistic_total_unrealized_r)
+        ),
         "fixed_risk_return_pct_1pct_closed": total_r_closed,
         "fixed_risk_return_pct_1pct_with_open": total_r_closed + total_unrealized_r,
         "avg_r_closed": total_r_closed / Decimal(len(realized_values)) if realized_values else None,
+        "realistic_avg_r_closed": realistic_total_r_closed / Decimal(len(realistic_realized_values))
+        if realistic_realized_values
+        else None,
     }
 
 

@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-19",
+    title: "Realistic Paper Execution v1",
+    status: "LIVE",
+    area: "Signal performance realism",
+    summary: "Menambahkan perhitungan realistic R read-only untuk membandingkan hasil ideal candle dengan hasil yang terkena fee, spread, dan slippage.",
+    changes: [
+      "Signal evaluator tetap menghitung Ideal R dari futures candle high/low, lalu menambahkan Realistic R sebagai angka pembanding.",
+      "Realistic model memakai asumsi fee per side, slippage per side, dan futures spread dari evidence signal jika tersedia.",
+      "BOTH_HIT_SAME_CANDLE sekarang memiliki realistic_result_status konservatif SL_HIT_CONSERVATIVE, tanpa mengubah result ideal.",
+      "Signal History menampilkan Ideal R, Realistic R, realism penalty, dan fill quality.",
+      "Signal Detail menampilkan realistic entry/exit, cost estimate, spread source, fee/slippage assumption, dan fill quality.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, threshold, TP/SL reference, atau execution."
+    ],
+    impact: "Kita bisa melihat seberapa jauh hasil paper ideal dari skenario yang lebih dekat ke live market sebelum optimasi screener dipromosikan.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-18",
     title: "Signal Forward Integrity Audit",
     status: "LIVE",

@@ -74,6 +74,7 @@ export default async function SignalDetailPage({
   const snapshot = item.evidence_snapshot || {};
   const rawEvidence = evidenceRoot(data.evidence);
   const rValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.unrealized_r : item.realized_r;
+  const realisticRValue = item.result_status === "OPEN" || item.result_status === "STALE_FORWARD_DATA" ? item.realistic_unrealized_r : item.realistic_realized_r;
   const numericR = Number(rValue ?? 0);
   const isOpen = item.result_status === "OPEN";
   const isStale = item.result_status === "STALE_FORWARD_DATA";
@@ -98,11 +99,19 @@ export default async function SignalDetailPage({
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard label="Position state" value={labelFor(item.result_status)} helper={positionText(item.result_status, rValue)} tone={resultTone} />
-        <MetricCard label={isOpen || isStale ? "Current R" : "Final R"} value={`${fmtSigned(rValue)}R`} helper={isStale ? item.stale_reason || "Data symbol tertinggal dari market lokal terbaru" : isOpen ? "Masih aktif sampai TP/SL tersentuh" : "Sudah closed"} tone={resultTone} />
+        <MetricCard label={isOpen || isStale ? "Ideal current R" : "Ideal final R"} value={`${fmtSigned(rValue)}R`} helper="Candle high/low ideal" tone={resultTone} />
+        <MetricCard label={isOpen || isStale ? "Realistic current R" : "Realistic final R"} value={`${fmtSigned(realisticRValue)}R`} helper="Fee + spread + slippage" tone={Number(realisticRValue || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label="Realism penalty" value={`${fmtSigned(item.realism_penalty_r)}R`} helper="Selisih ideal vs realistic" tone={Number(item.realism_penalty_r || 0) > 0 ? "warn" : "good"} />
         <MetricCard label="Entry futures" value={fmtPrice(item.entry)} helper={fmtTime(item.signal_timestamp)} />
         <MetricCard label="SL reference" value={fmtPrice(item.stop_loss)} helper={`Risk ${fmtPrice(item.risk)}`} tone="bad" />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="TP reference" value={fmtPrice(item.take_profit)} helper={`RR ${fmtNumber(item.rr)}R`} tone="good" />
         <MetricCard label={isOpen ? "Latest eval price" : "Result price"} value={fmtPrice(item.exit_price)} helper={fmtTime(item.result_time_utc)} />
+        <MetricCard label="Realistic entry" value={fmtPrice(item.realistic_entry_price)} helper="Entry dibuat lebih buruk" />
+        <MetricCard label="Realistic exit" value={fmtPrice(item.realistic_exit_price)} helper={labelFor(item.realistic_result_status || item.result_status)} />
+        <MetricCard label="Fill quality" value={labelFor(item.realistic_fill_quality || "FILL_UNKNOWN")} helper={`Cost ${fmtSigned(item.realistic_cost_r_estimate)}R`} tone={fillTone(item.realistic_fill_quality)} />
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -129,6 +138,12 @@ export default async function SignalDetailPage({
           <DetailItem label="Confidence" value={labelFor(item.confidence_tier || "-")} />
           <DetailItem label="Candidate status" value={item.candidate_status} />
           <DetailItem label="Execution flag" value={item.execution_flag || "-"} />
+          <DetailItem label="Realistic model" value={item.realistic_model_version || "-"} />
+          <DetailItem label="Realistic result" value={labelFor(item.realistic_result_status || "-")} />
+          <DetailItem label="Fee / side" value={`${fmtNumber(item.realistic_fee_pct_per_side)}%`} />
+          <DetailItem label="Slippage / side" value={`${fmtNumber(item.realistic_slippage_pct_per_side)}%`} />
+          <DetailItem label="Futures spread" value={item.realistic_futures_spread_pct == null ? "Missing" : `${fmtNumber(item.realistic_futures_spread_pct)}%`} />
+          <DetailItem label="Round-trip cost" value={`${fmtNumber(item.realistic_round_trip_cost_pct_estimate)}% / ${fmtSigned(item.realistic_cost_r_estimate)}R`} />
           <DetailItem label="Strategy version" value={item.strategy_version || "-"} />
           <DetailItem label="V3 shadow" value={item.v3_shadow_status || "-"} />
           <DetailItem label="Signal time WIB" value={item.signal_time_wib || fmtTime(item.signal_timestamp)} />
@@ -227,6 +242,13 @@ function freshnessTone(status: string): "neutral" | "good" | "warn" | "bad" | "i
   if (status === "STALE_FORWARD_DATA") return "bad";
   if (status === "WAITING_DATA") return "warn";
   return "good";
+}
+
+function fillTone(value?: string | null): "neutral" | "good" | "warn" | "bad" | "info" {
+  if (value === "FILL_GOOD") return "good";
+  if (value === "FILL_ACCEPTABLE" || value === "SPREAD_UNKNOWN") return "warn";
+  if (value === "FILL_BAD") return "bad";
+  return "neutral";
 }
 
 function formatEvidenceValue(field: string, value?: string | number | null): string {
