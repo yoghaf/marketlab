@@ -24,9 +24,9 @@ module.exports = {
     {
       name: "marketlab-snapshot-loop",
       cwd: "/var/www/marketlab/backend",
-      script: "scripts/run_snapshot_collector.py",
-      args: "--interval-seconds 300",
-      interpreter: "/var/www/marketlab/backend/.venv/bin/python",
+      script: ".venv/bin/python",
+      args: "scripts/run_snapshot_collector.py --interval-seconds 300",
+      interpreter: "none",
       env: {
         APP_ENV: "production",
       },
@@ -34,9 +34,9 @@ module.exports = {
     {
       name: "marketlab-kline-loop",
       cwd: "/var/www/marketlab/backend",
-      script: "scripts/run_kline_collector.py",
-      args: "--markets futures spot --cycles 100000 --interval-seconds 60",
-      interpreter: "/var/www/marketlab/backend/.venv/bin/python",
+      script: ".venv/bin/python",
+      args: "scripts/run_kline_collector.py --markets futures spot --cycles 100000 --interval-seconds 60",
+      interpreter: "none",
       env: {
         APP_ENV: "production",
       },
