@@ -8,8 +8,6 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   AggregationStatus,
   CollectorRun,
-  Phase6ReadinessResponse,
-  Phase7FullBlockerAuditResponse,
   LiveScannerItem,
   LiveScannerResponse,
   fetchJson,
@@ -28,24 +26,15 @@ type CollectorResponse = {
 };
 
 export default async function OverviewPage() {
-  const [health, collectors, aggregation, phase6, audit, scanner] = await Promise.all([
+  const [health, collectors, aggregation, scanner] = await Promise.all([
     fetchJson<HealthResponse>("/api/data-health"),
     fetchJson<CollectorResponse>("/api/collectors/status"),
     fetchJson<AggregationStatus>("/api/aggregation/status"),
-    fetchJson<Phase6ReadinessResponse>("/api/phase6/readiness", { revalidateSeconds: 20 }).catch(() => null),
-    fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null),
     fetchJson<LiveScannerResponse>("/api/scanner/live?limit=200", { revalidateSeconds: 20 }).catch(() => null)
   ]);
 
   const lastRun = collectors.collectors[0];
   const lastError = collectors.last_errors[0];
-  const gateDecision = phase6?.phase7_decision || audit?.rerun_result.phase7_decision || "NO_PHASE7_CANDIDATE_YET";
-  const approvedCount = phase6?.approved_count ?? audit?.rerun_result.approved_count ?? 0;
-  const watchlistCount = phase6?.watchlist_count ?? audit?.rerun_result.watchlist_count ?? 0;
-  const atr4 = audit?.atr_readiness["4h"]?.available_symbols ?? 0;
-  const atr24 = audit?.atr_readiness["24h"]?.available_symbols ?? 0;
-  const edgeOver010 = edgeBucket(audit, "0.10");
-  const scoreGe7 = audit?.phase6_scoring.score_ge_7_count ?? 0;
   const scannerCounts = scanner?.tier_counts || {};
   const radarCount = scannerCounts.RADAR_ONLY || 0;
   const candidateCount = scannerCounts.WATCHLIST_CONTEXT || 0;
@@ -68,13 +57,13 @@ export default async function OverviewPage() {
         title="MarketLab Command Center"
         badge="READ-ONLY - bukan sinyal entry live"
         subtitle="Ringkasan cepat untuk baca market radar, kualitas data, dan status riset. Semua output tetap observasi read-only."
-        updatedAt={fmtTime(phase6?.generated_at || audit?.generated_at || health.latest.latest_futures_candle_time)}
+        updatedAt={fmtTime(health.latest.latest_futures_candle_time)}
       />
 
       <DecisionBanner
         title={signalCandidateCount > 0 ? "Ada Signal read-only" : candidateCount > 0 ? "Ada Candidate untuk dipantau" : "Belum ada Signal"}
         status={`Signal: ${signalCandidateCount}`}
-        tone={gateDecision === "HAS_CANDIDATES" ? "good" : "warn"}
+        tone={signalCandidateCount > 0 ? "good" : "warn"}
         description={
           signalCandidateCount > 0
             ? "Signal tetap read-only: ada entry futures reference, risk reference, dan tidak ada order otomatis."
@@ -87,7 +76,7 @@ export default async function OverviewPage() {
         <MetricCard label="Candidate" value={candidateCount} helper="Konteks layak dipantau" tone="info" />
         <MetricCard label="Radar" value={radarCount} helper="Aktivitas awal" tone="info" />
         <MetricCard label="Risk Context" value={riskCount} helper="Campuran/risiko" tone="warn" />
-        <MetricCard label="Gate Approved" value={approvedCount} helper="Forward-test approved" tone={approvedCount ? "good" : "warn"} />
+        <MetricCard label="Data Ready" value={`${health.counts.READY || 0}/75`} helper="Symbol data utama fresh" tone="good" />
         <MetricCard label="Baseline" value={baselineCount} helper="Kontrol pembanding" />
       </section>
 
@@ -95,7 +84,7 @@ export default async function OverviewPage() {
         <SectionCard
           title="Yang harus dicek sekarang"
           description="Prioritas kerja dashboard, bukan keputusan eksekusi."
-          actions={<StatusBadge value={gateDecision} />}
+          actions={<StatusBadge value="LEAN_CORE_LOOP" />}
         >
           <div className="grid gap-4 p-4 lg:grid-cols-2">
             <div className="rounded border border-line bg-field/40 p-4">
@@ -109,18 +98,18 @@ export default async function OverviewPage() {
               </div>
             </div>
             <div className="rounded border border-line bg-field/40 p-4">
-              <div className="text-xs font-semibold uppercase text-slate-500">Readiness blocker</div>
-              <div className="mt-2 text-lg font-bold text-ink">{edgeOver010 > 0 ? "Edge mulai muncul" : "Edge belum kuat"}</div>
+              <div className="text-xs font-semibold uppercase text-slate-500">Core process</div>
+              <div className="mt-2 text-lg font-bold text-ink">Core ringan, riset legacy manual</div>
               <div className="mt-3 space-y-2 text-sm leading-6">
-                <ReasonRow label="ATR 4h" value={`${atr4}/75 symbol`} />
-                <ReasonRow label="ATR 24h" value={`${atr24}/75 symbol`} />
-                <ReasonRow label="Edge > 0.10R" value={`${edgeOver010} kandidat`} />
-                <ReasonRow label="Score >= 7" value={`${scoreGe7} kandidat`} />
+                <ReasonRow label="Latest 15m" value={fmtTime(aggregation.latest_15m_futures)} />
+                <ReasonRow label="Data ready" value={`${health.counts.READY || 0}/75 symbol`} />
+                <ReasonRow label="Request weight" value={String(collectors.request_usage.latest_used_weight_1m ?? "-")} />
+                <ReasonRow label="Legacy gate" value="Manual only" />
               </div>
             </div>
             <div className="flex flex-wrap gap-2 pt-2">
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Radar</Link>
-              <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/phase6-audit">Open Signal Gate Audit</Link>
+              <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Open Quality Lab</Link>
               <Link className="rounded border border-line px-3 py-2 font-semibold hover:bg-field" href="/data-health">Open System Health</Link>
             </div>
           </div>
@@ -131,7 +120,7 @@ export default async function OverviewPage() {
             <PipelineStep title="Radar" value={`${radarCount} token`} description="Aktivitas awal, belum cukup untuk candidate." />
             <PipelineStep title="Candidate" value={`${candidateCount} token`} description="Konteks layak dipantau, masih butuh bukti." />
             <PipelineStep title="Signal" value={`${signalCandidateCount} token`} description="Final read-only dengan reference futures." />
-            <PipelineStep title="Forward Test" value={`${approvedCount} approved`} description="Uji paper/live-shadow, tetap bukan execution." />
+            <PipelineStep title="Signal History" value="Paper-live" description="TP/SL, realistic R, dan forward integrity untuk hasil signal." />
           </div>
         </SectionCard>
       </section>
@@ -234,10 +223,4 @@ function formatList(value: unknown): string {
   if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
   if (typeof value === "string" && value) return value;
   return "-";
-}
-
-function edgeBucket(data: Phase7FullBlockerAuditResponse | null, needle: string): number {
-  const buckets = data?.edge.edge_buckets || {};
-  const found = Object.entries(buckets).find(([key]) => key.includes(needle));
-  return found?.[1] ?? 0;
 }

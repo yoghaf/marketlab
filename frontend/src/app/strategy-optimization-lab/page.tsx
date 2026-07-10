@@ -97,7 +97,6 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Signal Quality Lab</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/strategy-arena">Strategy Test</Link>
       </div>
 
       {error ? (

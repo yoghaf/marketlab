@@ -66,7 +66,6 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-shadow-lab">V3 Shadow Lab</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner?tier=SIGNAL_CANDIDATE&limit=75">Radar Signal</Link>
       </div>

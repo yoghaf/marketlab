@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-20",
+    title: "Lean Core Loop + Legacy Research Pruning",
+    status: "LIVE",
+    area: "Ops performance + UI cleanup",
+    summary: "Core research cycle dipangkas agar proses harian fokus ke Signal Factory, signal logging, dan V3 shadow forward monitor.",
+    changes: [
+      "Research cycle light tidak lagi menjalankan Strategy Arena, Phase 6 readiness, dan Phase 7 forward test secara otomatis.",
+      "Legacy Strategy Arena/Phase 6/Phase 7 masih bisa dijalankan manual dengan env flag MARKETLAB_ENABLE_LEGACY_PHASE7=1 jika diperlukan untuk audit lama.",
+      "Overview tidak lagi fetch Phase 6/7 blocker artifact; halaman utama fokus ke Radar, Candidate/Signal, data ready, dan collector pulse.",
+      "System Health membaca kematangan 4h/24h dari aggregation health, bukan artifact Phase 7 legacy.",
+      "Menu Research/Advanced disederhanakan ke halaman yang masih dipakai: Patch Notes, Signal Quality Lab, V3 Forward Log, Strategy Optimization Lab, Signal Factory Raw, dan Advanced."
+    ],
+    impact: "Beban otomatis berkurang tanpa mengubah Signal Factory rule, scanner behavior, TP/SL, realistic R, collector, atau execution. Fokus core sekarang lebih ringan untuk observasi dan kalibrasi kualitas signal.",
+    links: [
+      { href: "/", label: "Overview" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-19",
     title: "Realistic Paper Execution v1",
     status: "LIVE",

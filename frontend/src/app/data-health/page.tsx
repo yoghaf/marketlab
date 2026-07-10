@@ -9,7 +9,6 @@ import {
   AggregationStatus,
   FeatureContext15m1hStatus,
   HealthItem,
-  Phase7FullBlockerAuditResponse,
   RichAlignmentStatus,
   fetchJson
 } from "@/lib/api";
@@ -26,13 +25,10 @@ type HealthResponse = {
 };
 
 export default async function DataHealthPage() {
-  const [data, audit] = await Promise.all([
-    fetchJson<HealthResponse>("/api/data-health"),
-    fetchJson<Phase7FullBlockerAuditResponse>("/api/phase7/full-blocker-audit", { revalidateSeconds: 20 }).catch(() => null)
-  ]);
+  const data = await fetchJson<HealthResponse>("/api/data-health");
   const visibleItems = data.items.slice(0, 75);
-  const atr4 = audit?.atr_readiness["4h"]?.available_symbols ?? 0;
-  const atr24 = audit?.atr_readiness["24h"]?.available_symbols ?? 0;
+  const futures4hReady = aggregationReadyRows(data, "futures_klines_4h");
+  const futures24hReady = aggregationReadyRows(data, "futures_klines_24h");
   return (
     <div className="space-y-5">
       <PageHeader title="System Health" subtitle="Kesehatan data dan kematangan timeframe yang menentukan apakah MarketLab bisa menilai kandidat." updatedAt={`${formatLocalDateTime(data.latest.latest_futures_candle_time)}, ${formatRelativeTime(data.latest.latest_futures_candle_time)}`} />
@@ -41,17 +37,17 @@ export default async function DataHealthPage() {
         <MetricCard label="System Status" value="Running" helper="Collector API online" tone="good" />
         <MetricCard label="Symbol Ready" value={`${data.counts.READY || 0}/75`} helper="Data utama fresh" tone="good" />
         <MetricCard label="Latest 15m" value={formatLocalDateTime(data.aggregation.latest.latest_15m_futures)} helper={formatRelativeTime(data.aggregation.latest.latest_15m_futures)} />
-        <MetricCard label="4h ATR" value={atr4 > 0 ? `${atr4}/75` : "Belum siap"} helper="Butuh minimal 15 candle" tone={atr4 > 0 ? "warn" : "bad"} />
-        <MetricCard label="24h ATR" value={atr24 > 0 ? `${atr24}/75` : "Belum siap"} helper="Butuh minimal 15 candle" tone={atr24 > 0 ? "warn" : "bad"} />
+        <MetricCard label="4h Ready Rows" value={futures4hReady} helper="Futures aggregate ready" tone={futures4hReady > 0 ? "warn" : "bad"} />
+        <MetricCard label="24h Ready Rows" value={futures24hReady} helper="Futures aggregate ready" tone={futures24hReady > 0 ? "warn" : "bad"} />
         <MetricCard label="Missing Spot" value={data.counts.MISSING_SPOT || 0} helper="Spot belum tersedia" />
       </section>
 
-      <SectionCard title="Kematangan data 4h/24h" description="Blocker utama signal gate dan forward-test saat ini.">
+      <SectionCard title="Kematangan data 4h/24h" description="Dibaca dari aggregation health, tanpa artifact Phase 7 legacy. ATR 4h/24h tetap matang otomatis setelah candle cukup.">
         <div className="grid gap-3 p-4 text-sm md:grid-cols-4">
-          <MaturityItem label="4h candles" value={`${audit?.data_coverage["4h"]?.futures.ready_rows ?? 0} ready rows`} />
-          <MaturityItem label="24h candles" value={`${audit?.data_coverage["24h"]?.futures.ready_rows ?? 0} ready rows`} />
-          <MaturityItem label="ATR 4h" value={`${atr4}/75`} />
-          <MaturityItem label="ATR 24h" value={`${atr24}/75`} />
+          <MaturityItem label="4h futures" value={`${futures4hReady} AGG_READY rows`} />
+          <MaturityItem label="24h futures" value={`${futures24hReady} AGG_READY rows`} />
+          <MaturityItem label="4h spot" value={`${aggregationReadyRows(data, "spot_klines_4h")} AGG_READY rows`} />
+          <MaturityItem label="24h spot" value={`${aggregationReadyRows(data, "spot_klines_24h")} AGG_READY rows`} />
         </div>
       </SectionCard>
 
@@ -144,6 +140,11 @@ function healthReason(reason?: string | null): string {
   if (lower.includes("spot") && lower.includes("1m")) return "Spot 1m belum tersedia";
   if (lower.includes("all required datasets fresh")) return "Data utama fresh";
   return reason;
+}
+
+function aggregationReadyRows(data: HealthResponse, tableName: string): number {
+  const table = data.aggregation.tables?.[tableName] || {};
+  return Number(table.AGG_READY || table.READY || 0);
 }
 
 function KeyValue({ title, data }: { title: string; data: Record<string, unknown> }) {

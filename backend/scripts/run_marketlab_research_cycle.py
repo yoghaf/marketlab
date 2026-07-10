@@ -15,28 +15,26 @@ ARTIFACT_DIR = BACKEND_DIR / "artifacts"
 LOCK_PATH = REPO_ROOT / "data" / "marketlab_research_cycle.lock"
 LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_RESEARCH_LOCK_STALE_SECONDS", "7200"))
 
-FULL_STEPS = [
+CORE_STEPS = [
     ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
-    ("strategy_arena", "run_strategy_arena_v1_atr_r_all_labels.py"),
-    ("phase6_readiness", "run_phase6_readiness_audit.py"),
-    ("phase7_forward_test", "run_phase7_forward_test.py"),
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
     ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
+]
+
+OPTIMIZATION_STEPS = [
     ("strategy_optimization_artifacts", "run_strategy_optimization_artifacts.py"),
 ]
 
-LIGHT_STEPS = [
-    ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
+LEGACY_PHASE7_STEPS = [
+    ("strategy_arena", "run_strategy_arena_v1_atr_r_all_labels.py"),
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
     ("phase7_forward_test", "run_phase7_forward_test.py"),
-    ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
-    ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
 ]
 
 
 def main() -> int:
     mode = parse_mode()
-    steps = FULL_STEPS if mode == "full" else LIGHT_STEPS
+    steps = build_steps(mode)
     lock_acquired = acquire_lock()
     if not lock_acquired:
         print_json({"status": "SKIPPED_LOCK_EXISTS", "lock_path": str(LOCK_PATH), "generated_at_utc": iso_utc()})
@@ -52,6 +50,7 @@ def main() -> int:
                     {
                         "status": "FAILED",
                         "mode": mode,
+                        "legacy_phase7_enabled": legacy_phase7_enabled(),
                         "failed_step": name,
                         "steps": step_results,
                         "summary": research_summary(),
@@ -64,6 +63,7 @@ def main() -> int:
             {
                 "status": "SUCCESS",
                 "mode": mode,
+                "legacy_phase7_enabled": legacy_phase7_enabled(),
                 "steps": step_results,
                 "summary": research_summary(),
                 "generated_at_utc": iso_utc(),
@@ -72,6 +72,21 @@ def main() -> int:
         return 0
     finally:
         release_lock()
+
+
+def build_steps(mode: str) -> list[tuple[str, str]]:
+    steps = list(CORE_STEPS)
+    if mode == "full":
+        steps.extend(OPTIMIZATION_STEPS)
+        if legacy_phase7_enabled():
+            steps.extend(LEGACY_PHASE7_STEPS)
+    elif legacy_phase7_enabled() and os.getenv("MARKETLAB_LEGACY_PHASE7_IN_LIGHT", "0").strip() == "1":
+        steps.extend(LEGACY_PHASE7_STEPS)
+    return steps
+
+
+def legacy_phase7_enabled() -> bool:
+    return os.getenv("MARKETLAB_ENABLE_LEGACY_PHASE7", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def parse_mode() -> str:
@@ -185,6 +200,13 @@ def research_summary() -> dict[str, Any]:
     v3_summary = v3_forward.get("summary") or {}
     v3_lane = (v3_summary.get("v3_shadow_signal") or {}).get("performance") or {}
     return {
+        "core_loop_profile": "lean",
+        "legacy_phase7_enabled": legacy_phase7_enabled(),
+        "legacy_phase7_note": (
+            "Legacy Strategy Arena/Phase 6/Phase 7 runs are manual unless MARKETLAB_ENABLE_LEGACY_PHASE7=1."
+            if not legacy_phase7_enabled()
+            else "Legacy Strategy Arena/Phase 6/Phase 7 runs are enabled by environment flag."
+        ),
         "signal_candidates": (signal_summary.get("candidate_status_counts") or {}).get("SIGNAL_CANDIDATE", 0),
         "phase6_approved": len(phase6_decision.get("approved_candidates") or []),
         "approved_shadow_events": phase7_status.get("approved_shadow_event_count", 0),
