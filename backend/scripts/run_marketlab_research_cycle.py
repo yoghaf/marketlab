@@ -21,6 +21,7 @@ FULL_STEPS = [
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
     ("phase7_forward_test", "run_phase7_forward_test.py"),
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
+    ("strategy_optimization_artifacts", "run_strategy_optimization_artifacts.py"),
 ]
 
 LIGHT_STEPS = [

@@ -433,6 +433,17 @@ export type StrategyOptimizationResponse = {
   lanes: StrategyOptimizationRow[];
   rows: StrategyOptimizationRow[];
   guardrails: string[];
+  artifact?: {
+    source: string;
+    generated_at_utc?: string | null;
+    artifact_type?: string | null;
+    read_from_artifact: boolean;
+  };
+  cache?: {
+    hit: boolean;
+    source?: string | null;
+    ttl_seconds?: number | null;
+  };
 };
 
 export type StrategyRegimeSplitRow = {
@@ -486,6 +497,50 @@ export type StrategyRegimeSplitResponse = {
     top_harmful_regimes: StrategyRegimeSplitRow[];
   };
   dimensions: Record<string, StrategyRegimeSplitRow[]>;
+  guardrails: string[];
+  artifact?: {
+    source: string;
+    generated_at_utc?: string | null;
+    artifact_type?: string | null;
+    read_from_artifact: boolean;
+  };
+};
+
+export type StrategyOptimizationArtifactResponse = {
+  generated_at_utc: string;
+  artifact_type: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_sample: number;
+    limit: number;
+    lane_pairs: string[][];
+  };
+  optimization_by_lane: Record<string, StrategyOptimizationResponse>;
+  regime_by_lane: Record<string, StrategyRegimeSplitResponse>;
+  v3_shadow: {
+    generated_at_utc?: string | null;
+    strategy_version?: string | null;
+    shadow_strategy_version?: string | null;
+    promotion_counts: Record<string, number>;
+    v3_candidate_count: number;
+    monitor_more_count: number;
+    reject_overfit_count: number;
+    weak_filter_count: number;
+    top_candidates: SignalCalibrationCandidate[];
+    lane_filters: {
+      stage: string;
+      timeframe: string;
+      sample_count: number;
+      status: string;
+      selected_filters: SignalCalibrationCandidate[];
+    }[];
+    guardrail: string;
+  };
+  errors: { lane: string; error: string }[];
   guardrails: string[];
 };
 

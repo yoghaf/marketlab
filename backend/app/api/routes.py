@@ -48,6 +48,7 @@ from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
+from app.services.strategy_optimization_artifacts import StrategyOptimizationArtifactService
 from app.services.strategy_optimization_regime_split import StrategyOptimizationRegimeSplitService
 from app.services.strategy_optimization_lab import StrategyOptimizationLabService
 from app.services.strategy_arena import StrategyArenaArtifactService
@@ -501,6 +502,18 @@ def strategy_optimization_lab(
     normalized_min_sample = max(1, min(min_sample, 200))
     normalized_stage = None if stage in {"", "ALL"} else stage
     normalized_timeframe = None if timeframe in {"", "ALL"} else timeframe
+    artifact_payload = StrategyOptimizationArtifactService().optimization_for(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=normalized_stage,
+        timeframe=normalized_timeframe,
+        min_sample=normalized_min_sample,
+        limit=normalized_limit,
+    )
+    if artifact_payload:
+        artifact_payload["cache"] = {"hit": True, "source": "artifact", "ttl_seconds": None}
+        return json_safe(artifact_payload)
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -554,6 +567,21 @@ def strategy_optimization_regime_split(
         normalized_rr = Decimal(str(rr))
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid atr_mult or rr") from exc
+    artifact_payload = StrategyOptimizationArtifactService().regime_for(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=stage,
+        timeframe=timeframe,
+        atr_mult=normalized_atr_mult,
+        rr=normalized_rr,
+        timeout_minutes=normalized_timeout,
+        min_sample=normalized_min_sample,
+        limit=normalized_limit,
+    )
+    if artifact_payload:
+        artifact_payload["cache"] = {"hit": True, "source": "artifact", "ttl_seconds": None}
+        return json_safe(artifact_payload)
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -590,6 +618,17 @@ def strategy_optimization_regime_split(
     with _STRATEGY_REGIME_SPLIT_CACHE_LOCK:
         _STRATEGY_REGIME_SPLIT_CACHE[cache_key] = (monotonic(), payload)
     return payload
+
+
+@router.get("/api/strategy-optimization-artifacts")
+def strategy_optimization_artifacts():
+    try:
+        return json_safe(StrategyOptimizationArtifactService().summary())
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Strategy optimization artifact not found. Run run_strategy_optimization_artifacts.py first.",
+        ) from exc
 
 
 @router.get("/api/signal-candidates/market-regime-study")

@@ -18,6 +18,26 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-10",
+    version: "LAB-15",
+    title: "Strategy optimization artifacts + V3 shadow snapshot",
+    status: "LIVE",
+    area: "Research + Ops UI",
+    summary: "Strategy Optimization Lab sekarang bisa membaca hasil precomputed artifact dan menampilkan snapshot V3 shadow filter read-only.",
+    changes: [
+      "Menambahkan runner backend/scripts/run_strategy_optimization_artifacts.py untuk menyimpan optimization/regime split ke backend/artifacts/strategy_optimization/v1/summary.json.",
+      "Endpoint /api/strategy-optimization-lab dan /api/strategy-optimization-regime-split sekarang membaca artifact dulu jika filter cocok, lalu fallback ke live compute jika artifact belum ada.",
+      "Menambahkan endpoint /api/strategy-optimization-artifacts untuk melihat artifact time, precomputed lane, dan V3 shadow calibration snapshot.",
+      "Strategy Optimization Lab menampilkan V3 shadow candidate/monitor/reject count dan top calibration filters tanpa mengubah Signal Factory V2.",
+      "Research cycle full ikut menjalankan strategy optimization artifact setelah signal forward return logger."
+    ],
+    impact: "Halaman optimization lebih cepat dibuka dan kita punya tempat pantau filter V3 shadow secara jelas sebelum ada perubahan rule produksi.",
+    links: [
+      { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
     date: "2026-07-09",
     version: "LAB-14",
     title: "Strategy regime split",

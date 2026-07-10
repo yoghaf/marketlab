@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
+  SignalCalibrationCandidate,
+  StrategyOptimizationArtifactResponse,
   StrategyOptimizationResponse,
   StrategyOptimizationRow,
   StrategyRegimeSplitResponse,
@@ -44,11 +46,18 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
   if (timeframe) query.set("timeframe", timeframe);
 
   let data: StrategyOptimizationResponse | null = null;
+  let artifactData: StrategyOptimizationArtifactResponse | null = null;
   let error: string | null = null;
+  let artifactError: string | null = null;
   try {
     data = await fetchJson<StrategyOptimizationResponse>(`/api/strategy-optimization-lab?${query.toString()}`, { revalidateSeconds: 30 });
   } catch (err) {
     error = err instanceof Error ? err.message : "Strategy Optimization Lab API failed";
+  }
+  try {
+    artifactData = await fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 30 });
+  } catch (err) {
+    artifactError = err instanceof Error ? err.message : "Strategy optimization artifact API failed";
   }
 
   const best = data?.summary.best_row;
@@ -101,7 +110,7 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
             <MetricCard label="Promising" value={data?.summary.promising_rows ?? 0} helper="Read-only verdict" tone="good" />
             <MetricCard label="Best lane" value={best ? `${labelFor(best.stage)} ${best.timeframe}` : "-"} helper={best ? `${best.atr_mult}x ATR / ${best.rr}R / ${best.timeout_minutes}m` : "No ready row"} tone="info" />
             <MetricCard label="Best total R" value={`${fmtSigned(best?.total_r)}R`} helper={`${best?.sample_count ?? 0} sample`} tone={Number(best?.total_r || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="Best DD" value={`${fmtSigned(best?.max_drawdown_r)}R`} helper="Dari urutan result" tone="warn" />
+            <MetricCard label="Best DD" value={`${fmtSigned(best?.max_drawdown_r)}R`} helper={data?.artifact?.read_from_artifact ? "Dari artifact cepat" : "Live fallback"} tone="warn" />
           </section>
 
           <SectionCard title="Optimization controls" description="Filter ini hanya mengubah tampilan study. Tidak mengubah Signal Factory, scanner, atau TP/SL live.">
@@ -122,6 +131,26 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
                 Include WATCH_ONLY
               </label>
             </FilterBar>
+          </SectionCard>
+
+          <SectionCard
+            title="Artifact + V3 shadow snapshot"
+            description="Artifact membuat halaman cepat. V3 shadow hanya filter riset yang dipantau, belum mengganti Signal Factory V2."
+          >
+            {artifactError ? (
+              <div className="p-4 text-sm text-stale">{artifactError}</div>
+            ) : (
+              <div className="space-y-4 p-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <MetricCard label="Artifact time" value={fmtTime(artifactData?.generated_at_utc)} helper="Precomputed JSON" />
+                  <MetricCard label="Precomputed lanes" value={Object.keys(artifactData?.optimization_by_lane || {}).length} helper={(artifactData?.filters.lane_pairs || []).map((pair) => pair.join(" ")).join(", ") || "-"} />
+                  <MetricCard label="V3 candidates" value={artifactData?.v3_shadow.v3_candidate_count ?? 0} helper="Research-only filter" tone="info" />
+                  <MetricCard label="Monitor more" value={artifactData?.v3_shadow.monitor_more_count ?? 0} helper="Belum rule live" tone="warn" />
+                  <MetricCard label="Artifact errors" value={artifactData?.errors.length ?? 0} helper={artifactData?.errors[0]?.lane || "No error"} tone={(artifactData?.errors.length || 0) > 0 ? "bad" : "good"} />
+                </div>
+                <V3ShadowTable rows={artifactData?.v3_shadow.top_candidates || []} />
+              </div>
+            )}
           </SectionCard>
 
           <SectionCard title="Best model per lane" description="Satu konfigurasi terbaik per stage/timeframe berdasarkan total R, avg R, median R, dan sample.">
@@ -170,6 +199,55 @@ export default async function StrategyOptimizationLabPage({ searchParams }: { se
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function V3ShadowTable({ rows }: { rows: SignalCalibrationCandidate[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table text-sm">
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Filter</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>Validation</th>
+            <th>SL delta</th>
+            <th>Concentration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row) => (
+            <tr key={`${row.stage}-${row.timeframe}-${row.filter_id}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.stage || "")}</div>
+                <div className="text-xs text-slate-500">{row.timeframe}</div>
+              </td>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={row.promotion_status || row.verdict} /></td>
+              <td>{row.promotion_score ?? "-"}</td>
+              <td>
+                <div>{fmtSigned(row.validation?.avg_r_delta_vs_baseline)}R avg delta</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.validation?.total_r_closed)}R total</div>
+              </td>
+              <td>{fmtSigned(row.validation?.sl_share_delta_vs_baseline)}%</td>
+              <td>{row.validation?.top_symbol ? `${row.validation.top_symbol} ${fmtNumber(row.validation.top_symbol_share_pct)}%` : "-"}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={7}>
+                <EmptyState title="No V3 shadow filter yet" detail="Belum ada filter calibration yang cukup kuat untuk dipantau sebagai V3 shadow." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
