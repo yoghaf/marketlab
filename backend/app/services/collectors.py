@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -431,10 +433,11 @@ class MarketCollector:
             open_ms = int(item[0])
             if open_ms >= current_open:
                 continue
-            action = self._upsert(
+            action = self._upsert_kline(
                 model,
-                {"symbol": symbol, "open_time": ms_to_utc(item[0])},
                 {
+                    "symbol": symbol,
+                    "open_time": ms_to_utc(item[0]),
                     "close_time": ms_to_utc(item[6]),
                     "open_price": decimal_or_none(item[1]),
                     "high_price": decimal_or_none(item[2]),
@@ -566,6 +569,37 @@ class MarketCollector:
         self.db.add(row)
         return "inserted"
 
+    def _upsert_kline(self, model, values: dict[str, Any]) -> str:
+        exists = (
+            self.db.scalar(
+                select(model.id).where(model.symbol == values["symbol"], model.open_time == values["open_time"])
+            )
+            is not None
+        )
+        update_values = {key: value for key, value in values.items() if key not in {"symbol", "open_time", "created_at"}}
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "sqlite":
+            statement = (
+                sqlite_insert(model)
+                .values(**values)
+                .on_conflict_do_update(index_elements=["symbol", "open_time"], set_=update_values)
+            )
+            self.db.execute(statement)
+            return "updated" if exists else "inserted"
+        if dialect == "postgresql":
+            statement = (
+                postgresql_insert(model)
+                .values(**values)
+                .on_conflict_do_update(index_elements=["symbol", "open_time"], set_=update_values)
+            )
+            self.db.execute(statement)
+            return "updated" if exists else "inserted"
+        return self._upsert(
+            model,
+            {"symbol": values["symbol"], "open_time": values["open_time"]},
+            {key: value for key, value in values.items() if key not in {"symbol", "open_time"}},
+        )
+
     def _active_symbols(self) -> list[str]:
         return self.db.scalars(
             select(MarketlabActiveUniverse.symbol)
@@ -644,6 +678,7 @@ class MarketCollector:
         self.db.add(run)
         self.db.commit()
         self.db.refresh(run)
+        run_id = run.id
         try:
             result = await work(run)
             run.status = "SUCCESS" if not result.get("error_count") else "PARTIAL"
@@ -652,8 +687,10 @@ class MarketCollector:
             run.error_count = result.get("error_count", 0)
             run.details_json = result.get("details_json")
         except Exception as exc:
+            self.db.rollback()
+            run = self.db.get(CollectorRun, run_id)
             run.status = "ERROR"
-            run.error_count += 1
+            run.error_count = (run.error_count or 0) + 1
             self.db.add(
                 CollectorError(
                     collector_run_id=run.id,

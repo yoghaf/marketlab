@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.models.market import BinanceFuturesSymbol, MarketlabActiveUniverse, SignalForwardReturnLog
+
+from app.models.market import BinanceFuturesSymbol, FuturesKline1m, MarketlabActiveUniverse, SignalForwardReturnLog
 from app.services.collectors import MarketCollector
 
 
@@ -41,6 +42,38 @@ def test_futures_kline_symbols_filter_non_trading_signal_symbols_when_exchange_i
         symbols = MarketCollector(db)._futures_kline_symbols()
 
         assert symbols == ["ACTIVEUSDT"]
+
+
+def test_store_kline_uses_conflict_safe_upsert() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        collector = MarketCollector(db)
+        payload = [
+            [
+                1783472640000,
+                "0.134600",
+                "0.134700",
+                "0.134300",
+                "0.134300",
+                "11189.7",
+                1783472699999,
+                "1505.0272800",
+                51,
+                "2230.8",
+                "300.2207500",
+                "0",
+            ]
+        ]
+
+        collector._store_kline(FuturesKline1m, "ALICEUSDT", payload)
+        collector._store_kline(FuturesKline1m, "ALICEUSDT", payload)
+        db.commit()
+
+        rows = db.scalars(select(FuturesKline1m).where(FuturesKline1m.symbol == "ALICEUSDT")).all()
+        assert len(rows) == 1
+        assert rows[0].close_price.quantize(Decimal("0.000001")) == Decimal("0.134300")
 
 
 def _futures_symbol(
