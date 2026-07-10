@@ -576,6 +576,19 @@ def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
         assert by_status["V3_SHADOW_PASS"]["verdict"] == "BETTER_THAN_V2_BASELINE"
         assert payload["by_filter"][0]["filter_id"] == "FUNDING_GE_75"
 
+        forward = SignalCandidatePerformanceService(db).v3_shadow_forward_log(position_lock=False, min_sample=5)
+
+        assert forward["summary"]["v3_shadow_signal_count"] == 15
+        assert forward["summary"]["v2_live"]["performance"]["tp_count"] == 15
+        assert forward["summary"]["v2_live"]["performance"]["sl_count"] == 15
+        assert forward["summary"]["v3_shadow_signal"]["performance"]["tp_count"] == 15
+        assert forward["summary"]["v3_shadow_signal"]["performance"]["sl_count"] == 0
+        assert forward["summary"]["read"] == "V3_FORWARD_HEALTHY_SHADOW"
+        assert forward["source_table"] == "signal_forward_return_logs"
+        assert forward["logging_model"] == "derived_shadow_lane_from_v2_signal_forward_log"
+        assert forward["not_live_signal"] is True
+        assert forward["not_execution_instruction"] is True
+
 
 def _signal(
     signal_id: str,

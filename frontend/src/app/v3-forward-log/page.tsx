@@ -1,5 +1,4 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { FilterBar, SelectFilter } from "@/components/FilterBar";
@@ -8,12 +7,11 @@ import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
-  SignalPerformanceBucket,
   SignalPerformanceItem,
-  V3ShadowComparisonResponse,
   V3ShadowFilterRow,
-  V3ShadowLaneRow,
-  V3ShadowStatusRow,
+  V3ShadowForwardLaneRow,
+  V3ShadowForwardLogResponse,
+  V3ShadowForwardLaneSummary,
   fetchJson,
   fmtNumber,
   fmtPrice,
@@ -21,14 +19,14 @@ import {
 } from "@/lib/api";
 import { compactReason, labelFor } from "@/lib/labels";
 
-type V3ShadowSearchParams = Promise<Record<string, string | string[] | undefined>>;
+type V3ForwardSearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
 const timeframes = ["15m", "1h", "4h", "24h"];
 
 export const dynamic = "force-dynamic";
 
-export default async function V3ShadowLabPage({ searchParams }: { searchParams: V3ShadowSearchParams }) {
+export default async function V3ForwardLogPage({ searchParams }: { searchParams: V3ForwardSearchParams }) {
   const params = await searchParams;
   const stage = firstParam(params.stage);
   const timeframe = firstParam(params.timeframe);
@@ -45,31 +43,32 @@ export default async function V3ShadowLabPage({ searchParams }: { searchParams: 
   if (stage) query.set("stage", stage);
   if (timeframe) query.set("timeframe", timeframe);
 
-  let data: V3ShadowComparisonResponse | null = null;
+  let data: V3ShadowForwardLogResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchJson<V3ShadowComparisonResponse>(`/api/v3-shadow/comparison?${query.toString()}`, { revalidateSeconds: 20 });
+    data = await fetchJson<V3ShadowForwardLogResponse>(`/api/v3-shadow/forward-log?${query.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
-    error = err instanceof Error ? err.message : "V3 Shadow Comparison API failed";
+    error = err instanceof Error ? err.message : "V3 Shadow Forward API failed";
   }
 
   const v2 = data?.summary.v2_live;
-  const v3 = data?.summary.v3_shadow_pass;
+  const v3 = data?.summary.v3_shadow_signal;
+  const v2Perf = v2?.performance;
+  const v3Perf = v3?.performance;
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="V3 Shadow Lab"
-        badge="READ-ONLY V2 VS V3"
-        subtitle="Membandingkan semua Signal V2 live dengan subset yang lolos V3 shadow filter. Ini belum mengganti rule live dan bukan execution."
+        title="V3 Shadow Forward Log"
+        badge="READ-ONLY SHADOW LANE"
+        subtitle="Pantauan paper-live V3: semua signal tetap dibuat oleh V2, lalu V3 hanya mengambil subset yang lolos shadow filter. Ini bukan execution dan belum mengganti rule live."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner?tier=SIGNAL_CANDIDATE&limit=75">Radar Signal</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-shadow-lab">V3 Shadow Lab</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log">V3 Forward Log</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/strategy-optimization-lab">Strategy Optimization</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner?tier=SIGNAL_CANDIDATE&limit=75">Radar Signal</Link>
       </div>
 
       {error ? (
@@ -77,15 +76,15 @@ export default async function V3ShadowLabPage({ searchParams }: { searchParams: 
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="V2 evaluated" value={v2?.signals_evaluated ?? 0} helper={`${data?.skipped_by_position_lock?.ACTIVE_POSITION_LOCK || 0} skipped by lock`} />
-            <MetricCard label="V2 total R" value={`${fmtSigned(v2?.total_r_closed)}R`} helper={`${v2?.tp_count ?? 0}/${v2?.sl_count ?? 0} TP/SL`} tone={Number(v2?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="V3 pass" value={data?.summary.v3_pass_count ?? 0} helper={`${fmtNumber(data?.summary.sample_retention_pct)}% retention`} tone="info" />
-            <MetricCard label="V3 total R" value={`${fmtSigned(v3?.total_r_closed)}R`} helper={`${v3?.tp_count ?? 0}/${v3?.sl_count ?? 0} TP/SL`} tone={Number(v3?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="Avg R delta" value={`${fmtSigned(data?.summary.avg_r_delta_v3_pass_vs_v2)}R`} helper="V3 pass vs V2 all" tone={Number(data?.summary.avg_r_delta_v3_pass_vs_v2 || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="Read" value={labelFor(data?.summary.read || "-")} helper="Research-only verdict" tone={data?.summary.read === "V3_SHADOW_IMPROVES_V2" ? "good" : "warn"} />
+            <MetricCard label="V2 live R" value={`${fmtSigned(v2Perf?.total_r_closed)}R`} helper={`${v2Perf?.signals_evaluated ?? 0} evaluated`} tone={Number(v2Perf?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="V3 shadow R" value={`${fmtSigned(v3Perf?.total_r_closed)}R`} helper={`${data?.summary.v3_shadow_signal_count ?? 0} shadow signals`} tone={Number(v3Perf?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="Retention" value={`${fmtNumber(data?.summary.v3_sample_retention_pct)}%`} helper="V3 pass / V2 evaluated" tone="info" />
+            <MetricCard label="V3 open" value={data?.summary.v3_shadow_open_count ?? 0} helper={`${fmtSigned(v3Perf?.open_unrealized_r)}R unrealized`} tone="warn" />
+            <MetricCard label="Drawdown delta" value={`${fmtSigned(data?.summary.max_drawdown_delta_v3_vs_v2)}R`} helper="lebih tinggi berarti DD lebih kecil" tone={Number(data?.summary.max_drawdown_delta_v3_vs_v2 || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="Read" value={labelFor(data?.summary.read || "-")} helper="shadow-only verdict" tone={data?.summary.read === "V3_FORWARD_HEALTHY_SHADOW" ? "good" : "warn"} />
           </section>
 
-          <SectionCard title="V3 controls" description="Filter ini hanya mengubah tampilan comparison. Tidak mengubah Signal Factory V2, scanner, TP/SL, atau execution.">
+          <SectionCard title="Forward controls" description="Filter ini hanya mengubah tampilan. V3 shadow tidak mengubah rule live, scanner, TP/SL, atau execution.">
             <FilterBar>
               <SelectFilter label="Stage" name="stage" value={stage || ""} options={stages} emptyLabel="All stage" />
               <SelectFilter label="Timeframe" name="timeframe" value={timeframe || ""} options={timeframes} emptyLabel="All timeframe" />
@@ -106,37 +105,33 @@ export default async function V3ShadowLabPage({ searchParams }: { searchParams: 
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="V2 live baseline" description="Semua Signal V2 sesuai filter halaman.">
-              <PerfGrid row={v2} />
+            <SectionCard title="V2 live signal lane" description="Semua signal live V2 sesuai filter halaman.">
+              <ForwardSummary summary={v2} />
             </SectionCard>
-            <SectionCard title="V3 shadow pass" description="Subset Signal V2 yang lolos filter V3 shadow.">
-              <PerfGrid row={v3} />
+            <SectionCard title="V3 shadow signal lane" description="Hanya signal V2 yang lolos V3 shadow filter.">
+              <ForwardSummary summary={v3} />
             </SectionCard>
           </section>
 
-          <SectionCard title="Comparison by V3 status" description="PASS adalah subset yang akan dipantau sebagai calon V3. FAIL berarti filter ada tapi evidence signal tidak cocok.">
-            <StatusTable rows={data?.by_v3_status || []} />
+          <SectionCard title="Lane comparison" description="Baca ini untuk melihat apakah MID_LONG/MID_SHORT V3 benar-benar lebih bersih daripada baseline V2.">
+            <LaneTable rows={data?.by_stage_timeframe || []} />
           </SectionCard>
 
-          <SectionCard title="Comparison by lane" description="Lihat stage/timeframe mana yang membaik atau melemah saat hanya memakai V3 shadow pass.">
-            <LaneTable rows={data?.by_lane || []} />
-          </SectionCard>
-
-          <SectionCard title="V3 filter contribution" description="Filter mana yang menghasilkan V3 pass dan bagaimana hasilnya dibanding V2 all-signal baseline.">
+          <SectionCard title="Filter contribution" description="Filter V3 mana yang menghasilkan shadow signal dan bagaimana hasilnya.">
             <FilterTable rows={data?.by_filter || []} />
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Latest V3 pass signals" description="Contoh signal terbaru yang lolos shadow filter.">
-              <SignalTable rows={data?.latest_pass_signals || []} />
+            <SectionCard title="Open V3 shadow signals" description="Posisi paper-live yang masih aktif. Current R bergerak saat candle futures baru masuk.">
+              <SignalTable rows={data?.latest_v3_open_signals || []} empty="Tidak ada V3 shadow signal yang masih open." />
             </SectionCard>
-            <SectionCard title="Latest V3 fail signals" description="Contoh signal terbaru yang tidak lolos shadow filter.">
-              <SignalTable rows={data?.latest_fail_signals || []} />
+            <SectionCard title="Closed V3 shadow signals" description="Riwayat V3 shadow yang sudah kena TP/SL/BOTH.">
+              <SignalTable rows={data?.latest_v3_closed_signals || []} empty="Belum ada V3 shadow signal closed." />
             </SectionCard>
           </section>
 
           <SectionCard title="Guardrails">
-            <div className="grid gap-3 p-4 text-sm md:grid-cols-3">
+            <div className="grid gap-3 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               {(data?.guardrails || []).map((item) => (
                 <div className="rounded border border-line bg-field/40 p-3 font-semibold text-slate-700" key={item}>{item}</div>
               ))}
@@ -148,73 +143,41 @@ export default async function V3ShadowLabPage({ searchParams }: { searchParams: 
   );
 }
 
-function PerfGrid({ row }: { row?: SignalPerformanceBucket }) {
+function ForwardSummary({ summary }: { summary?: V3ShadowForwardLaneSummary }) {
+  const perf = summary?.performance;
+  const drawdown = summary?.drawdown;
+  const quality = summary?.quality;
   return (
     <div className="grid gap-3 p-4 text-sm md:grid-cols-3">
-      <Insight label="Evaluated" value={row?.signals_evaluated ?? 0} />
-      <Insight label="TP / SL" value={`${row?.tp_count ?? 0} / ${row?.sl_count ?? 0}`} />
-      <Insight label="Open" value={row?.open_count ?? 0} />
-      <Insight label="Winrate" value={row?.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`} />
-      <Insight label="Total R" value={`${fmtSigned(row?.total_r_closed)}R`} />
-      <Insight label="Avg R" value={`${fmtSigned(row?.avg_r_closed)}R`} />
+      <Insight label="Evaluated" value={perf?.signals_evaluated ?? 0} />
+      <Insight label="TP / SL / Open" value={`${perf?.tp_count ?? 0} / ${perf?.sl_count ?? 0} / ${perf?.open_count ?? 0}`} />
+      <Insight label="Total R" value={`${fmtSigned(perf?.total_r_closed)}R`} />
+      <Insight label="With Open" value={`${fmtSigned(perf?.total_r_with_open)}R`} />
+      <Insight label="Winrate" value={perf?.winrate_pct == null ? "-" : `${fmtNumber(perf.winrate_pct)}%`} />
+      <Insight label="Avg R" value={`${fmtSigned(perf?.avg_r_closed)}R`} />
+      <Insight label="Max DD" value={`${fmtSigned(drawdown?.max_drawdown_r)}R`} />
+      <Insight label="Median R" value={`${fmtSigned(quality?.median_r_closed)}R`} />
+      <Insight label="Top symbol" value={`${quality?.top_symbol || "-"} ${quality?.top_symbol_share_pct == null ? "" : `(${fmtNumber(quality.top_symbol_share_pct)}%)`}`} />
     </div>
   );
 }
 
-function StatusTable({ rows }: { rows: V3ShadowStatusRow[] }) {
+function LaneTable({ rows }: { rows: V3ShadowForwardLaneRow[] }) {
   return (
-    <TableShell emptyTitle="No V3 status rows" colSpan={10}>
-      <thead>
-        <tr>
-          <th>Status</th>
-          <th>Sample</th>
-          <th>Retain</th>
-          <th>TP / SL / Open</th>
-          <th>Winrate</th>
-          <th>Total R</th>
-          <th>Avg R</th>
-          <th>Avg delta</th>
-          <th>SL delta</th>
-          <th>Verdict</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.bucket}>
-            <td><StatusBadge value={row.bucket} /></td>
-            <td>{row.sample_count}</td>
-            <td>{fmtNumber(row.sample_retention_pct)}%</td>
-            <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
-            <td>{row.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
-            <td>{fmtSigned(row.total_r_closed)}R</td>
-            <td>{fmtSigned(row.avg_r_closed)}R</td>
-            <td>{fmtSigned(row.avg_r_delta_vs_v2)}R</td>
-            <td>{fmtSigned(row.sl_share_delta_vs_v2)}%</td>
-            <td><StatusBadge value={row.verdict} /></td>
-          </tr>
-        ))}
-        {!rows.length && <EmptyRow colSpan={10} title="No V3 status rows" />}
-      </tbody>
-    </TableShell>
-  );
-}
-
-function LaneTable({ rows }: { rows: V3ShadowLaneRow[] }) {
-  return (
-    <TableShell emptyTitle="No lane rows" colSpan={11}>
+    <TableShell>
       <thead>
         <tr>
           <th>Lane</th>
           <th>V2 sample</th>
-          <th>V3 pass</th>
-          <th>Retain</th>
           <th>V2 R</th>
+          <th>V2 DD</th>
+          <th>V3 sample</th>
+          <th>Retain</th>
           <th>V3 R</th>
+          <th>V3 DD</th>
           <th>Avg delta</th>
           <th>Win delta</th>
-          <th>SL delta</th>
-          <th>No filter</th>
-          <th>Verdict</th>
+          <th>Read</th>
         </tr>
       </thead>
       <tbody>
@@ -224,16 +187,16 @@ function LaneTable({ rows }: { rows: V3ShadowLaneRow[] }) {
               <div className="font-semibold">{labelFor(row.stage)}</div>
               <div className="text-xs text-slate-500">{row.timeframe}</div>
             </td>
-            <td>{row.v2_live.signals_evaluated}</td>
-            <td>{row.v3_pass_count}</td>
-            <td>{fmtNumber(row.sample_retention_pct)}%</td>
-            <td>{fmtSigned(row.v2_live.total_r_closed)}R</td>
-            <td>{fmtSigned(row.v3_shadow_pass.total_r_closed)}R</td>
-            <td>{fmtSigned(row.avg_r_delta_v3_pass_vs_v2)}R</td>
-            <td>{fmtSigned(row.winrate_delta_v3_pass_vs_v2)}%</td>
-            <td>{fmtSigned(row.sl_share_delta_v3_pass_vs_v2)}%</td>
-            <td>{row.v3_no_filter_count}</td>
-            <td><StatusBadge value={row.verdict} /></td>
+            <td>{row.v2_live.performance.signals_evaluated}</td>
+            <td>{fmtSigned(row.v2_live.performance.total_r_closed)}R</td>
+            <td>{fmtSigned(row.v2_live.drawdown.max_drawdown_r)}R</td>
+            <td>{row.v3_shadow_signal_count}</td>
+            <td>{fmtNumber(row.v3_sample_retention_pct)}%</td>
+            <td>{fmtSigned(row.v3_shadow_signal.performance.total_r_closed)}R</td>
+            <td>{fmtSigned(row.v3_shadow_signal.drawdown.max_drawdown_r)}R</td>
+            <td>{fmtSigned(row.avg_r_delta_v3_vs_v2)}R</td>
+            <td>{fmtSigned(row.winrate_delta_v3_vs_v2)}%</td>
+            <td><StatusBadge value={row.read} /></td>
           </tr>
         ))}
         {!rows.length && <EmptyRow colSpan={11} title="No lane rows" />}
@@ -244,16 +207,15 @@ function LaneTable({ rows }: { rows: V3ShadowLaneRow[] }) {
 
 function FilterTable({ rows }: { rows: V3ShadowFilterRow[] }) {
   return (
-    <TableShell emptyTitle="No V3 filter pass rows" colSpan={9}>
+    <TableShell>
       <thead>
         <tr>
           <th>Filter</th>
           <th>Sample</th>
-          <th>TP / SL</th>
+          <th>TP / SL / Open</th>
           <th>Total R</th>
           <th>Avg R</th>
-          <th>Avg delta</th>
-          <th>Win delta</th>
+          <th>Winrate</th>
           <th>SL delta</th>
           <th>Verdict</th>
         </tr>
@@ -263,36 +225,35 @@ function FilterTable({ rows }: { rows: V3ShadowFilterRow[] }) {
           <tr key={row.filter_id}>
             <td>
               <div className="font-semibold">{row.label}</div>
-              <div className="text-xs text-slate-500">{row.expression}</div>
+              <div className="text-xs text-slate-500">{compactReason(row.expression || "-", 110)}</div>
             </td>
             <td>{row.sample_count}</td>
-            <td>{row.tp_count} / {row.sl_count}</td>
+            <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
             <td>{fmtSigned(row.total_r_closed)}R</td>
             <td>{fmtSigned(row.avg_r_closed)}R</td>
-            <td>{fmtSigned(row.avg_r_delta_vs_v2)}R</td>
-            <td>{fmtSigned(row.winrate_delta_vs_v2)}%</td>
+            <td>{row.winrate_pct == null ? "-" : `${fmtNumber(row.winrate_pct)}%`}</td>
             <td>{fmtSigned(row.sl_share_delta_vs_v2)}%</td>
             <td><StatusBadge value={row.verdict} /></td>
           </tr>
         ))}
-        {!rows.length && <EmptyRow colSpan={9} title="No V3 filter pass rows" />}
+        {!rows.length && <EmptyRow colSpan={8} title="No filter rows" />}
       </tbody>
     </TableShell>
   );
 }
 
-function SignalTable({ rows }: { rows: SignalPerformanceItem[] }) {
+function SignalTable({ rows, empty }: { rows: SignalPerformanceItem[]; empty: string }) {
   return (
-    <TableShell emptyTitle="No signal rows" colSpan={8}>
+    <TableShell>
       <thead>
         <tr>
           <th>Time WIB</th>
           <th>Symbol</th>
           <th>TF</th>
           <th>Stage</th>
-          <th>V3</th>
           <th>Result</th>
           <th>R</th>
+          <th>MFE / MAE</th>
           <th>Entry / SL / TP</th>
         </tr>
       </thead>
@@ -305,12 +266,9 @@ function SignalTable({ rows }: { rows: SignalPerformanceItem[] }) {
             </td>
             <td>{item.timeframe}</td>
             <td>{labelFor(item.stage)}</td>
-            <td>
-              <StatusBadge value={item.v3_shadow_status || "-"} />
-              {item.v3_shadow_filter_label && <div className="mt-1 text-xs text-slate-500">{compactReason(item.v3_shadow_filter_label, 60)}</div>}
-            </td>
             <td><StatusBadge value={item.result_status} /></td>
             <td>{fmtSigned(item.result_status === "OPEN" ? item.unrealized_r : item.realized_r)}R</td>
+            <td>{fmtSigned(item.mfe_r)} / {fmtSigned(item.mae_r)}</td>
             <td className="text-xs">
               <div>Entry {fmtPrice(item.entry)}</div>
               <div>SL {fmtPrice(item.stop_loss)}</div>
@@ -318,13 +276,13 @@ function SignalTable({ rows }: { rows: SignalPerformanceItem[] }) {
             </td>
           </tr>
         ))}
-        {!rows.length && <EmptyRow colSpan={8} title="No signal rows" />}
+        {!rows.length && <EmptyRow colSpan={8} title={empty} />}
       </tbody>
     </TableShell>
   );
 }
 
-function TableShell({ children }: { children: ReactNode; emptyTitle: string; colSpan: number }) {
+function TableShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="table-wrap">
       <table className="ops-table text-sm">
@@ -346,7 +304,7 @@ function Insight({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rounded border border-line bg-field/40 p-3">
       <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-bold text-ink">{value}</div>
+      <div className="mt-1 break-words text-lg font-bold text-ink">{value}</div>
     </div>
   );
 }

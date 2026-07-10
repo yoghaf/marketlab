@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-10",
+    version: "LAB-17",
+    title: "V3 Shadow Forward Log",
+    status: "LIVE",
+    area: "Research + Forward Monitor",
+    summary: "Menambahkan jalur monitoring V3 shadow yang membandingkan hasil forward V2 live dengan subset V3_SHADOW_PASS.",
+    changes: [
+      "Endpoint /api/v3-shadow/forward-log membaca signal_forward_return_logs dan membentuk lane V3 shadow signal tanpa membuat order.",
+      "Script run_v3_shadow_forward_log.py menulis artifact backend/artifacts/v3_shadow_forward/v1/summary.json untuk audit research-loop.",
+      "Research cycle sekarang menjalankan V3 shadow forward artifact setelah signal forward return logger.",
+      "Halaman /v3-forward-log menampilkan V2 live R, V3 shadow R, retention, open V3, drawdown delta, lane comparison, filter contribution, serta open/closed V3 signals.",
+      "V3 tetap shadow/read-only; Signal Factory V2, scanner, TP/SL formula, dan execution tidak berubah."
+    ],
+    impact: "Kita bisa memantau apakah subset V3 benar-benar lebih stabil dari V2 secara forward, sebelum ada keputusan promosi rule.",
+    links: [
+      { href: "/v3-forward-log", label: "V3 Forward Log" },
+      { href: "/v3-shadow-lab", label: "V3 Shadow Lab" }
+    ]
+  },
+  {
+    date: "2026-07-10",
     version: "LAB-16",
     title: "V3 Shadow Comparison Lab",
     status: "LIVE",

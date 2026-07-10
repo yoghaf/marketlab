@@ -886,6 +886,87 @@ export type V3ShadowComparisonResponse = {
   guardrails: string[];
 };
 
+export type V3ShadowForwardLaneSummary = {
+  performance: SignalPerformanceBucket;
+  drawdown: {
+    closed_count: number;
+    total_r_closed: string | number;
+    peak_r: string | number;
+    max_drawdown_r: string | number;
+    current_drawdown_r: string | number;
+  };
+  quality: {
+    quality_flag?: string | null;
+    median_r_closed?: string | number | null;
+    median_mfe_r?: string | number | null;
+    median_mae_r?: string | number | null;
+    best_r?: string | number | null;
+    worst_r?: string | number | null;
+    top_symbol?: string | null;
+    top_symbol_share_pct?: string | number | null;
+    symbol_count?: number | null;
+  };
+};
+
+export type V3ShadowForwardLaneRow = {
+  stage: string;
+  timeframe: string;
+  v2_live: V3ShadowForwardLaneSummary;
+  v3_shadow_signal: V3ShadowForwardLaneSummary;
+  v3_shadow_signal_count: number;
+  v3_sample_retention_pct?: string | number | null;
+  total_r_delta_v3_vs_v2?: string | number | null;
+  avg_r_delta_v3_vs_v2?: string | number | null;
+  winrate_delta_v3_vs_v2?: string | number | null;
+  max_drawdown_delta_v3_vs_v2?: string | number | null;
+  read: string;
+};
+
+export type V3ShadowForwardLogResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage?: string | null;
+    timeframe?: string | null;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  logging_model: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  latest_v3_signal_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    v2_live: V3ShadowForwardLaneSummary;
+    v3_shadow_signal: V3ShadowForwardLaneSummary;
+    v3_shadow_signal_count: number;
+    v3_shadow_closed_count: number;
+    v3_shadow_open_count: number;
+    v3_sample_retention_pct?: string | number | null;
+    total_r_delta_v3_vs_v2?: string | number | null;
+    avg_r_delta_v3_vs_v2?: string | number | null;
+    winrate_delta_v3_vs_v2?: string | number | null;
+    max_drawdown_delta_v3_vs_v2?: string | number | null;
+    read: string;
+  };
+  by_stage_timeframe: V3ShadowForwardLaneRow[];
+  by_filter: V3ShadowFilterRow[];
+  latest_v3_open_signals: SignalPerformanceItem[];
+  latest_v3_closed_signals: SignalPerformanceItem[];
+  latest_v3_signals: SignalPerformanceItem[];
+  guardrails: string[];
+};
+
 export type SignalDetailResponse = {
   generated_at_utc: string;
   epoch: string;

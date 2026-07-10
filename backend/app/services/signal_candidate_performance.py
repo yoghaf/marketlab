@@ -530,6 +530,87 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def v3_shadow_forward_log(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        stage: str | None = None,
+        timeframe: str | None = None,
+        min_sample: int = 5,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=True,
+        )
+        v3_items = [item for item in evaluated if item.get("v3_shadow_status") == "V3_SHADOW_PASS"]
+        v3_closed = [item for item in v3_items if item.get("result_status") in COMPLETED_OUTCOMES]
+        v3_open = [item for item in v3_items if item.get("result_status") == "OPEN"]
+        v2_summary = _forward_lane_summary(evaluated, min_sample=min_sample)
+        v3_summary = _forward_lane_summary(v3_items, min_sample=min_sample)
+        v2_perf = v2_summary["performance"]
+        v3_perf = v3_summary["performance"]
+        latest_v3_time = max((_parse_dt(item.get("signal_timestamp")) for item in v3_items), default=None)
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": stage,
+                "timeframe": timeframe,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "v3_shadow_forward_log",
+            "study_scope": "read_only_v3_shadow_forward_monitor",
+            "source_table": "signal_forward_return_logs",
+            "logging_model": "derived_shadow_lane_from_v2_signal_forward_log",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "latest_v3_signal_time": latest_v3_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "v2_live": v2_summary,
+                "v3_shadow_signal": v3_summary,
+                "v3_shadow_signal_count": len(v3_items),
+                "v3_shadow_closed_count": len(v3_closed),
+                "v3_shadow_open_count": len(v3_open),
+                "v3_sample_retention_pct": _retention(len(v3_items), len(evaluated)),
+                "total_r_delta_v3_vs_v2": _decimal_delta(v3_perf.get("total_r_closed"), v2_perf.get("total_r_closed")),
+                "avg_r_delta_v3_vs_v2": _decimal_delta(v3_perf.get("avg_r_closed"), v2_perf.get("avg_r_closed")),
+                "winrate_delta_v3_vs_v2": _decimal_delta(v3_perf.get("winrate_pct"), v2_perf.get("winrate_pct")),
+                "max_drawdown_delta_v3_vs_v2": _decimal_delta(
+                    v3_summary["drawdown"].get("max_drawdown_r"),
+                    v2_summary["drawdown"].get("max_drawdown_r"),
+                ),
+                "read": _v3_forward_read(v2_summary, v3_summary, min_sample=min_sample),
+            },
+            "by_stage_timeframe": _v3_forward_lane_rows(evaluated, min_sample=min_sample),
+            "by_filter": _v3_filter_rows(v3_items, baseline=v2_perf, min_sample=min_sample, limit=limit),
+            "latest_v3_open_signals": _sorted_signal_rows(v3_open, limit=limit),
+            "latest_v3_closed_signals": _sorted_signal_rows(v3_closed, limit=limit),
+            "latest_v3_signals": _sorted_signal_rows(v3_items, limit=limit),
+            "guardrails": [
+                "V3 Shadow Forward Log is derived from logged V2 Signal candidates.",
+                "V3_SHADOW_SIGNAL means a V2 signal also passed the V3 shadow filter; it is not a live order.",
+                "Signal Factory V2 rules, scanner behavior, TP/SL formula, and execution stay unchanged.",
+                "Use this page for forward validation before any future promotion decision.",
+            ],
+        }
+
     def _evaluated_context(
         self,
         *,
@@ -1041,6 +1122,89 @@ def _v3_filter_rows(
         reverse=True,
     )
     return rows[:limit]
+
+
+def _forward_lane_summary(items: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any]:
+    perf = _performance_summary(items)
+    drawdown = _drawdown_summary(items, point_limit=80)
+    bucket = _bucket_summary("FORWARD_LANE", items, min_sample=min_sample)
+    return {
+        "performance": perf,
+        "drawdown": {
+            key: value
+            for key, value in drawdown.items()
+            if key != "points"
+        },
+        "quality": {
+            "quality_flag": bucket.get("quality_flag"),
+            "median_r_closed": bucket.get("median_r_closed"),
+            "median_mfe_r": bucket.get("median_mfe_r"),
+            "median_mae_r": bucket.get("median_mae_r"),
+            "best_r": bucket.get("best_r"),
+            "worst_r": bucket.get("worst_r"),
+            "top_symbol": bucket.get("top_symbol"),
+            "top_symbol_share_pct": bucket.get("top_symbol_share_pct"),
+            "symbol_count": bucket.get("symbol_count"),
+        },
+    }
+
+
+def _v3_forward_lane_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[(str(item.get("stage") or "UNKNOWN"), str(item.get("timeframe") or "UNKNOWN"))].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for (stage, timeframe), lane_items in groups.items():
+        v2 = _forward_lane_summary(lane_items, min_sample=min_sample)
+        v3_items = [item for item in lane_items if item.get("v3_shadow_status") == "V3_SHADOW_PASS"]
+        v3 = _forward_lane_summary(v3_items, min_sample=min_sample)
+        v2_perf = v2["performance"]
+        v3_perf = v3["performance"]
+        row = {
+            "stage": stage,
+            "timeframe": timeframe,
+            "v2_live": v2,
+            "v3_shadow_signal": v3,
+            "v3_shadow_signal_count": len(v3_items),
+            "v3_sample_retention_pct": _retention(len(v3_items), len(lane_items)),
+            "total_r_delta_v3_vs_v2": _decimal_delta(v3_perf.get("total_r_closed"), v2_perf.get("total_r_closed")),
+            "avg_r_delta_v3_vs_v2": _decimal_delta(v3_perf.get("avg_r_closed"), v2_perf.get("avg_r_closed")),
+            "winrate_delta_v3_vs_v2": _decimal_delta(v3_perf.get("winrate_pct"), v2_perf.get("winrate_pct")),
+            "max_drawdown_delta_v3_vs_v2": _decimal_delta(
+                v3["drawdown"].get("max_drawdown_r"),
+                v2["drawdown"].get("max_drawdown_r"),
+            ),
+        }
+        row["read"] = _v3_forward_read(v2, v3, min_sample=min_sample)
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            Decimal(row.get("v3_shadow_signal", {}).get("performance", {}).get("total_r_closed") or 0),
+            int(row.get("v3_shadow_signal_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _v3_forward_read(v2_summary: dict[str, Any], v3_summary: dict[str, Any], *, min_sample: int) -> str:
+    v2_perf = v2_summary["performance"]
+    v3_perf = v3_summary["performance"]
+    v3_closed = int(v3_perf.get("closed_count") or 0)
+    if v3_closed < min_sample:
+        return "V3_FORWARD_WAITING_SAMPLE"
+    total_delta = _decimal_delta(v3_perf.get("total_r_closed"), v2_perf.get("total_r_closed"))
+    avg_delta = _decimal_delta(v3_perf.get("avg_r_closed"), v2_perf.get("avg_r_closed"))
+    dd_delta = _decimal_delta(v3_summary["drawdown"].get("max_drawdown_r"), v2_summary["drawdown"].get("max_drawdown_r"))
+    v3_total = Decimal(v3_perf.get("total_r_closed") or 0)
+    if v3_total > 0 and avg_delta is not None and avg_delta > 0 and (dd_delta is None or dd_delta >= 0):
+        return "V3_FORWARD_HEALTHY_SHADOW"
+    if total_delta is not None and total_delta > 0 and v3_total > 0:
+        return "V3_FORWARD_MONITOR_MORE"
+    if v3_total < 0:
+        return "V3_FORWARD_WEAK"
+    return "V3_FORWARD_INCONCLUSIVE"
 
 
 def _sorted_signal_rows(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:

@@ -21,6 +21,7 @@ FULL_STEPS = [
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
     ("phase7_forward_test", "run_phase7_forward_test.py"),
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
+    ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
     ("strategy_optimization_artifacts", "run_strategy_optimization_artifacts.py"),
 ]
 
@@ -29,6 +30,7 @@ LIGHT_STEPS = [
     ("phase6_readiness", "run_phase6_readiness_audit.py"),
     ("phase7_forward_test", "run_phase7_forward_test.py"),
     ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
+    ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
 ]
 
 
@@ -179,6 +181,9 @@ def research_summary() -> dict[str, Any]:
     phase6_decision = read_json(ARTIFACT_DIR / "phase6" / "phase7_candidate_decision.json")
     phase7_status = read_json(ARTIFACT_DIR / "phase7" / "forward_test_status.json")
     phase7_summary = read_json(ARTIFACT_DIR / "phase7" / "forward_test_summary.json")
+    v3_forward = read_json(ARTIFACT_DIR / "v3_shadow_forward" / "v1" / "summary.json")
+    v3_summary = v3_forward.get("summary") or {}
+    v3_lane = (v3_summary.get("v3_shadow_signal") or {}).get("performance") or {}
     return {
         "signal_candidates": (signal_summary.get("candidate_status_counts") or {}).get("SIGNAL_CANDIDATE", 0),
         "phase6_approved": len(phase6_decision.get("approved_candidates") or []),
@@ -192,6 +197,9 @@ def research_summary() -> dict[str, Any]:
         "avg_R": phase7_summary.get("avg_R") or phase7_summary.get("average_realized_R"),
         "phase7_mode": phase7_status.get("mode"),
         "last_run_at_utc": phase7_status.get("last_run_at_utc") or phase7_status.get("generated_at_utc"),
+        "v3_shadow_signals": v3_summary.get("v3_shadow_signal_count", 0),
+        "v3_shadow_total_r": v3_lane.get("total_r_closed"),
+        "v3_shadow_read": v3_summary.get("read"),
     }
 
 
