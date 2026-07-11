@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-27",
+    title: "1h TP/SL Cause Analysis",
+    status: "LIVE",
+    area: "Signal research UI",
+    summary: "Menambahkan panel penyebab TP/SL di halaman 1h Review untuk membedah apakah long atau short 1h yang lebih sering gagal dan evidence apa yang membedakan hasilnya.",
+    changes: [
+      "Halaman /signal-1h-review sekarang menampilkan breakdown Long vs Short, Stage + arah, evidence TP vs SL, dan symbol penyumbang SL.",
+      "Evidence yang dibandingkan mencakup price return, volume vs average, range/ATR, taker buy/sell, OI, funding, spread, long/short ratio, top trader ratio, core score, dan evidence score.",
+      "Panel ini membaca snapshot performance 1h yang sudah ada sehingga tidak menambah rule, threshold, scanner behavior, TP/SL formula, outcome logic, atau execution.",
+      "Tujuannya membantu riset penyebab SL/TP 1h sebelum ada perubahan definisi signal."
+    ],
+    impact: "Kita bisa melihat apakah masalah 1h lebih berat di long atau short, symbol mana yang sering merusak, dan evidence mana yang benar-benar berbeda antara hasil target referensi dan stop referensi.",
+    links: [
+      { href: "/signal-1h-review", label: "1h Review" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-26",
     title: "1h Signal Review Mode",
     status: "LIVE",

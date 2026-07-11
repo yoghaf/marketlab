@@ -33,6 +33,43 @@ type GroupRow = {
   topSymbol?: string;
 };
 
+type EvidenceCauseRow = {
+  key: string;
+  label: string;
+  available: number;
+  missing: number;
+  tpCount: number;
+  slCount: number;
+  tpMedian: number | null;
+  slMedian: number | null;
+  delta: number | null;
+  formatter: EvidenceFormatter;
+};
+
+type EvidenceFormatter = "raw" | "pct" | "ratio" | "score";
+
+const EVIDENCE_FIELDS: { key: string; label: string; formatter: EvidenceFormatter }[] = [
+  { key: "price_return", label: "Price return", formatter: "pct" },
+  { key: "one_hour_return_pct", label: "1h return", formatter: "pct" },
+  { key: "volume_ratio_vs_lookback", label: "Volume vs avg", formatter: "ratio" },
+  { key: "range_ratio_vs_atr", label: "Range / ATR", formatter: "ratio" },
+  { key: "atr_extension_normalized", label: "ATR extension", formatter: "ratio" },
+  { key: "price_atr_multiple", label: "Price / ATR", formatter: "ratio" },
+  { key: "kline_taker_buy_ratio", label: "Taker buy", formatter: "pct" },
+  { key: "kline_taker_sell_ratio", label: "Taker sell", formatter: "pct" },
+  { key: "oi_change_pct", label: "OI change", formatter: "pct" },
+  { key: "oi_zscore", label: "OI z-score", formatter: "raw" },
+  { key: "funding_percentile_30d", label: "Funding percentile", formatter: "pct" },
+  { key: "futures_spread_pct", label: "Futures spread", formatter: "pct" },
+  { key: "spot_spread_pct", label: "Spot spread", formatter: "pct" },
+  { key: "global_long_short_ratio", label: "Global L/S", formatter: "raw" },
+  { key: "top_trader_position_ratio", label: "Top position", formatter: "raw" },
+  { key: "top_trader_account_ratio", label: "Top account", formatter: "raw" },
+  { key: "core_score", label: "Core score", formatter: "score" },
+  { key: "evidence_score", label: "Evidence score", formatter: "score" },
+  { key: "evidence_data_completeness", label: "Evidence completeness", formatter: "score" }
+];
+
 export default async function Signal1hReviewPage() {
   const performanceQuery = new URLSearchParams({
     include_watch_only: "false",
@@ -65,9 +102,16 @@ export default async function Signal1hReviewPage() {
   const openItems = forward?.items?.filter((item) => item.result_status === "OPEN") || [];
   const byStage = groupRows(closedItems, (item) => item.stage);
   const bySymbol = groupRows(closedItems, (item) => item.symbol);
+  const byDirection = groupRows(closedItems, (item) => item.direction);
+  const byStageDirection = groupRows(closedItems, (item) => `${item.stage}|${item.direction}`);
+  const topSlSymbols = [...bySymbol].filter((row) => row.sl > 0).sort((a, b) => b.sl - a.sl || a.realisticR - b.realisticR).slice(0, 12);
+  const evidenceCauseRows = buildEvidenceCauseRows(closedItems);
   const bestStage = byStage[0];
   const worstStage = [...byStage].sort((a, b) => a.realisticR - b.realisticR)[0];
   const read = buildRead(aggregate, bestStage, worstStage, forward);
+  const worstDirection = [...byDirection].sort((a, b) => a.realisticR - b.realisticR)[0];
+  const worstStageDirection = [...byStageDirection].sort((a, b) => a.realisticR - b.realisticR)[0];
+  const largestEvidenceGap = evidenceCauseRows.find((row) => row.delta !== null);
 
   return (
     <div className="space-y-5">
@@ -107,6 +151,35 @@ export default async function Signal1hReviewPage() {
               <Insight label="Stage paling membantu" value={bestStage ? `${labelFor(bestStage.key)} (${fmtSigned(bestStage.realisticR)}R realistic)` : "-"} />
               <Insight label="Stage paling merusak" value={worstStage ? `${labelFor(worstStage.key)} (${fmtSigned(worstStage.realisticR)}R realistic)` : "-"} />
             </div>
+          </SectionCard>
+
+          <SectionCard title="Penyebab TP/SL 1h" description="Membandingkan hasil 1h yang kena target referensi vs stop referensi dari sisi arah, stage, symbol, dan evidence angka. Ini audit kualitas, bukan rule baru.">
+            <div className="grid gap-3 border-b border-line p-4 md:grid-cols-4">
+              <Insight label="Arah paling lemah" value={worstDirection ? `${labelFor(worstDirection.key)} (${worstDirection.sl} SL, ${fmtSigned(worstDirection.realisticR)}R)` : "-"} />
+              <Insight label="Stage + arah terlemah" value={worstStageDirection ? `${formatCauseKey(worstStageDirection.key)} (${fmtSigned(worstStageDirection.realisticR)}R)` : "-"} />
+              <Insight label="Evidence gap terbesar" value={largestEvidenceGap ? `${largestEvidenceGap.label}: ${formatEvidenceValue(largestEvidenceGap.delta, largestEvidenceGap.formatter, true)}` : "-"} />
+              <Insight label="Symbol SL terbanyak" value={topSlSymbols[0] ? `${topSlSymbols[0].key} (${topSlSymbols[0].sl} SL)` : "-"} />
+            </div>
+            <section className="grid gap-4 p-4 xl:grid-cols-2">
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-ink">Long vs Short</h3>
+                <CauseGroupTable rows={byDirection} label="Direction" />
+              </div>
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-ink">Stage + arah</h3>
+                <CauseGroupTable rows={byStageDirection} label="Stage direction" />
+              </div>
+            </section>
+            <section className="grid gap-4 border-t border-line p-4 xl:grid-cols-[1.5fr_1fr]">
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-ink">Evidence TP vs SL</h3>
+                <EvidenceCauseTable rows={evidenceCauseRows.slice(0, 16)} />
+              </div>
+              <div>
+                <h3 className="mb-2 text-sm font-bold text-ink">Top SL contributors</h3>
+                <CauseGroupTable rows={topSlSymbols} label="Symbol" compact />
+              </div>
+            </section>
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
@@ -182,6 +255,132 @@ function groupRows(items: SignalPerformanceItem[], keyFn: (item: SignalPerforman
       };
     })
     .sort((a, b) => b.realisticR - a.realisticR);
+}
+
+function buildEvidenceCauseRows(items: SignalPerformanceItem[]): EvidenceCauseRow[] {
+  const tpRows = items.filter((item) => item.result_status === "TP_HIT");
+  const slRows = items.filter((item) => item.result_status === "SL_HIT");
+  return EVIDENCE_FIELDS.map((field) => {
+    const allValues = items.map((item) => evidenceValue(item, field.key));
+    const tpValues = tpRows.map((item) => evidenceValue(item, field.key)).filter((value) => value !== null) as number[];
+    const slValues = slRows.map((item) => evidenceValue(item, field.key)).filter((value) => value !== null) as number[];
+    const tpMedian = median(tpValues);
+    const slMedian = median(slValues);
+    const delta = tpMedian !== null && slMedian !== null ? tpMedian - slMedian : null;
+    const available = allValues.filter((value) => value !== null).length;
+    return {
+      ...field,
+      available,
+      missing: items.length - available,
+      tpCount: tpValues.length,
+      slCount: slValues.length,
+      tpMedian,
+      slMedian,
+      delta
+    };
+  }).sort((a, b) => {
+    const aScore = a.delta === null ? -1 : Math.abs(a.delta);
+    const bScore = b.delta === null ? -1 : Math.abs(b.delta);
+    return bScore - aScore || b.available - a.available;
+  });
+}
+
+function evidenceValue(item: SignalPerformanceItem, key: string): number | null {
+  const evidence = item.evidence_snapshot || {};
+  if (key in evidence) return toNumber(evidence[key]);
+  const direct = item[key as keyof SignalPerformanceItem];
+  return typeof direct === "string" || typeof direct === "number" || direct === null || direct === undefined ? toNumber(direct) : null;
+}
+
+function CauseGroupTable({ rows, label, compact = false }: { rows: GroupRow[]; label: string; compact?: boolean }) {
+  return (
+    <div className="overflow-hidden rounded border border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>{label}</th>
+            <th>Rows</th>
+            <th>TP / SL</th>
+            <th>SL share</th>
+            {!compact ? <th>Realistic R</th> : null}
+            <th>Median R</th>
+            <th>Top Symbol</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const closed = row.tp + row.sl;
+            const slShare = closed ? (row.sl / closed) * 100 : null;
+            return (
+              <tr key={`${label}-${row.key}`}>
+                <td className="font-semibold">{label === "Symbol" ? row.key : formatCauseKey(row.key)}</td>
+                <td>{row.count}</td>
+                <td>{row.tp} / {row.sl}</td>
+                <td>{slShare == null ? "-" : `${fmtNumber(slShare)}%`}</td>
+                {!compact ? <td className={row.realisticR >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realisticR)}R</td> : null}
+                <td>{row.medianR == null ? "-" : `${fmtSigned(row.medianR)}R`}</td>
+                <td>{row.topSymbol || "-"}</td>
+              </tr>
+            );
+          })}
+          {!rows.length && (
+            <tr>
+              <td colSpan={compact ? 6 : 7}>
+                <EmptyState title="Belum ada sample" detail="Belum ada closed 1h yang cukup untuk breakdown ini." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EvidenceCauseTable({ rows }: { rows: EvidenceCauseRow[] }) {
+  return (
+    <div className="overflow-hidden rounded border border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Evidence</th>
+            <th>Available</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>Delta TP-SL</th>
+            <th>TP/SL samples</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.key}</div>
+              </td>
+              <td>{row.available} / miss {row.missing}</td>
+              <td>{formatEvidenceValue(row.tpMedian, row.formatter)}</td>
+              <td>{formatEvidenceValue(row.slMedian, row.formatter)}</td>
+              <td className={row.delta == null ? "" : row.delta >= 0 ? "text-ready" : "text-stale"}>{formatEvidenceValue(row.delta, row.formatter, true)}</td>
+              <td>{row.tpCount} / {row.slCount}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={6}>
+                <EmptyState title="Evidence belum tersedia" detail="Closed 1h belum punya evidence snapshot yang bisa dibandingkan." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatCauseKey(key: string): string {
+  const [stage, direction] = key.split("|");
+  if (!direction) return labelFor(key);
+  return `${labelFor(stage)} / ${labelFor(direction)}`;
 }
 
 function GroupTable({ rows, label }: { rows: GroupRow[]; label: string }) {
@@ -360,4 +559,13 @@ function fmtSigned(value?: string | number | null): string {
   const abs = Math.abs(num);
   const text = abs >= 100 ? num.toFixed(0) : abs >= 10 ? num.toFixed(1) : num.toFixed(2);
   return `${num >= 0 ? "+" : ""}${text}`;
+}
+
+function formatEvidenceValue(value: number | null, formatter: EvidenceFormatter, signed = false): string {
+  if (value === null) return "-";
+  const prefix = signed && value > 0 ? "+" : "";
+  if (formatter === "pct") return `${prefix}${fmtNumber(value)}%`;
+  if (formatter === "ratio") return `${prefix}${fmtNumber(value)}x`;
+  if (formatter === "score") return `${prefix}${fmtNumber(value)}`;
+  return `${prefix}${fmtNumber(value)}`;
 }

@@ -735,6 +735,7 @@ export type SignalPerformanceItem = {
   core_score?: string | number | null;
   evidence_score?: string | number | null;
   evidence_data_completeness?: number | null;
+  evidence_snapshot?: Record<string, string | number | null>;
   entry?: string | number | null;
   stop_loss?: string | number | null;
   take_profit?: string | number | null;
