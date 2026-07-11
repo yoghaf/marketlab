@@ -1254,6 +1254,53 @@ export type SignalFilterStudyResponse = {
   rows: SignalFilterStudyRow[];
 };
 
+export type OneHourFilterCandidateRow = SignalFilterStudyRow & {
+  stage: string;
+  direction: string;
+  timeframe: string;
+  action: string;
+  action_reason: string;
+  risk_notes: string[];
+};
+
+export type OneHourFilterCandidateLane = {
+  lane: string;
+  stage: string;
+  direction: string;
+  timeframe: string;
+  source_count: number;
+  baseline: SignalFilterStudyRow;
+  filter_candidates: OneHourFilterCandidateRow[];
+  actionable_candidates: OneHourFilterCandidateRow[];
+  lane_status: string;
+  lane_note: string;
+};
+
+export type OneHourFilterCandidateStudyResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    timeframe: string;
+    stages: string[];
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  method: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  aggregate: SignalPerformanceResponse["aggregate"];
+  lanes: OneHourFilterCandidateLane[];
+  top_candidates: OneHourFilterCandidateRow[];
+  guardrails: string[];
+};
+
 export type SignalCalibrationPerf = SignalPerformanceBucket & {
   sample_count: number;
   median_r_closed?: string | number | null;

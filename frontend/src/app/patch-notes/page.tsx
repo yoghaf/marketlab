@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-28",
+    title: "1h Filter Candidate Study",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan studi filter 1h untuk membandingkan MID_LONG dan MID_SHORT dan mencari filter yang mungkin mengurangi SL atau memperbaiki R.",
+    changes: [
+      "Menambahkan endpoint read-only /api/signal-candidates/one-hour-filter-study untuk membaca filter candidate MID_LONG/MID_SHORT 1h.",
+      "Halaman /signal-1h-review sekarang menampilkan lane status, baseline TP/SL/R, top filter candidate, action reason, dan risk notes.",
+      "Action seperti PROMOTE_TO_SHADOW atau MONITOR_MORE hanya berarti pantauan riset, bukan rule live dan bukan execution.",
+      "Tidak ada perubahan Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Kita bisa mulai memilah filter 1h mana yang benar-benar mengurangi kerusakan dan mana yang harus ditolak, tanpa menebak threshold baru.",
+    links: [
+      { href: "/signal-1h-review", label: "1h Review" },
+      { href: "/signal-quality-lab?timeframe=1h", label: "Quality Lab 1h" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-27",
     title: "1h TP/SL Cause Analysis",
     status: "LIVE",

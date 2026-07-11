@@ -511,6 +511,80 @@ def test_filter_study_targets_mid_short_1h_and_ranks_filters() -> None:
         assert rows["VOLUME_LE_1_50"]["sample_count"] == 2
 
 
+def test_one_hour_filter_candidate_study_compares_mid_long_and_mid_short() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        short_rows = [
+            ("s1", "AAAUSDT", "82", True),
+            ("s2", "BBBUSDT", "84", True),
+            ("s3", "CCCUSDT", "86", True),
+            ("s4", "DDDUSDT", "88", True),
+            ("s5", "EEEUSDT", "35", False),
+            ("s6", "FFFUSDT", "40", False),
+        ]
+        for index, (signal_id, symbol, funding, is_tp) in enumerate(short_rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": funding},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+
+        for index, symbol in enumerate(("GGGUSDT", "HHHUSDT")):
+            signal_time = base_time + timedelta(minutes=120 + 15 * index)
+            db.add(
+                _signal(
+                    f"l{index}",
+                    symbol,
+                    signal_time,
+                    "LONG",
+                    "MID_LONG",
+                    "100",
+                    "90",
+                    "115",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": "80"},
+                )
+            )
+            db.add(_candle(symbol, signal_time, signal_time + timedelta(minutes=15), high="108", low="89", close="91"))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).one_hour_filter_candidate_study(position_lock=False, min_sample=1, limit=10)
+
+        assert payload["filters"]["timeframe"] == "1h"
+        assert payload["not_live_signal"] is True
+        lanes = {lane["stage"]: lane for lane in payload["lanes"]}
+        assert lanes["MID_SHORT"]["source_count"] == 6
+        assert lanes["MID_LONG"]["source_count"] == 2
+        short_candidates = {row["filter_id"]: row for row in lanes["MID_SHORT"]["filter_candidates"]}
+        assert short_candidates["FUNDING_GE_75"]["sample_count"] == 4
+        assert short_candidates["FUNDING_GE_75"]["action"] == "PROMOTE_TO_SHADOW"
+        assert payload["top_candidates"][0]["stage"] == "MID_SHORT"
+        assert payload["top_candidates"][0]["action"] == "PROMOTE_TO_SHADOW"
+
+
 def test_calibration_lab_splits_train_validation_and_marks_promising_filter() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

@@ -68,6 +68,8 @@ _SIGNAL_QUALITY_CACHE_LOCK = Lock()
 _SIGNAL_QUALITY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FILTER_STUDY_CACHE_LOCK = Lock()
 _SIGNAL_FILTER_STUDY_CACHE: dict[tuple, tuple[float, dict]] = {}
+_SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE_LOCK = Lock()
+_SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_CALIBRATION_CACHE_LOCK = Lock()
 _SIGNAL_CALIBRATION_CACHE: dict[tuple, tuple[float, dict]] = {}
 _V3_SHADOW_COMPARISON_CACHE_LOCK = Lock()
@@ -518,6 +520,44 @@ def signal_candidates_filter_study(
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_FILTER_STUDY_CACHE_LOCK:
         _SIGNAL_FILTER_STUDY_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/signal-candidates/one-hour-filter-study")
+def signal_candidates_one_hour_filter_study(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    min_sample: int = 20,
+    limit: int = 12,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 50))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_min_sample,
+        normalized_limit,
+    )
+    now = monotonic()
+    with _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE_LOCK:
+        cached = _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).one_hour_filter_candidate_study(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE_LOCK:
+        _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

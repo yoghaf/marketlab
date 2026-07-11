@@ -444,6 +444,79 @@ class SignalCandidatePerformanceService:
             "rows": rows,
         }
 
+    def one_hour_filter_candidate_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 12,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe="1h",
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        lanes = [
+            _one_hour_filter_lane(
+                stage="MID_LONG",
+                direction="LONG",
+                items=[item for item in evaluated if item.get("stage") == "MID_LONG"],
+                min_sample=min_sample,
+                limit=limit,
+            ),
+            _one_hour_filter_lane(
+                stage="MID_SHORT",
+                direction="SHORT",
+                items=[item for item in evaluated if item.get("stage") == "MID_SHORT"],
+                min_sample=min_sample,
+                limit=limit,
+            ),
+        ]
+        candidates = [
+            candidate
+            for lane in lanes
+            for candidate in lane["filter_candidates"]
+            if candidate["action"] in {"PROMOTE_TO_SHADOW", "MONITOR_MORE"}
+        ]
+        candidates.sort(key=_one_hour_filter_candidate_sort_key, reverse=True)
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "timeframe": "1h",
+                "stages": ["MID_LONG", "MID_SHORT"],
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "study_scope": "one_hour_filter_candidate_study_read_only",
+            "method": "Existing filter specs ranked against 1h MID_LONG and MID_SHORT closed paper outcomes.",
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "aggregate": self._aggregate(evaluated, skipped),
+            "lanes": lanes,
+            "top_candidates": candidates[:limit],
+            "guardrails": [
+                "No Signal Factory rule changed.",
+                "No scanner behavior changed.",
+                "No TP/SL formula or outcome calculation changed.",
+                "PROMOTE_TO_SHADOW means research-only shadow monitoring, not live execution.",
+            ],
+        }
+
     def calibration_lab(
         self,
         *,
@@ -2449,6 +2522,175 @@ def _sort_filter_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ),
         reverse=True,
     )
+
+
+def _one_hour_filter_lane(
+    *,
+    stage: str,
+    direction: str,
+    items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    baseline = _filter_study_row(
+        filter_id="BASELINE",
+        label=f"Baseline 1h {stage}",
+        expression="no additional filter",
+        family="BASELINE",
+        items=items,
+        source_count=len(items),
+        missing_data_count=0,
+        required_fields=(),
+        baseline_perf=None,
+        min_sample=min_sample,
+    )
+    rows: list[dict[str, Any]] = []
+    for spec in _filter_study_specs():
+        passed, missing = _apply_filter_spec(items, spec)
+        row = _filter_study_row(
+            filter_id=spec.filter_id,
+            label=spec.label,
+            expression=spec.expression,
+            family=spec.family,
+            items=passed,
+            source_count=len(items),
+            missing_data_count=missing,
+            required_fields=spec.required_fields,
+            baseline_perf=baseline,
+            min_sample=min_sample,
+        )
+        rows.append(_with_one_hour_filter_action(row, stage=stage, direction=direction, min_sample=min_sample))
+    rows = _sort_one_hour_filter_candidates(rows)
+    actionable = [row for row in rows if row["action"] in {"PROMOTE_TO_SHADOW", "MONITOR_MORE"}]
+    return {
+        "lane": f"{stage}_1h",
+        "stage": stage,
+        "direction": direction,
+        "timeframe": "1h",
+        "source_count": len(items),
+        "baseline": baseline,
+        "filter_candidates": rows[:limit],
+        "actionable_candidates": actionable[:limit],
+        "lane_status": _one_hour_lane_status(baseline, actionable, min_sample=min_sample),
+        "lane_note": _one_hour_lane_note(baseline, actionable, min_sample=min_sample),
+    }
+
+
+def _with_one_hour_filter_action(
+    row: dict[str, Any],
+    *,
+    stage: str,
+    direction: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    enriched = {**row, "stage": stage, "direction": direction, "timeframe": "1h"}
+    action = _one_hour_filter_action(enriched, min_sample=min_sample)
+    enriched["action"] = action
+    enriched["action_reason"] = _one_hour_filter_action_reason(enriched, action=action, min_sample=min_sample)
+    enriched["risk_notes"] = _one_hour_filter_risk_notes(enriched)
+    return enriched
+
+
+def _one_hour_filter_action(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("sample_count") or 0) < min_sample or int(row.get("closed_count") or 0) < min_sample:
+        return "MONITOR_MORE_SAMPLE"
+    avg_delta = row.get("avg_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    top_share = row.get("top_symbol_share_pct")
+    total_r = Decimal(row.get("total_r_closed") or 0)
+    concentration_ok = top_share is None or Decimal(top_share) <= Decimal("35")
+    if (
+        row.get("verdict") == "PROMISING_FILTER"
+        and avg_delta is not None
+        and Decimal(avg_delta) >= Decimal("0.05")
+        and (sl_delta is None or Decimal(sl_delta) <= 0)
+        and total_r > 0
+        and concentration_ok
+    ):
+        return "PROMOTE_TO_SHADOW"
+    if (
+        row.get("verdict") == "REDUCES_DAMAGE"
+        or (avg_delta is not None and Decimal(avg_delta) > 0)
+        or (sl_delta is not None and Decimal(sl_delta) < 0)
+    ):
+        return "MONITOR_MORE"
+    if row.get("verdict") == "WORSE_THAN_BASELINE":
+        return "REJECT_FILTER"
+    return "NO_CLEAR_USE"
+
+
+def _one_hour_filter_action_reason(row: dict[str, Any], *, action: str, min_sample: int) -> str:
+    if action == "PROMOTE_TO_SHADOW":
+        return "Filter membaik vs baseline 1h, total R positif, SL share tidak memburuk, dan concentration masih wajar. Shadow monitoring saja."
+    if action == "MONITOR_MORE":
+        return "Ada perbaikan sebagian, tapi belum cukup bersih untuk shadow utama."
+    if action == "MONITOR_MORE_SAMPLE":
+        return f"Closed sample belum memenuhi minimum {min_sample}."
+    if action == "REJECT_FILTER":
+        return "Filter lebih buruk dari baseline lane 1h saat ini."
+    return "Belum ada separation yang cukup jelas dari baseline lane 1h."
+
+
+def _one_hour_filter_risk_notes(row: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    top_share = row.get("top_symbol_share_pct")
+    if top_share is not None and Decimal(top_share) > Decimal("35"):
+        notes.append("Symbol concentration tinggi; hasil bisa ditarik satu token.")
+    missing_pct = row.get("missing_data_pct")
+    if missing_pct is not None and Decimal(missing_pct) > Decimal("25"):
+        notes.append("Data evidence banyak missing; filter belum representatif.")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    if sl_delta is not None and Decimal(sl_delta) > 0:
+        notes.append("SL share lebih buruk dari baseline.")
+    if Decimal(row.get("total_r_closed") or 0) <= 0:
+        notes.append("Total R filter belum positif.")
+    return notes
+
+
+def _sort_one_hour_filter_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(rows, key=_one_hour_filter_candidate_sort_key, reverse=True)
+
+
+def _one_hour_filter_candidate_sort_key(row: dict[str, Any]) -> tuple[int, Decimal, Decimal, int]:
+    action_rank = {
+        "PROMOTE_TO_SHADOW": 4,
+        "MONITOR_MORE": 3,
+        "NO_CLEAR_USE": 2,
+        "MONITOR_MORE_SAMPLE": 1,
+        "REJECT_FILTER": 0,
+    }
+    avg_delta = row.get("avg_r_delta_vs_baseline")
+    total_r = row.get("total_r_closed")
+    return (
+        action_rank.get(str(row.get("action")), -1),
+        Decimal(avg_delta) if avg_delta is not None else Decimal("-999"),
+        Decimal(total_r) if total_r is not None else Decimal("-999"),
+        int(row.get("closed_count") or 0),
+    )
+
+
+def _one_hour_lane_status(baseline: dict[str, Any], actionable: list[dict[str, Any]], *, min_sample: int) -> str:
+    if int(baseline.get("closed_count") or 0) < min_sample:
+        return "LANE_NEEDS_MORE_SAMPLE"
+    if any(row.get("action") == "PROMOTE_TO_SHADOW" for row in actionable):
+        return "HAS_SHADOW_CANDIDATE"
+    if actionable:
+        return "HAS_MONITOR_CANDIDATE"
+    if Decimal(baseline.get("total_r_closed") or 0) > 0:
+        return "BASELINE_POSITIVE_NO_FILTER"
+    return "LANE_WEAK"
+
+
+def _one_hour_lane_note(baseline: dict[str, Any], actionable: list[dict[str, Any]], *, min_sample: int) -> str:
+    if int(baseline.get("closed_count") or 0) < min_sample:
+        return f"Lane 1h belum punya closed sample minimum {min_sample}."
+    if any(row.get("action") == "PROMOTE_TO_SHADOW" for row in actionable):
+        return "Ada filter yang layak dipantau sebagai shadow research, belum mengubah rule live."
+    if actionable:
+        return "Ada filter yang perlu dipantau, tetapi separation belum cukup bersih."
+    if Decimal(baseline.get("total_r_closed") or 0) > 0:
+        return "Baseline lane positif, tetapi filter tambahan belum lebih baik."
+    return "Lane 1h masih lemah; jangan promosi rule."
 
 
 def _calibration_lane(
