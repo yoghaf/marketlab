@@ -547,14 +547,32 @@ def signal_candidates_one_hour_filter_study(
             payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
             return payload
 
-    payload = json_safe(
-        SignalCandidatePerformanceService(db).one_hour_filter_candidate_study(
-            include_watch_only=include_watch_only,
-            position_lock=position_lock,
-            min_sample=normalized_min_sample,
-            limit=normalized_limit,
+    if not include_watch_only and position_lock:
+        try:
+            payload = json_safe(
+                SignalPerformanceSnapshotService().one_hour_filter_candidate_study(
+                    min_sample=normalized_min_sample,
+                    limit=normalized_limit,
+                )
+            )
+        except FileNotFoundError:
+            payload = json_safe(
+                SignalCandidatePerformanceService(db).one_hour_filter_candidate_study(
+                    include_watch_only=include_watch_only,
+                    position_lock=position_lock,
+                    min_sample=normalized_min_sample,
+                    limit=normalized_limit,
+                )
+            )
+    else:
+        payload = json_safe(
+            SignalCandidatePerformanceService(db).one_hour_filter_candidate_study(
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                min_sample=normalized_min_sample,
+                limit=normalized_limit,
+            )
         )
-    )
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE_LOCK:
         _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE[cache_key] = (monotonic(), payload)

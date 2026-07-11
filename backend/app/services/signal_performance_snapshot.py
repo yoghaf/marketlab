@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.multitimeframe_features import REPO_ROOT
-from app.services.signal_candidate_performance import SignalCandidatePerformanceService
+from app.services.signal_candidate_performance import SignalCandidatePerformanceService, build_one_hour_filter_candidate_study_payload
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import json_safe, utcnow
 
@@ -114,6 +114,23 @@ class SignalPerformanceSnapshotService:
     def forward_integrity_1h(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(FORWARD_INTEGRITY_1H_FILE)
         return _slice_payload(payload, limit=max(1, limit), list_keys=("items", "stale_items"))
+
+    def one_hour_filter_candidate_study(self, *, min_sample: int, limit: int) -> dict[str, Any]:
+        payload = self._read(PERFORMANCE_1H_FILE)
+        aggregate = payload.get("aggregate") or {}
+        study = build_one_hour_filter_candidate_study_payload(
+            evaluated=list(payload.get("items") or []),
+            skipped=aggregate.get("skip_reasons") or {},
+            latest_candle_time=payload.get("latest_futures_15m_close_time") or payload.get("latest_evaluation_candle_time"),
+            epoch=str(payload.get("epoch") or OBSERVATION_EPOCH),
+            include_watch_only=bool((payload.get("filters") or {}).get("include_watch_only", False)),
+            position_lock=bool((payload.get("filters") or {}).get("position_lock", True)),
+            min_sample=max(1, min_sample),
+            limit=max(1, limit),
+            source="signal_performance_snapshot_1h",
+        )
+        study["snapshot"] = payload.get("snapshot")
+        return study
 
     def _read(self, filename: str) -> dict[str, Any]:
         path = self.artifact_dir / filename

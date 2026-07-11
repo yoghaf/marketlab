@@ -462,60 +462,16 @@ class SignalCandidatePerformanceService:
             position_lock=position_lock,
             with_shadow=False,
         )
-        lanes = [
-            _one_hour_filter_lane(
-                stage="MID_LONG",
-                direction="LONG",
-                items=[item for item in evaluated if item.get("stage") == "MID_LONG"],
-                min_sample=min_sample,
-                limit=limit,
-            ),
-            _one_hour_filter_lane(
-                stage="MID_SHORT",
-                direction="SHORT",
-                items=[item for item in evaluated if item.get("stage") == "MID_SHORT"],
-                min_sample=min_sample,
-                limit=limit,
-            ),
-        ]
-        candidates = [
-            candidate
-            for lane in lanes
-            for candidate in lane["filter_candidates"]
-            if candidate["action"] in {"PROMOTE_TO_SHADOW", "MONITOR_MORE"}
-        ]
-        candidates.sort(key=_one_hour_filter_candidate_sort_key, reverse=True)
-        return {
-            "generated_at_utc": utcnow(),
-            "epoch": epoch,
-            "filters": {
-                "include_watch_only": include_watch_only,
-                "position_lock": position_lock,
-                "timeframe": "1h",
-                "stages": ["MID_LONG", "MID_SHORT"],
-                "min_sample": min_sample,
-                "limit": limit,
-            },
-            "read_only": True,
-            "not_live_signal": True,
-            "not_execution_instruction": True,
-            "strategy_version": LIVE_STRATEGY_VERSION,
-            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
-            "study_scope": "one_hour_filter_candidate_study_read_only",
-            "method": "Existing filter specs ranked against 1h MID_LONG and MID_SHORT closed paper outcomes.",
-            "latest_evaluation_candle_time": latest_candle_time,
-            "latest_futures_15m_close_time": latest_candle_time,
-            "skipped_by_position_lock": dict(skipped),
-            "aggregate": self._aggregate(evaluated, skipped),
-            "lanes": lanes,
-            "top_candidates": candidates[:limit],
-            "guardrails": [
-                "No Signal Factory rule changed.",
-                "No scanner behavior changed.",
-                "No TP/SL formula or outcome calculation changed.",
-                "PROMOTE_TO_SHADOW means research-only shadow monitoring, not live execution.",
-            ],
-        }
+        return build_one_hour_filter_candidate_study_payload(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=min_sample,
+            limit=limit,
+        )
 
     def calibration_lab(
         self,
@@ -1229,25 +1185,100 @@ class SignalCandidatePerformanceService:
         }
 
     def _aggregate(self, items: list[dict[str, Any]], skipped: Counter[str]) -> dict[str, Any]:
-        status_counts = Counter(str(item["result_status"]) for item in items)
-        by_stage = Counter(str(item["stage"]) for item in items)
-        by_timeframe = Counter(str(item["timeframe"]) for item in items)
-        by_confidence = Counter(str(item.get("confidence_tier") or "UNKNOWN") for item in items)
-        total_perf = _performance_summary(items)
-        timeframe_perf = {
-            timeframe: _performance_summary([item for item in items if item.get("timeframe") == timeframe])
-            for timeframe in ("15m", "1h", "4h", "24h")
-        }
-        return {
-            "signals_skipped": sum(skipped.values()),
-            "skip_reasons": dict(skipped),
-            **total_perf,
-            "status_counts": dict(status_counts),
-            "by_stage": dict(by_stage),
-            "by_timeframe": dict(by_timeframe),
-            "by_timeframe_performance": timeframe_perf,
-            "by_confidence": dict(by_confidence),
-        }
+        return aggregate_signal_performance_items(items, skipped)
+
+
+def aggregate_signal_performance_items(items: list[dict[str, Any]], skipped: Counter[str] | dict[str, int] | None = None) -> dict[str, Any]:
+    skipped_counter = Counter(skipped or {})
+    status_counts = Counter(str(item["result_status"]) for item in items)
+    by_stage = Counter(str(item["stage"]) for item in items)
+    by_timeframe = Counter(str(item["timeframe"]) for item in items)
+    by_confidence = Counter(str(item.get("confidence_tier") or "UNKNOWN") for item in items)
+    total_perf = _performance_summary(items)
+    timeframe_perf = {
+        timeframe: _performance_summary([item for item in items if item.get("timeframe") == timeframe])
+        for timeframe in ("15m", "1h", "4h", "24h")
+    }
+    return {
+        "signals_skipped": sum(skipped_counter.values()),
+        "skip_reasons": dict(skipped_counter),
+        **total_perf,
+        "status_counts": dict(status_counts),
+        "by_stage": dict(by_stage),
+        "by_timeframe": dict(by_timeframe),
+        "by_timeframe_performance": timeframe_perf,
+        "by_confidence": dict(by_confidence),
+    }
+
+
+def build_one_hour_filter_candidate_study_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: Counter[str] | dict[str, int] | None,
+    latest_candle_time: Any,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    min_sample: int,
+    limit: int,
+    source: str = "live_compute",
+) -> dict[str, Any]:
+    latest_dt = _parse_dt(latest_candle_time)
+    lanes = [
+        _one_hour_filter_lane(
+            stage="MID_LONG",
+            direction="LONG",
+            items=[item for item in evaluated if item.get("stage") == "MID_LONG"],
+            min_sample=min_sample,
+            limit=limit,
+        ),
+        _one_hour_filter_lane(
+            stage="MID_SHORT",
+            direction="SHORT",
+            items=[item for item in evaluated if item.get("stage") == "MID_SHORT"],
+            min_sample=min_sample,
+            limit=limit,
+        ),
+    ]
+    candidates = [
+        candidate
+        for lane in lanes
+        for candidate in lane["filter_candidates"]
+        if candidate["action"] in {"PROMOTE_TO_SHADOW", "MONITOR_MORE"}
+    ]
+    candidates.sort(key=_one_hour_filter_candidate_sort_key, reverse=True)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "timeframe": "1h",
+            "stages": ["MID_LONG", "MID_SHORT"],
+            "min_sample": min_sample,
+            "limit": limit,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+        "study_scope": "one_hour_filter_candidate_study_read_only",
+        "source": source,
+        "method": "Existing filter specs ranked against 1h MID_LONG and MID_SHORT closed paper outcomes.",
+        "latest_evaluation_candle_time": latest_dt,
+        "latest_futures_15m_close_time": latest_dt,
+        "skipped_by_position_lock": dict(Counter(skipped or {})),
+        "aggregate": aggregate_signal_performance_items(evaluated, skipped),
+        "lanes": lanes,
+        "top_candidates": candidates[:limit],
+        "guardrails": [
+            "No Signal Factory rule changed.",
+            "No scanner behavior changed.",
+            "No TP/SL formula or outcome calculation changed.",
+            "PROMOTE_TO_SHADOW means research-only shadow monitoring, not live execution.",
+        ],
+    }
 
 
 def _naive(value: datetime) -> datetime:
