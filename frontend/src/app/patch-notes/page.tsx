@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-31",
+    title: "V3 Completion + Failure Analysis",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Fokus riset dikembalikan ke V3: membedah V3_SHADOW_PASS yang TP vs SL sebelum ada V4 baru.",
+    changes: [
+      "Endpoint /api/v3-shadow/forward-log sekarang mengirim failure_analysis read-only untuk V3.",
+      "Failure analysis membandingkan V3 TP vs SL berdasarkan evidence angka, filter, symbol, lane, dan latest TP/SL signal.",
+      "Halaman /v3-forward-log sekarang menampilkan V3 failure analysis sebagai pusat riset lanjutan V3.",
+      "Panel V4 di /signal-1h-review diberi label experimental/frozen agar tidak dianggap arah utama sebelum V3 selesai."
+    ],
+    impact: "Kita bisa melihat sisa penyakit V3 secara angka: filter mana yang masih menyumbang SL, evidence apa yang membedakan TP/SL, dan apakah V3 perlu refinement atau sudah cukup stabil untuk dipantau.",
+    links: [
+      { href: "/v3-forward-log", label: "V3 Forward Log" },
+      { href: "/v3-shadow-lab", label: "V3 Shadow Lab" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-30",
     title: "1h V4 Shadow Forward Monitor",
     status: "LIVE",

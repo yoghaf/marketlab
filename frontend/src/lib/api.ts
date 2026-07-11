@@ -1066,6 +1066,76 @@ export type V3ShadowForwardFilterDecision = {
   verdict?: string | null;
 };
 
+export type V3FailureEvidenceRow = {
+  field: string;
+  label: string;
+  quality_flag: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  open_count: number;
+  waiting_count: number;
+  both_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  open_median?: string | number | null;
+  waiting_median?: string | number | null;
+  tp_avg?: string | number | null;
+  sl_avg?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  delta_tp_minus_sl?: string | number | null;
+};
+
+export type V3FailureBucketRow = SignalPerformanceBucket & {
+  bucket: string;
+  label: string;
+  expression?: string | null;
+  sample_count: number;
+  sl_share_pct?: string | number | null;
+  read: string;
+};
+
+export type V3FailureLaneRow = SignalPerformanceBucket & {
+  stage: string;
+  timeframe: string;
+  sample_count: number;
+  sl_share_pct?: string | number | null;
+  read: string;
+};
+
+export type V3FailureAnalysis = {
+  scope: string;
+  readiness_verdict: string;
+  failure_read: string;
+  summary: {
+    v2_closed_count: number;
+    v3_closed_count: number;
+    v3_tp_count: number;
+    v3_sl_count: number;
+    v3_both_count: number;
+    v3_open_count: number;
+    v3_total_r_closed?: string | number | null;
+    v3_realistic_total_r_closed?: string | number | null;
+    v3_winrate_pct?: string | number | null;
+    v3_sl_share_pct?: string | number | null;
+    v3_retention_closed_pct?: string | number | null;
+    realistic_total_r_delta_vs_v2?: string | number | null;
+  };
+  evidence_tp_vs_sl: V3FailureEvidenceRow[];
+  top_evidence_gaps: V3FailureEvidenceRow[];
+  loss_by_filter: V3FailureBucketRow[];
+  loss_by_symbol: V3FailureBucketRow[];
+  loss_by_lane: V3FailureLaneRow[];
+  latest_v3_sl_signals: SignalPerformanceItem[];
+  latest_v3_tp_signals: SignalPerformanceItem[];
+  guardrails: string[];
+};
+
 export type V3ShadowForwardAudit = {
   executive_verdict: string;
   promotion_readiness: string;
@@ -1118,6 +1188,7 @@ export type V3ShadowForwardLogResponse = {
     read: string;
   };
   audit?: V3ShadowForwardAudit;
+  failure_analysis?: V3FailureAnalysis;
   by_stage_timeframe: V3ShadowForwardLaneRow[];
   by_filter: V3ShadowFilterRow[];
   latest_v3_open_signals: SignalPerformanceItem[];

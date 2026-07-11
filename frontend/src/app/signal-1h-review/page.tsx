@@ -277,7 +277,7 @@ export default async function Signal1hReviewPage() {
             )}
           </SectionCard>
 
-          <SectionCard title="V4 shadow forward monitor" description="Menerapkan filter walk-forward 1h sebagai label bayangan V4. Ini hanya audit: rule live, scanner, TP/SL, dan execution tidak berubah.">
+          <SectionCard title="Experimental V4 shadow monitor (frozen)" description="Panel ini dipertahankan hanya sebagai catatan eksperimen. Fokus riset kembali ke V3 failure analysis sebelum ada V4 baru atau promosi rule.">
             {v4ShadowError ? (
               <div className="p-4 text-sm text-stale">{v4ShadowError}</div>
             ) : (

@@ -789,6 +789,12 @@ class SignalCandidatePerformanceService:
                 filter_rows=filter_rows,
                 min_sample=min_sample,
             ),
+            "failure_analysis": _v3_failure_analysis(
+                v2_items=evaluated,
+                v3_items=v3_items,
+                min_sample=min_sample,
+                limit=limit,
+            ),
             "by_stage_timeframe": lane_rows,
             "by_filter": filter_rows,
             "latest_v3_open_signals": _sorted_signal_rows(v3_open, limit=limit),
@@ -2117,6 +2123,210 @@ def _v3_audit_risk_flags(
             }
         )
     return flags
+
+
+def _v3_failure_analysis(
+    *,
+    v2_items: list[dict[str, Any]],
+    v3_items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    v3_closed = [item for item in v3_items if item.get("result_status") in COMPLETED_OUTCOMES]
+    v3_tp = [item for item in v3_closed if item.get("result_status") == "TP_HIT"]
+    v3_sl = [item for item in v3_closed if item.get("result_status") == "SL_HIT"]
+    v3_both = [item for item in v3_closed if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"]
+    v2_closed = [item for item in v2_items if item.get("result_status") in COMPLETED_OUTCOMES]
+    v3_perf = _performance_summary(v3_items)
+    v2_perf = _performance_summary(v2_items)
+    evidence_rows = _evidence_field_rows(v3_closed, min_sample=max(3, min_sample))
+    useful_evidence = [
+        row
+        for row in evidence_rows
+        if row.get("quality_flag") not in {"SAMPLE_TOO_SMALL", "NO_CLEAR_GAP"}
+    ][:limit]
+    filter_rows = _v3_failure_bucket_rows(
+        v3_items,
+        key="v3_shadow_filter_id",
+        label_key="v3_shadow_filter_label",
+        min_sample=min_sample,
+        limit=limit,
+    )
+    symbol_loss_rows = _v3_failure_bucket_rows(
+        v3_sl,
+        key="symbol",
+        label_key=None,
+        min_sample=1,
+        limit=limit,
+        sort_by_loss=True,
+    )
+    lane_rows = _v3_failure_lane_rows(v3_items, min_sample=min_sample)
+    return {
+        "scope": "v3_failure_analysis_read_only",
+        "readiness_verdict": _v3_failure_readiness(v2_perf=v2_perf, v3_perf=v3_perf, min_sample=min_sample),
+        "failure_read": _v3_failure_read(v3_perf=v3_perf, useful_evidence=useful_evidence, filter_rows=filter_rows),
+        "summary": {
+            "v2_closed_count": len(v2_closed),
+            "v3_closed_count": len(v3_closed),
+            "v3_tp_count": len(v3_tp),
+            "v3_sl_count": len(v3_sl),
+            "v3_both_count": len(v3_both),
+            "v3_open_count": int(v3_perf.get("open_count") or 0),
+            "v3_total_r_closed": v3_perf.get("total_r_closed"),
+            "v3_realistic_total_r_closed": v3_perf.get("realistic_total_r_closed"),
+            "v3_winrate_pct": v3_perf.get("winrate_pct"),
+            "v3_sl_share_pct": _sl_share(v3_perf),
+            "v3_retention_closed_pct": _retention(len(v3_closed), len(v2_closed)),
+            "realistic_total_r_delta_vs_v2": _decimal_delta(
+                v3_perf.get("realistic_total_r_closed"),
+                v2_perf.get("realistic_total_r_closed"),
+            ),
+        },
+        "evidence_tp_vs_sl": evidence_rows,
+        "top_evidence_gaps": useful_evidence,
+        "loss_by_filter": filter_rows,
+        "loss_by_symbol": symbol_loss_rows,
+        "loss_by_lane": lane_rows,
+        "latest_v3_sl_signals": _sorted_signal_rows(v3_sl, limit=min(limit, 25)),
+        "latest_v3_tp_signals": _sorted_signal_rows(v3_tp, limit=min(limit, 25)),
+        "guardrails": [
+            "Failure analysis only reads V3 shadow pass outcomes.",
+            "It does not create V4, change V2 rules, change scanner behavior, change TP/SL, or execute orders.",
+            "Use this analysis to decide whether V3 is complete or still needs refinement.",
+        ],
+    }
+
+
+def _v3_failure_readiness(*, v2_perf: dict[str, Any], v3_perf: dict[str, Any], min_sample: int) -> str:
+    v3_closed = int(v3_perf.get("closed_count") or 0)
+    if v3_closed < min_sample:
+        return "V3_NEEDS_MORE_SAMPLE"
+    v3_realistic = _decimal_or_zero(v3_perf.get("realistic_total_r_closed"))
+    v3_total = _decimal_or_zero(v3_perf.get("total_r_closed"))
+    avg_delta = _decimal_delta(v3_perf.get("realistic_avg_r_closed"), v2_perf.get("realistic_avg_r_closed"))
+    sl_delta = _decimal_delta(_sl_share(v3_perf), _sl_share(v2_perf))
+    if v3_realistic > 0 and v3_total > 0 and avg_delta is not None and avg_delta > 0 and (sl_delta is None or sl_delta <= 0):
+        return "V3_FORWARD_STABLE_ENOUGH_TO_MONITOR"
+    if v3_realistic > 0 or (avg_delta is not None and avg_delta > 0):
+        return "V3_PARTIAL_IMPROVEMENT_NEEDS_FAILURE_REFINEMENT"
+    if v3_realistic < 0:
+        return "V3_RULE_TOO_NOISY"
+    return "V3_INCONCLUSIVE"
+
+
+def _v3_failure_read(
+    *,
+    v3_perf: dict[str, Any],
+    useful_evidence: list[dict[str, Any]],
+    filter_rows: list[dict[str, Any]],
+) -> str:
+    if int(v3_perf.get("closed_count") or 0) <= 0:
+        return "Belum ada V3 closed sample untuk dibedah."
+    worst_filter = next((row for row in filter_rows if int(row.get("sl_count") or 0) > 0), None)
+    best_gap = useful_evidence[0] if useful_evidence else None
+    parts: list[str] = []
+    if worst_filter:
+        parts.append(f"Filter dengan SL terbanyak: {worst_filter.get('label')} ({worst_filter.get('sl_count')} SL).")
+    if best_gap:
+        parts.append(
+            f"Evidence gap terbesar: {best_gap.get('label')} "
+            f"TP median {best_gap.get('tp_median')} vs SL median {best_gap.get('sl_median')}."
+        )
+    if not parts:
+        return "V3 belum menunjukkan pemisahan TP vs SL yang bersih; lanjut collect sample atau cari evidence baru."
+    return " ".join(parts)
+
+
+def _v3_failure_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    label_key: str | None,
+    min_sample: int,
+    limit: int,
+    sort_by_loss: bool = False,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    labels: dict[str, str] = {}
+    expressions: dict[str, str] = {}
+    for item in items:
+        bucket = str(item.get(key) or "UNKNOWN")
+        grouped[bucket].append(item)
+        labels[bucket] = str(item.get(label_key) or bucket) if label_key else bucket
+        expressions[bucket] = str(item.get("v3_shadow_filter_expression") or "")
+    rows: list[dict[str, Any]] = []
+    for bucket, bucket_items in grouped.items():
+        perf = _performance_summary(bucket_items)
+        sl_count = int(perf.get("sl_count") or 0)
+        row = {
+            "bucket": bucket,
+            "label": labels.get(bucket, bucket),
+            "expression": expressions.get(bucket, ""),
+            "sample_count": len(bucket_items),
+            "sl_share_pct": _sl_share(perf),
+            "read": _v3_failure_bucket_read(perf, min_sample=min_sample),
+            **perf,
+        }
+        rows.append(row)
+    if sort_by_loss:
+        rows.sort(
+            key=lambda row: (
+                int(row.get("sl_count") or 0),
+                Decimal(row.get("realistic_total_r_closed") or 0) * Decimal("-1"),
+                int(row.get("sample_count") or 0),
+            ),
+            reverse=True,
+        )
+    else:
+        rows.sort(
+            key=lambda row: (
+                int(row.get("closed_count") or 0) >= min_sample,
+                int(row.get("sl_count") or 0),
+                Decimal(row.get("realistic_total_r_closed") or 0) * Decimal("-1"),
+                int(row.get("sample_count") or 0),
+            ),
+            reverse=True,
+        )
+    return rows[:limit]
+
+
+def _v3_failure_bucket_read(perf: dict[str, Any], *, min_sample: int) -> str:
+    closed = int(perf.get("closed_count") or 0)
+    if closed < min_sample:
+        return "WAIT_SAMPLE"
+    if Decimal(perf.get("realistic_total_r_closed") or 0) > 0 and int(perf.get("sl_count") or 0) <= int(perf.get("tp_count") or 0):
+        return "FILTER_HEALTHY"
+    if int(perf.get("sl_count") or 0) > int(perf.get("tp_count") or 0):
+        return "LOSS_HEAVY"
+    return "MIXED"
+
+
+def _v3_failure_lane_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[(str(item.get("stage") or "UNKNOWN"), str(item.get("timeframe") or "UNKNOWN"))].append(item)
+    rows: list[dict[str, Any]] = []
+    for (stage, timeframe), lane_items in grouped.items():
+        perf = _performance_summary(lane_items)
+        rows.append(
+            {
+                "stage": stage,
+                "timeframe": timeframe,
+                "sample_count": len(lane_items),
+                "sl_share_pct": _sl_share(perf),
+                "read": _v3_failure_bucket_read(perf, min_sample=min_sample),
+                **perf,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            int(row.get("sl_count") or 0),
+            Decimal(row.get("realistic_total_r_closed") or 0) * Decimal("-1"),
+            int(row.get("sample_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
 
 
 def _sorted_signal_rows(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:

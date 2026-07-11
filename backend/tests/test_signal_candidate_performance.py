@@ -931,6 +931,13 @@ def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
         assert forward["audit"]["stage_decisions"][0]["decision"] == "CALIBRATION_CANDIDATE"
         assert forward["audit"]["filter_decisions"][0]["decision"] == "V4_FILTER_CANDIDATE"
         assert "bukan live signal" in forward["audit"]["guardrails"][1]
+        assert forward["failure_analysis"]["scope"] == "v3_failure_analysis_read_only"
+        assert forward["failure_analysis"]["summary"]["v3_tp_count"] == 15
+        assert forward["failure_analysis"]["summary"]["v3_sl_count"] == 0
+        assert forward["failure_analysis"]["loss_by_filter"][0]["bucket"] == "FUNDING_GE_75"
+        assert forward["failure_analysis"]["loss_by_filter"][0]["read"] == "FILTER_HEALTHY"
+        assert forward["failure_analysis"]["evidence_tp_vs_sl"]
+        assert "does not create V4" in forward["failure_analysis"]["guardrails"][1]
 
 
 def _signal(

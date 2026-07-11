@@ -8,6 +8,10 @@ import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   SignalPerformanceItem,
+  V3FailureAnalysis,
+  V3FailureBucketRow,
+  V3FailureEvidenceRow,
+  V3FailureLaneRow,
   V3ShadowFilterRow,
   V3ShadowForwardAudit,
   V3ShadowForwardFilterDecision,
@@ -117,6 +121,8 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
 
           {data?.audit ? <V3AuditPanel audit={data.audit} /> : null}
 
+          {data?.failure_analysis ? <V3FailurePanel analysis={data.failure_analysis} /> : null}
+
           <SectionCard title="Lane comparison" description="Baca ini untuk melihat apakah MID_LONG/MID_SHORT V3 benar-benar lebih bersih daripada baseline V2.">
             <LaneTable rows={data?.by_stage_timeframe || []} />
           </SectionCard>
@@ -197,6 +203,163 @@ function V3AuditPanel({ audit }: { audit: V3ShadowForwardAudit }) {
         ))}
       </div>
     </SectionCard>
+  );
+}
+
+function V3FailurePanel({ analysis }: { analysis: V3FailureAnalysis }) {
+  const summary = analysis.summary;
+  return (
+    <SectionCard title="V3 failure analysis" description="Membedah V3_SHADOW_PASS yang sudah closed: mana yang TP, mana yang SL, dan evidence angka apa yang paling membedakan. Ini dasar riset sebelum ada V4 baru.">
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Insight label="V3 verdict" value={labelFor(analysis.readiness_verdict)} />
+        <Insight label="V3 TP / SL" value={`${summary.v3_tp_count} / ${summary.v3_sl_count}`} />
+        <Insight label="V3 closed" value={summary.v3_closed_count} />
+        <Insight label="Realistic R" value={`${fmtSigned(summary.v3_realistic_total_r_closed)}R`} />
+        <Insight label="SL share" value={summary.v3_sl_share_pct == null ? "-" : `${fmtNumber(summary.v3_sl_share_pct)}%`} />
+        <Insight label="Retention closed" value={summary.v3_retention_closed_pct == null ? "-" : `${fmtNumber(summary.v3_retention_closed_pct)}%`} />
+      </div>
+      <div className="border-t border-line p-4">
+        <div className="rounded border border-line bg-yellow-50 p-3 text-sm font-semibold text-slate-700">
+          {analysis.failure_read}
+        </div>
+      </div>
+      <section className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Evidence TP vs SL</h3>
+          <V3EvidenceTable rows={analysis.top_evidence_gaps.length ? analysis.top_evidence_gaps : analysis.evidence_tp_vs_sl.slice(0, 12)} />
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Loss by filter</h3>
+          <V3FailureBucketTable rows={analysis.loss_by_filter.slice(0, 12)} label="Filter" />
+        </div>
+      </section>
+      <section className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Loss by symbol</h3>
+          <V3FailureBucketTable rows={analysis.loss_by_symbol.slice(0, 12)} label="Symbol" />
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Loss by lane</h3>
+          <V3FailureLaneTable rows={analysis.loss_by_lane} />
+        </div>
+      </section>
+      <section className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Latest V3 SL</h3>
+          <SignalTable rows={analysis.latest_v3_sl_signals.slice(0, 10)} empty="Belum ada V3 SL signal." />
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Latest V3 TP</h3>
+          <SignalTable rows={analysis.latest_v3_tp_signals.slice(0, 10)} empty="Belum ada V3 TP signal." />
+        </div>
+      </section>
+      <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
+        {analysis.guardrails.map((item) => (
+          <div className="rounded border border-line bg-field/40 p-3 font-semibold text-slate-700" key={item}>{item}</div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function V3EvidenceTable({ rows }: { rows: V3FailureEvidenceRow[] }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>Evidence</th>
+          <th>Flag</th>
+          <th>Available</th>
+          <th>TP median</th>
+          <th>SL median</th>
+          <th>Delta</th>
+          <th>TP/SL sample</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.field}>
+            <td>
+              <div className="font-semibold">{row.label}</div>
+              <div className="text-xs text-slate-500">{row.field}</div>
+            </td>
+            <td><StatusBadge value={row.quality_flag} /></td>
+            <td>{row.available_count} / miss {row.missing_count}</td>
+            <td>{fmtNumber(row.tp_median)}</td>
+            <td>{fmtNumber(row.sl_median)}</td>
+            <td className={Number(row.delta_tp_minus_sl || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.delta_tp_minus_sl)}</td>
+            <td>{row.tp_count} / {row.sl_count}</td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={7} title="Belum ada evidence gap V3" />}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function V3FailureBucketTable({ rows, label }: { rows: V3FailureBucketRow[]; label: string }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>{label}</th>
+          <th>Read</th>
+          <th>Sample</th>
+          <th>TP / SL / Open</th>
+          <th>Realistic R</th>
+          <th>SL share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${label}-${row.bucket}`}>
+            <td>
+              <div className="font-semibold">{row.label}</div>
+              {row.expression ? <div className="text-xs text-slate-500">{compactReason(row.expression, 90)}</div> : null}
+            </td>
+            <td><StatusBadge value={row.read} /></td>
+            <td>{row.sample_count}</td>
+            <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+            <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+            <td>{row.sl_share_pct == null ? "-" : `${fmtNumber(row.sl_share_pct)}%`}</td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={6} title={`Belum ada ${label.toLowerCase()} row`} />}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function V3FailureLaneTable({ rows }: { rows: V3FailureLaneRow[] }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>Lane</th>
+          <th>Read</th>
+          <th>Sample</th>
+          <th>TP / SL / Open</th>
+          <th>Realistic R</th>
+          <th>SL share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`${row.stage}-${row.timeframe}-failure`}>
+            <td>
+              <div className="font-semibold">{labelFor(row.stage)}</div>
+              <div className="text-xs text-slate-500">{row.timeframe}</div>
+            </td>
+            <td><StatusBadge value={row.read} /></td>
+            <td>{row.sample_count}</td>
+            <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+            <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+            <td>{row.sl_share_pct == null ? "-" : `${fmtNumber(row.sl_share_pct)}%`}</td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={6} title="Belum ada lane V3" />}
+      </tbody>
+    </TableShell>
   );
 }
 
