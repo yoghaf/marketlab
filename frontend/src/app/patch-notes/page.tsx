@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-30",
+    title: "1h V4 Shadow Forward Monitor",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan monitor V4 shadow read-only untuk melihat signal 1h mana yang lolos filter walk-forward tanpa mengubah rule live.",
+    changes: [
+      "Menambahkan endpoint /api/signal-candidates/one-hour-v4-shadow yang default membaca snapshot 1h.",
+      "V4 shadow memilih filter dari hasil walk-forward 1h yang berstatus WF_PROMISING atau WF_REDUCES_DAMAGE.",
+      "Halaman /signal-1h-review sekarang menampilkan filter V4 terpilih, pass/fail per stage, retention, delta realistic R, dan signal yang lolos shadow.",
+      "V4 shadow status hanya label riset; tidak mengubah Signal Factory V2, scanner, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa memantau apakah filter 1h yang lolos validation mulai stabil di signal terbaru sebelum dipertimbangkan sebagai rule baru.",
+    links: [
+      { href: "/signal-1h-review", label: "1h Review" },
+      { href: "/signal-quality-lab?timeframe=1h", label: "Quality Lab 1h" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-29",
     title: "1h Walk-Forward Optimization Lab",
     status: "LIVE",

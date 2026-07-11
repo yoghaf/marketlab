@@ -9,6 +9,8 @@ import {
   SignalForwardIntegrityResponse,
   OneHourFilterCandidateRow,
   OneHourFilterCandidateStudyResponse,
+  OneHourV4ShadowItem,
+  OneHourV4ShadowResponse,
   OneHourWalkForwardCandidate,
   OneHourWalkForwardResponse,
   SignalPerformanceBucket,
@@ -93,9 +95,11 @@ export default async function Signal1hReviewPage() {
   let forward: SignalForwardIntegrityResponse | null = null;
   let filterStudy: OneHourFilterCandidateStudyResponse | null = null;
   let walkForward: OneHourWalkForwardResponse | null = null;
+  let v4Shadow: OneHourV4ShadowResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
   let walkForwardError: string | null = null;
+  let v4ShadowError: string | null = null;
   try {
     [performance, forward] = await Promise.all([
       fetchJson<SignalPerformanceResponse>(`/api/signal-candidates/performance/live?${performanceQuery.toString()}`, { revalidateSeconds: 20 }),
@@ -113,6 +117,11 @@ export default async function Signal1hReviewPage() {
     walkForward = await fetchJson<OneHourWalkForwardResponse>("/api/signal-candidates/one-hour-walk-forward?min_sample=20&limit=12", { revalidateSeconds: 30 });
   } catch (err) {
     walkForwardError = err instanceof Error ? err.message : "1h walk-forward API failed";
+  }
+  try {
+    v4Shadow = await fetchJson<OneHourV4ShadowResponse>("/api/signal-candidates/one-hour-v4-shadow?min_sample=20&limit=20", { revalidateSeconds: 30 });
+  } catch (err) {
+    v4ShadowError = err instanceof Error ? err.message : "1h V4 shadow API failed";
   }
 
   const aggregate = performance?.aggregate;
@@ -264,6 +273,42 @@ export default async function Signal1hReviewPage() {
                   ))}
                 </div>
                 <WalkForwardTable rows={walkForward?.top_candidates || []} />
+              </>
+            )}
+          </SectionCard>
+
+          <SectionCard title="V4 shadow forward monitor" description="Menerapkan filter walk-forward 1h sebagai label bayangan V4. Ini hanya audit: rule live, scanner, TP/SL, dan execution tidak berubah.">
+            {v4ShadowError ? (
+              <div className="p-4 text-sm text-stale">{v4ShadowError}</div>
+            ) : (
+              <>
+                <div className="grid gap-3 border-b border-line p-4 md:grid-cols-5">
+                  <Insight label="Source" value={v4Shadow?.source || "-"} />
+                  <Insight label="Selected filter" value={`${v4Shadow?.selected_filters.length ?? 0} filter`} />
+                  <Insight label="V4 pass" value={`${v4Shadow?.summary?.v4_shadow_pass_count ?? 0} signal`} />
+                  <Insight label="Retention" value={v4Shadow?.summary?.sample_retention_pct == null ? "-" : `${fmtNumber(v4Shadow.summary.sample_retention_pct)}%`} />
+                  <Insight label="Read" value={labelFor(v4Shadow?.summary?.read || "-")} />
+                </div>
+                <div className="grid gap-4 p-4 xl:grid-cols-2">
+                  {(v4Shadow?.by_stage || []).map((row) => (
+                    <div key={row.stage} className="rounded border border-line bg-white">
+                      <div className="border-b border-line p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-bold text-ink">{labelFor(row.stage)} V4 shadow</h3>
+                          <StatusBadge value={row.read} />
+                        </div>
+                        <p className="mt-1 text-sm text-slate-600">Pass {row.v4_shadow_pass_count}, fail {row.v4_shadow_fail_count}, unavailable {row.v4_shadow_unavailable_count}.</p>
+                      </div>
+                      <div className="grid gap-2 p-3 text-sm md:grid-cols-3">
+                        <Insight label="Baseline realistic R" value={`${fmtSigned(row.v2_baseline.realistic_total_r_closed)}R`} />
+                        <Insight label="V4 pass realistic R" value={`${fmtSigned(row.v4_shadow_pass.realistic_total_r_closed)}R`} />
+                        <Insight label="Avg delta" value={`${fmtSigned(row.v4_shadow_pass.realistic_avg_r_delta_vs_baseline)}R`} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <V4SelectedFiltersTable rows={v4Shadow?.selected_filters || []} />
+                <V4ShadowSignalsTable rows={v4Shadow?.latest_v4_pass_signals || []} />
               </>
             )}
           </SectionCard>
@@ -566,6 +611,112 @@ function WalkForwardTable({ rows }: { rows: OneHourWalkForwardCandidate[] }) {
             <tr>
               <td colSpan={9}>
                 <EmptyState title="Belum ada walk-forward candidate" detail="Filter 1h belum lolos train/validation atau sample validation belum cukup." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function V4SelectedFiltersTable({ rows }: { rows: OneHourV4ShadowResponse["selected_filters"] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Filter</th>
+            <th>WF verdict</th>
+            <th>Validation</th>
+            <th>Delta</th>
+            <th>Risk notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.stage}-${row.filter_id}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.stage)}</div>
+                <div className="text-xs text-slate-500">{labelFor(row.direction)} / {row.timeframe}</div>
+              </td>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <StatusBadge value={row.walk_forward_verdict} />
+                <div className="mt-1 text-xs text-slate-500">Score {row.walk_forward_score}/7</div>
+              </td>
+              <td>
+                <div>{row.validation.closed_count} closed</div>
+                <div className={Number(row.validation.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.validation.realistic_total_r_closed)}R</div>
+              </td>
+              <td>
+                <div>Avg {fmtSigned(row.validation.realistic_avg_r_delta_vs_baseline)}R</div>
+                <div>SL {fmtSigned(row.validation.sl_share_delta_vs_baseline)}%</div>
+              </td>
+              <td className="max-w-md text-sm text-slate-600">{row.risk_notes.length ? row.risk_notes.join(" ") : "No major validation warning."}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={6}>
+                <EmptyState title="Belum ada filter V4 shadow" detail="Walk-forward belum memilih filter yang layak dipantau sebagai V4 shadow." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function V4ShadowSignalsTable({ rows }: { rows: OneHourV4ShadowItem[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Time WIB</th>
+            <th>Symbol</th>
+            <th>Stage</th>
+            <th>Filter</th>
+            <th>Status</th>
+            <th>Realistic R</th>
+            <th>Entry / SL / TP</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item) => (
+            <tr key={item.signal_id}>
+              <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
+              <td className="font-semibold">
+                <Link className="text-blue-700 hover:underline" href={`/signals/${encodeURIComponent(item.symbol)}?signal_id=${encodeURIComponent(item.signal_id)}`}>
+                  {item.symbol}
+                </Link>
+              </td>
+              <td>{labelFor(item.stage)}</td>
+              <td>
+                <div className="font-semibold">{item.v4_filter_label || "-"}</div>
+                <div className="text-xs text-slate-500">{item.v4_filter_expression || "-"}</div>
+              </td>
+              <td><StatusBadge value={item.result_status} /></td>
+              <td className={Number(item.realistic_realized_r ?? item.realized_r ?? 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(item.realistic_realized_r ?? item.realized_r)}R</td>
+              <td className="text-sm">
+                <div>Entry {fmtPrice(item.entry)}</div>
+                <div>SL {fmtPrice(item.stop_loss)}</div>
+                <div>TP {fmtPrice(item.take_profit)}</div>
+              </td>
+              <td className="max-w-md text-sm text-slate-600">{item.v4_shadow_reason || "-"}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={8}>
+                <EmptyState title="Belum ada signal V4 shadow pass" detail="Filter walk-forward belum cocok ke signal 1h terbaru, atau sample belum cukup." />
               </td>
             </tr>
           )}

@@ -1385,6 +1385,95 @@ export type OneHourWalkForwardResponse = {
   guardrails: string[];
 };
 
+export type OneHourV4ShadowSelectedFilter = {
+  stage: string;
+  direction: string;
+  timeframe: string;
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  walk_forward_verdict: string;
+  walk_forward_score: number;
+  validation: OneHourWalkForwardPerf;
+  risk_notes: string[];
+};
+
+export type OneHourV4ShadowItem = SignalPerformanceItem & {
+  v4_shadow_status?: string | null;
+  v4_filter_id?: string | null;
+  v4_filter_label?: string | null;
+  v4_filter_expression?: string | null;
+  v4_walk_forward_verdict?: string | null;
+  v4_walk_forward_score?: number | null;
+  v4_shadow_reason?: string | null;
+};
+
+export type OneHourV4ShadowStageRow = {
+  stage: string;
+  timeframe: string;
+  v2_baseline: OneHourWalkForwardPerf;
+  v4_shadow_pass: OneHourWalkForwardPerf;
+  v4_shadow_fail: OneHourWalkForwardPerf;
+  v4_shadow_pass_count: number;
+  v4_shadow_fail_count: number;
+  v4_shadow_unavailable_count: number;
+  v4_shadow_no_filter_count: number;
+  sample_retention_pct?: string | number | null;
+  read: string;
+};
+
+export type OneHourV4ShadowResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    timeframe: string;
+    stages: string[];
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  study_scope: string;
+  source: string;
+  method: string;
+  filter_source: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  selected_filters: OneHourV4ShadowSelectedFilter[];
+  walk_forward_summary: {
+    lane_count: number;
+    top_candidate_count: number;
+  };
+  summary: {
+    v2_baseline: OneHourWalkForwardPerf;
+    v4_shadow_pass: OneHourWalkForwardPerf;
+    v4_shadow_fail: OneHourWalkForwardPerf;
+    v4_shadow_pass_count: number;
+    v4_shadow_fail_count: number;
+    v4_shadow_unavailable_count: number;
+    v4_shadow_no_filter_count: number;
+    sample_retention_pct?: string | number | null;
+    realistic_total_r_delta_v4_vs_v2?: string | number | null;
+    realistic_avg_r_delta_v4_vs_v2?: string | number | null;
+    winrate_delta_v4_vs_v2?: string | number | null;
+    sl_share_delta_v4_vs_v2?: string | number | null;
+    read: string;
+  };
+  by_stage: OneHourV4ShadowStageRow[];
+  latest_v4_pass_signals: OneHourV4ShadowItem[];
+  latest_v4_fail_signals: OneHourV4ShadowItem[];
+  guardrails: string[];
+  snapshot?: { generated_at_utc?: string; filename?: string; read_model?: string };
+};
+
 export type SignalCalibrationPerf = SignalPerformanceBucket & {
   sample_count: number;
   median_r_closed?: string | number | null;

@@ -502,6 +502,35 @@ class SignalCandidatePerformanceService:
             limit=limit,
         )
 
+    def one_hour_v4_shadow_monitor(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe="1h",
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        return build_one_hour_v4_shadow_monitor_payload(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=min_sample,
+            limit=limit,
+        )
+
     def calibration_lab(
         self,
         *,
@@ -1382,6 +1411,110 @@ def build_one_hour_walk_forward_payload(
             "No scanner behavior changed.",
             "No TP/SL formula or outcome calculation changed.",
             "Walk-forward candidates are research-only and not execution instructions.",
+        ],
+    }
+
+
+def build_one_hour_v4_shadow_monitor_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: Counter[str] | dict[str, int] | None,
+    latest_candle_time: Any,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    min_sample: int,
+    limit: int,
+    source: str = "live_compute",
+) -> dict[str, Any]:
+    latest_dt = _parse_dt(latest_candle_time)
+    one_hour_items = [
+        item
+        for item in evaluated
+        if item.get("timeframe") == "1h" and item.get("stage") in {"MID_LONG", "MID_SHORT"}
+    ]
+    walk_forward = build_one_hour_walk_forward_payload(
+        evaluated=one_hour_items,
+        skipped=skipped,
+        latest_candle_time=latest_dt,
+        epoch=epoch,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=min_sample,
+        limit=max(limit, 1),
+        source=source,
+    )
+    selected_filters = _one_hour_v4_selected_filters(walk_forward.get("top_candidates") or [], limit=limit)
+    annotated = _one_hour_v4_apply_shadow(one_hour_items, selected_filters)
+    pass_items = [item for item in annotated if item.get("v4_shadow_status") == "V4_SHADOW_PASS"]
+    fail_items = [item for item in annotated if item.get("v4_shadow_status") == "V4_SHADOW_FAIL"]
+    unavailable_items = [item for item in annotated if item.get("v4_shadow_status") == "V4_SHADOW_UNAVAILABLE"]
+    no_filter_items = [item for item in annotated if item.get("v4_shadow_status") == "V4_SHADOW_NO_FILTER"]
+    baseline = _walk_forward_perf(one_hour_items)
+    v4_pass = _walk_forward_perf(pass_items, baseline=baseline)
+    v4_fail = _walk_forward_perf(fail_items, baseline=baseline)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "timeframe": "1h",
+            "stages": ["MID_LONG", "MID_SHORT"],
+            "min_sample": min_sample,
+            "limit": limit,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "shadow_strategy_version": "SIGNAL_FACTORY_V4_SHADOW_WALK_FORWARD_1H",
+        "study_scope": "one_hour_v4_shadow_forward_monitor_read_only",
+        "source": source,
+        "method": "Applies 1h walk-forward filters to logged 1h Signal outcomes as shadow-only V4 labels.",
+        "filter_source": "one_hour_walk_forward_optimization_read_only",
+        "latest_evaluation_candle_time": latest_dt,
+        "latest_futures_15m_close_time": latest_dt,
+        "skipped_by_position_lock": dict(Counter(skipped or {})),
+        "selected_filters": selected_filters,
+        "walk_forward_summary": {
+            "lane_count": len(walk_forward.get("lanes") or []),
+            "top_candidate_count": len(walk_forward.get("top_candidates") or []),
+        },
+        "summary": {
+            "v2_baseline": baseline,
+            "v4_shadow_pass": v4_pass,
+            "v4_shadow_fail": v4_fail,
+            "v4_shadow_pass_count": len(pass_items),
+            "v4_shadow_fail_count": len(fail_items),
+            "v4_shadow_unavailable_count": len(unavailable_items),
+            "v4_shadow_no_filter_count": len(no_filter_items),
+            "sample_retention_pct": _retention(len(pass_items), len(one_hour_items)),
+            "realistic_total_r_delta_v4_vs_v2": _decimal_delta(
+                v4_pass.get("realistic_total_r_closed"),
+                baseline.get("realistic_total_r_closed"),
+            ),
+            "realistic_avg_r_delta_v4_vs_v2": _decimal_delta(
+                v4_pass.get("realistic_avg_r_closed"),
+                baseline.get("realistic_avg_r_closed"),
+            ),
+            "winrate_delta_v4_vs_v2": _decimal_delta(v4_pass.get("winrate_pct"), baseline.get("winrate_pct")),
+            "sl_share_delta_v4_vs_v2": _decimal_delta(_sl_share(v4_pass), _sl_share(baseline)),
+            "read": _one_hour_v4_read(
+                baseline=baseline,
+                v4_pass=v4_pass,
+                selected_filter_count=len(selected_filters),
+                min_sample=min_sample,
+            ),
+        },
+        "by_stage": _one_hour_v4_stage_rows(annotated, selected_filters=selected_filters, min_sample=min_sample),
+        "latest_v4_pass_signals": _sorted_signal_rows(pass_items, limit=limit),
+        "latest_v4_fail_signals": _sorted_signal_rows(fail_items, limit=min(limit, 20)),
+        "guardrails": [
+            "No Signal Factory rule changed.",
+            "No scanner behavior changed.",
+            "No TP/SL formula or outcome calculation changed.",
+            "V4 shadow status is research-only and not an execution instruction.",
         ],
     }
 
@@ -3130,6 +3263,166 @@ def _one_hour_walk_forward_sort_key(row: dict[str, Any]) -> tuple[int, int, Deci
         Decimal(total_r) if total_r is not None else Decimal("-999"),
         int(validation.get("closed_count") or 0),
     )
+
+
+def _one_hour_v4_selected_filters(candidates: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for row in candidates:
+        if row.get("verdict") not in {"WF_PROMISING", "WF_REDUCES_DAMAGE"}:
+            continue
+        selected.append(
+            {
+                "stage": row.get("stage"),
+                "direction": row.get("direction"),
+                "timeframe": "1h",
+                "filter_id": row.get("filter_id"),
+                "label": row.get("label"),
+                "expression": row.get("expression"),
+                "family": row.get("family"),
+                "required_fields": row.get("required_fields") or [],
+                "walk_forward_verdict": row.get("verdict"),
+                "walk_forward_score": row.get("score"),
+                "validation": row.get("validation") or {},
+                "risk_notes": row.get("risk_notes") or [],
+            }
+        )
+    return selected[: max(1, limit)]
+
+
+def _one_hour_v4_apply_shadow(
+    items: list[dict[str, Any]],
+    selected_filters: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    specs_by_id = {spec.filter_id: spec for spec in _filter_study_specs()}
+    filters_by_lane: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in selected_filters:
+        filters_by_lane[(str(row.get("stage") or ""), str(row.get("timeframe") or ""))].append(row)
+    return [_one_hour_v4_shadow_result(item, filters_by_lane, specs_by_id) for item in items]
+
+
+def _one_hour_v4_shadow_result(
+    item: dict[str, Any],
+    filters_by_lane: dict[tuple[str, str], list[dict[str, Any]]],
+    specs_by_id: dict[str, FilterStudySpec],
+) -> dict[str, Any]:
+    row = dict(item)
+    lane_filters = filters_by_lane.get((str(item.get("stage") or ""), str(item.get("timeframe") or "")), [])
+    base = {
+        "v4_shadow_status": "V4_SHADOW_NO_FILTER",
+        "v4_filter_id": None,
+        "v4_filter_label": None,
+        "v4_filter_expression": None,
+        "v4_walk_forward_verdict": None,
+        "v4_walk_forward_score": None,
+        "v4_shadow_reason": "No 1h walk-forward filter is selected for this lane yet.",
+    }
+    if not lane_filters:
+        row.update(base)
+        return row
+
+    missing_fields: set[str] = set()
+    checked_filter_count = 0
+    evidence = item.get("evidence_snapshot") or {}
+    for selected in lane_filters:
+        spec = specs_by_id.get(str(selected.get("filter_id") or ""))
+        if spec is None:
+            continue
+        missing = [field for field in spec.required_fields if evidence.get(field) is None]
+        if missing:
+            missing_fields.update(missing)
+            continue
+        checked_filter_count += 1
+        if spec.predicate(item):
+            row.update(
+                {
+                    "v4_shadow_status": "V4_SHADOW_PASS",
+                    "v4_filter_id": selected.get("filter_id"),
+                    "v4_filter_label": selected.get("label"),
+                    "v4_filter_expression": selected.get("expression"),
+                    "v4_walk_forward_verdict": selected.get("walk_forward_verdict"),
+                    "v4_walk_forward_score": selected.get("walk_forward_score"),
+                    "v4_shadow_reason": f"Matched V4 walk-forward filter: {selected.get('label')}.",
+                }
+            )
+            return row
+
+    if checked_filter_count == 0 and missing_fields:
+        base.update(
+            {
+                "v4_shadow_status": "V4_SHADOW_UNAVAILABLE",
+                "v4_shadow_reason": "Required V4 filter evidence missing: " + ", ".join(sorted(missing_fields)),
+            }
+        )
+    else:
+        base.update(
+            {
+                "v4_shadow_status": "V4_SHADOW_FAIL",
+                "v4_shadow_reason": "Selected V4 walk-forward filters exist for this lane, but this signal evidence did not match them.",
+            }
+        )
+    row.update(base)
+    return row
+
+
+def _one_hour_v4_stage_rows(
+    items: list[dict[str, Any]],
+    *,
+    selected_filters: list[dict[str, Any]],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for stage in ("MID_LONG", "MID_SHORT"):
+        lane_items = [item for item in items if item.get("stage") == stage and item.get("timeframe") == "1h"]
+        lane_selected_count = sum(1 for row in selected_filters if row.get("stage") == stage and row.get("timeframe") == "1h")
+        baseline = _walk_forward_perf(lane_items)
+        pass_items = [item for item in lane_items if item.get("v4_shadow_status") == "V4_SHADOW_PASS"]
+        fail_items = [item for item in lane_items if item.get("v4_shadow_status") == "V4_SHADOW_FAIL"]
+        v4_pass = _walk_forward_perf(pass_items, baseline=baseline)
+        row = {
+            "stage": stage,
+            "timeframe": "1h",
+            "v2_baseline": baseline,
+            "v4_shadow_pass": v4_pass,
+            "v4_shadow_fail": _walk_forward_perf(fail_items, baseline=baseline),
+            "v4_shadow_pass_count": len(pass_items),
+            "v4_shadow_fail_count": len(fail_items),
+            "v4_shadow_unavailable_count": sum(1 for item in lane_items if item.get("v4_shadow_status") == "V4_SHADOW_UNAVAILABLE"),
+            "v4_shadow_no_filter_count": sum(1 for item in lane_items if item.get("v4_shadow_status") == "V4_SHADOW_NO_FILTER"),
+            "sample_retention_pct": _retention(len(pass_items), len(lane_items)),
+        }
+        row["read"] = _one_hour_v4_read(
+            baseline=baseline,
+            v4_pass=v4_pass,
+            selected_filter_count=lane_selected_count,
+            min_sample=min_sample,
+        )
+        rows.append(row)
+    return rows
+
+
+def _one_hour_v4_read(
+    *,
+    baseline: dict[str, Any],
+    v4_pass: dict[str, Any],
+    selected_filter_count: int,
+    min_sample: int,
+) -> str:
+    if selected_filter_count <= 0:
+        return "V4_NO_FILTER_SELECTED"
+    if int(v4_pass.get("closed_count") or 0) < min_sample:
+        return "V4_MONITOR_MORE_SAMPLE"
+    avg_delta = v4_pass.get("realistic_avg_r_delta_vs_baseline")
+    sl_delta = v4_pass.get("sl_share_delta_vs_baseline")
+    total_r = Decimal(v4_pass.get("realistic_total_r_closed") or 0)
+    if avg_delta is not None and Decimal(avg_delta) >= Decimal("0.05") and total_r > 0 and (sl_delta is None or Decimal(sl_delta) <= 0):
+        return "V4_SHADOW_BETTER_THAN_V2_BASELINE"
+    if (avg_delta is not None and Decimal(avg_delta) > 0) or (sl_delta is not None and Decimal(sl_delta) < 0):
+        return "V4_SHADOW_MONITOR_MORE"
+    if avg_delta is not None and Decimal(avg_delta) < 0:
+        return "V4_SHADOW_WEAKER_THAN_V2_BASELINE"
+    if Decimal(baseline.get("realistic_total_r_closed") or 0) > 0:
+        return "V4_BASELINE_POSITIVE_NO_CLEAR_FILTER"
+    return "V4_SHADOW_INCONCLUSIVE"
 
 
 def _calibration_lane(

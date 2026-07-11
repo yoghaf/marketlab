@@ -640,6 +640,65 @@ def test_one_hour_walk_forward_marks_filter_promising_when_validation_holds() ->
         assert payload["top_candidates"][0]["filter_id"] == "FUNDING_GE_75"
 
 
+def test_one_hour_v4_shadow_monitor_applies_walk_forward_filter_read_only() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("s1", "AAAUSDT", "85", True),
+            ("s2", "BBBUSDT", "86", True),
+            ("s3", "CCCUSDT", "30", False),
+            ("s4", "DDDUSDT", "35", False),
+            ("s5", "EEEUSDT", "40", False),
+            ("s6", "FFFUSDT", "87", True),
+            ("s7", "GGGUSDT", "88", True),
+            ("s8", "HHHUSDT", "45", False),
+        ]
+        for index, (signal_id, symbol, funding, is_tp) in enumerate(rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": funding},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).one_hour_v4_shadow_monitor(position_lock=False, min_sample=1, limit=10)
+
+        assert payload["study_scope"] == "one_hour_v4_shadow_forward_monitor_read_only"
+        assert payload["not_live_signal"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["selected_filters"][0]["filter_id"] == "FUNDING_GE_75"
+        assert payload["summary"]["v4_shadow_pass_count"] == 4
+        assert payload["summary"]["v4_shadow_fail_count"] == 4
+        assert payload["summary"]["v4_shadow_pass"]["tp_count"] == 4
+        assert payload["summary"]["v4_shadow_pass"]["sl_count"] == 0
+        assert payload["summary"]["read"] == "V4_SHADOW_BETTER_THAN_V2_BASELINE"
+        assert all(row["v4_shadow_status"] == "V4_SHADOW_PASS" for row in payload["latest_v4_pass_signals"])
+        assert payload["latest_v4_pass_signals"][0]["v4_filter_id"] == "FUNDING_GE_75"
+
+
 def test_calibration_lab_splits_train_validation_and_marks_promising_filter() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

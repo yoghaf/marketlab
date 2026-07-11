@@ -49,6 +49,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     integrity_1h = service.forward_integrity_1h(limit=1)
     one_hour_filter = service.one_hour_filter_candidate_study(min_sample=1, limit=5)
     one_hour_walk_forward = service.one_hour_walk_forward_study(min_sample=1, limit=5)
+    one_hour_v4_shadow = service.one_hour_v4_shadow_monitor(min_sample=1, limit=5)
 
     assert performance["cache"]["source"] == "artifact_snapshot"
     assert performance["snapshot"]["read_model"] == "artifact_snapshot"
@@ -70,6 +71,10 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert one_hour_walk_forward["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert one_hour_walk_forward["split_method"] == "chronological_70_30"
     assert len(one_hour_walk_forward["lanes"]) == 2
+    assert one_hour_v4_shadow["source"] == "signal_performance_snapshot_1h"
+    assert one_hour_v4_shadow["snapshot"]["filename"] == PERFORMANCE_1H_FILE
+    assert one_hour_v4_shadow["study_scope"] == "one_hour_v4_shadow_forward_monitor_read_only"
+    assert one_hour_v4_shadow["summary"]["read"] == "V4_NO_FILTER_SELECTED"
 
 
 def _signal(
