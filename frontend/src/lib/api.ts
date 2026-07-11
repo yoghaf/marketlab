@@ -1301,6 +1301,90 @@ export type OneHourFilterCandidateStudyResponse = {
   guardrails: string[];
 };
 
+export type OneHourWalkForwardPerf = SignalPerformanceBucket & {
+  sample_count: number;
+  median_realistic_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  sl_share_pct?: string | number | null;
+  top_symbol: string;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+  sample_delta_vs_baseline?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  max_drawdown_delta_vs_baseline?: string | number | null;
+};
+
+export type OneHourWalkForwardCandidate = {
+  stage: string;
+  direction: string;
+  timeframe: string;
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  missing_data: {
+    all: number;
+    train: number;
+    validation: number;
+  };
+  all: OneHourWalkForwardPerf;
+  train: OneHourWalkForwardPerf;
+  validation: OneHourWalkForwardPerf;
+  verdict: string;
+  score: number;
+  note: string;
+  risk_notes: string[];
+};
+
+export type OneHourWalkForwardLane = {
+  lane: string;
+  stage: string;
+  direction: string;
+  timeframe: string;
+  sample_count: number;
+  train_count: number;
+  validation_count: number;
+  split_method: string;
+  baseline_all: OneHourWalkForwardPerf;
+  baseline_train: OneHourWalkForwardPerf;
+  baseline_validation: OneHourWalkForwardPerf;
+  lane_status: string;
+  lane_note: string;
+  filter_candidates: OneHourWalkForwardCandidate[];
+  actionable_candidates: OneHourWalkForwardCandidate[];
+};
+
+export type OneHourWalkForwardResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    timeframe: string;
+    stages: string[];
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_scope: string;
+  source: string;
+  method: string;
+  split_method: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  aggregate: SignalPerformanceResponse["aggregate"];
+  lanes: OneHourWalkForwardLane[];
+  top_candidates: OneHourWalkForwardCandidate[];
+  guardrails: string[];
+};
+
 export type SignalCalibrationPerf = SignalPerformanceBucket & {
   sample_count: number;
   median_r_closed?: string | number | null;

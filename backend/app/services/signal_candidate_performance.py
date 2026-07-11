@@ -473,6 +473,35 @@ class SignalCandidatePerformanceService:
             limit=limit,
         )
 
+    def one_hour_walk_forward_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 12,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe="1h",
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        return build_one_hour_walk_forward_payload(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=min_sample,
+            limit=limit,
+        )
+
     def calibration_lab(
         self,
         *,
@@ -1277,6 +1306,82 @@ def build_one_hour_filter_candidate_study_payload(
             "No scanner behavior changed.",
             "No TP/SL formula or outcome calculation changed.",
             "PROMOTE_TO_SHADOW means research-only shadow monitoring, not live execution.",
+        ],
+    }
+
+
+def build_one_hour_walk_forward_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: Counter[str] | dict[str, int] | None,
+    latest_candle_time: Any,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    min_sample: int,
+    limit: int,
+    source: str = "live_compute",
+) -> dict[str, Any]:
+    latest_dt = _parse_dt(latest_candle_time)
+    closed = [
+        item
+        for item in evaluated
+        if item.get("result_status") in COMPLETED_OUTCOMES and item.get("realistic_realized_r") is not None
+    ]
+    lanes = [
+        _one_hour_walk_forward_lane(
+            stage="MID_LONG",
+            direction="LONG",
+            items=[item for item in closed if item.get("stage") == "MID_LONG"],
+            min_sample=min_sample,
+            limit=limit,
+        ),
+        _one_hour_walk_forward_lane(
+            stage="MID_SHORT",
+            direction="SHORT",
+            items=[item for item in closed if item.get("stage") == "MID_SHORT"],
+            min_sample=min_sample,
+            limit=limit,
+        ),
+    ]
+    candidates = [
+        candidate
+        for lane in lanes
+        for candidate in lane["filter_candidates"]
+        if candidate["verdict"] in {"WF_PROMISING", "WF_REDUCES_DAMAGE"}
+    ]
+    candidates.sort(key=_one_hour_walk_forward_sort_key, reverse=True)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "timeframe": "1h",
+            "stages": ["MID_LONG", "MID_SHORT"],
+            "min_sample": min_sample,
+            "limit": limit,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+        "study_scope": "one_hour_walk_forward_optimization_read_only",
+        "source": source,
+        "method": "Chronological 70/30 train-validation split over closed 1h Signal outcomes using realistic R.",
+        "split_method": "chronological_70_30",
+        "latest_evaluation_candle_time": latest_dt,
+        "latest_futures_15m_close_time": latest_dt,
+        "skipped_by_position_lock": dict(Counter(skipped or {})),
+        "aggregate": aggregate_signal_performance_items(closed, skipped),
+        "lanes": lanes,
+        "top_candidates": candidates[:limit],
+        "guardrails": [
+            "No Signal Factory rule changed.",
+            "No scanner behavior changed.",
+            "No TP/SL formula or outcome calculation changed.",
+            "Walk-forward candidates are research-only and not execution instructions.",
         ],
     }
 
@@ -2722,6 +2827,309 @@ def _one_hour_lane_note(baseline: dict[str, Any], actionable: list[dict[str, Any
     if Decimal(baseline.get("total_r_closed") or 0) > 0:
         return "Baseline lane positif, tetapi filter tambahan belum lebih baik."
     return "Lane 1h masih lemah; jangan promosi rule."
+
+
+def _one_hour_walk_forward_lane(
+    *,
+    stage: str,
+    direction: str,
+    items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    sorted_items = sorted(
+        items,
+        key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol") or "")),
+    )
+    if len(sorted_items) >= 2:
+        split_index = max(1, min(len(sorted_items) - 1, int(Decimal(len(sorted_items)) * Decimal("0.70"))))
+    else:
+        split_index = len(sorted_items)
+    train_items = sorted_items[:split_index]
+    validation_items = sorted_items[split_index:]
+    baseline_all = _walk_forward_perf(sorted_items)
+    baseline_train = _walk_forward_perf(train_items)
+    baseline_validation = _walk_forward_perf(validation_items)
+    candidates = [
+        _one_hour_walk_forward_candidate(
+            spec=spec,
+            all_items=sorted_items,
+            train_items=train_items,
+            validation_items=validation_items,
+            baseline_all=baseline_all,
+            baseline_train=baseline_train,
+            baseline_validation=baseline_validation,
+            stage=stage,
+            direction=direction,
+            min_sample=min_sample,
+        )
+        for spec in _filter_study_specs()
+    ]
+    candidates.sort(key=_one_hour_walk_forward_sort_key, reverse=True)
+    actionable = [row for row in candidates if row["verdict"] in {"WF_PROMISING", "WF_REDUCES_DAMAGE"}]
+    return {
+        "lane": f"{stage}_1h",
+        "stage": stage,
+        "direction": direction,
+        "timeframe": "1h",
+        "sample_count": len(sorted_items),
+        "train_count": len(train_items),
+        "validation_count": len(validation_items),
+        "split_method": "chronological_70_30",
+        "baseline_all": baseline_all,
+        "baseline_train": baseline_train,
+        "baseline_validation": baseline_validation,
+        "lane_status": _one_hour_walk_forward_lane_status(baseline_train, baseline_validation, actionable, min_sample=min_sample),
+        "lane_note": _one_hour_walk_forward_lane_note(baseline_train, baseline_validation, actionable, min_sample=min_sample),
+        "filter_candidates": candidates[:limit],
+        "actionable_candidates": actionable[:limit],
+    }
+
+
+def _one_hour_walk_forward_candidate(
+    *,
+    spec: FilterStudySpec,
+    all_items: list[dict[str, Any]],
+    train_items: list[dict[str, Any]],
+    validation_items: list[dict[str, Any]],
+    baseline_all: dict[str, Any],
+    baseline_train: dict[str, Any],
+    baseline_validation: dict[str, Any],
+    stage: str,
+    direction: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    all_selected, all_missing = _apply_filter_spec(all_items, spec)
+    train_selected, train_missing = _apply_filter_spec(train_items, spec)
+    validation_selected, validation_missing = _apply_filter_spec(validation_items, spec)
+    all_perf = _walk_forward_perf(all_selected, baseline=baseline_all)
+    train = _walk_forward_perf(train_selected, baseline=baseline_train)
+    validation = _walk_forward_perf(validation_selected, baseline=baseline_validation)
+    verdict = _one_hour_walk_forward_verdict(train, validation, min_sample=min_sample)
+    return {
+        "stage": stage,
+        "direction": direction,
+        "timeframe": "1h",
+        "filter_id": spec.filter_id,
+        "label": spec.label,
+        "expression": spec.expression,
+        "family": spec.family,
+        "required_fields": list(spec.required_fields),
+        "missing_data": {
+            "all": all_missing,
+            "train": train_missing,
+            "validation": validation_missing,
+        },
+        "all": all_perf,
+        "train": train,
+        "validation": validation,
+        "verdict": verdict,
+        "score": _one_hour_walk_forward_score(train, validation, verdict=verdict, min_sample=min_sample),
+        "note": _one_hour_walk_forward_note(verdict),
+        "risk_notes": _one_hour_walk_forward_risk_notes(validation),
+    }
+
+
+def _walk_forward_perf(items: list[dict[str, Any]], baseline: dict[str, Any] | None = None) -> dict[str, Any]:
+    perf = _performance_summary(items)
+    realistic_values = [
+        Decimal(item["realistic_realized_r"])
+        for item in items
+        if item.get("result_status") in COMPLETED_OUTCOMES and item.get("realistic_realized_r") is not None
+    ]
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    drawdown = _realistic_drawdown_summary(items)
+    row = {
+        **perf,
+        "sample_count": len(items),
+        "median_realistic_r_closed": _median_decimal(realistic_values),
+        "max_realistic_drawdown_r": drawdown["max_drawdown_r"],
+        "sl_share_pct": _sl_share(perf),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_symbol_count,
+        "top_symbol_share_pct": (Decimal(top_symbol_count) / Decimal(len(items)) * Decimal("100")) if items else None,
+    }
+    if baseline is not None:
+        row.update(
+            {
+                "sample_delta_vs_baseline": int(row["sample_count"]) - int(baseline.get("sample_count") or 0),
+                "realistic_avg_r_delta_vs_baseline": _decimal_delta(row.get("realistic_avg_r_closed"), baseline.get("realistic_avg_r_closed")),
+                "realistic_total_r_delta_vs_baseline": _decimal_delta(row.get("realistic_total_r_closed"), baseline.get("realistic_total_r_closed")),
+                "winrate_delta_vs_baseline": _decimal_delta(row.get("winrate_pct"), baseline.get("winrate_pct")),
+                "sl_share_delta_vs_baseline": _decimal_delta(row.get("sl_share_pct"), baseline.get("sl_share_pct")),
+                "max_drawdown_delta_vs_baseline": _decimal_delta(row.get("max_realistic_drawdown_r"), baseline.get("max_realistic_drawdown_r")),
+            }
+        )
+    return row
+
+
+def _realistic_drawdown_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    closed = [
+        item
+        for item in items
+        if item.get("result_status") in COMPLETED_OUTCOMES and item.get("realistic_realized_r") is not None
+    ]
+    closed.sort(key=lambda item: (_parse_dt(item.get("result_time_utc")) or _parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol"))))
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for item in closed:
+        cumulative += Decimal(item["realistic_realized_r"])
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    return {
+        "closed_count": len(closed),
+        "total_r_closed": cumulative,
+        "peak_r": peak,
+        "max_drawdown_r": max_drawdown,
+        "current_drawdown_r": cumulative - peak,
+    }
+
+
+def _one_hour_walk_forward_verdict(train: dict[str, Any], validation: dict[str, Any], *, min_sample: int) -> str:
+    if int(train.get("closed_count") or 0) < min_sample or int(validation.get("closed_count") or 0) < min_sample:
+        return "WF_NEED_MORE_SAMPLE"
+    train_good = _walk_forward_perf_good(train)
+    validation_good = _walk_forward_perf_good(validation)
+    validation_reduces_damage = _walk_forward_reduces_damage(validation)
+    validation_delta = validation.get("realistic_avg_r_delta_vs_baseline")
+    if train_good and validation_good:
+        return "WF_PROMISING"
+    if train_good and not validation_good:
+        return "WF_OVERFIT"
+    if validation_reduces_damage:
+        return "WF_REDUCES_DAMAGE"
+    if validation_delta is not None and Decimal(validation_delta) < 0:
+        return "WF_REJECT"
+    return "WF_NOISY"
+
+
+def _walk_forward_perf_good(row: dict[str, Any]) -> bool:
+    avg_delta = row.get("realistic_avg_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    top_share = row.get("top_symbol_share_pct")
+    concentration_ok = int(row.get("sample_count") or 0) < 10 or top_share is None or Decimal(top_share) <= Decimal("35")
+    return (
+        avg_delta is not None
+        and Decimal(avg_delta) >= Decimal("0.05")
+        and Decimal(row.get("realistic_total_r_closed") or 0) > 0
+        and (sl_delta is None or Decimal(sl_delta) <= 0)
+        and concentration_ok
+    )
+
+
+def _walk_forward_reduces_damage(row: dict[str, Any]) -> bool:
+    avg_delta = row.get("realistic_avg_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    return (
+        (avg_delta is not None and Decimal(avg_delta) > 0)
+        or (sl_delta is not None and Decimal(sl_delta) < 0)
+    )
+
+
+def _one_hour_walk_forward_score(train: dict[str, Any], validation: dict[str, Any], *, verdict: str, min_sample: int) -> int:
+    score = 0
+    if int(train.get("closed_count") or 0) >= min_sample and int(validation.get("closed_count") or 0) >= min_sample:
+        score += 2
+    validation_delta = validation.get("realistic_avg_r_delta_vs_baseline")
+    if validation_delta is not None and Decimal(validation_delta) >= Decimal("0.05"):
+        score += 2
+    if Decimal(validation.get("realistic_total_r_closed") or 0) > 0:
+        score += 1
+    sl_delta = validation.get("sl_share_delta_vs_baseline")
+    if sl_delta is None or Decimal(sl_delta) <= 0:
+        score += 1
+    top_share = validation.get("top_symbol_share_pct")
+    if int(validation.get("sample_count") or 0) < 10 or top_share is None or Decimal(top_share) <= Decimal("35"):
+        score += 1
+    if verdict == "WF_OVERFIT":
+        score = min(score, 3)
+    return score
+
+
+def _one_hour_walk_forward_note(verdict: str) -> str:
+    if verdict == "WF_PROMISING":
+        return "Filter membaik di train dan validation memakai realistic R. Kandidat shadow research, belum rule live."
+    if verdict == "WF_OVERFIT":
+        return "Filter bagus di train tapi gagal di validation. Jangan dipromosikan."
+    if verdict == "WF_REDUCES_DAMAGE":
+        return "Ada tanda mengurangi kerusakan di validation, tapi belum cukup bersih."
+    if verdict == "WF_REJECT":
+        return "Validation lebih buruk dari baseline 1h."
+    if verdict == "WF_NEED_MORE_SAMPLE":
+        return "Train/validation belum punya closed sample cukup."
+    return "Belum ada separation yang bersih."
+
+
+def _one_hour_walk_forward_risk_notes(row: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    top_share = row.get("top_symbol_share_pct")
+    if top_share is not None and Decimal(top_share) > Decimal("35"):
+        notes.append("Validation terlalu terkonsentrasi di satu symbol.")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    if sl_delta is not None and Decimal(sl_delta) > 0:
+        notes.append("SL share validation lebih buruk dari baseline.")
+    if Decimal(row.get("realistic_total_r_closed") or 0) <= 0:
+        notes.append("Validation realistic R belum positif.")
+    return notes
+
+
+def _one_hour_walk_forward_lane_status(
+    baseline_train: dict[str, Any],
+    baseline_validation: dict[str, Any],
+    actionable: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> str:
+    if int(baseline_train.get("closed_count") or 0) < min_sample or int(baseline_validation.get("closed_count") or 0) < min_sample:
+        return "WF_LANE_NEEDS_MORE_SAMPLE"
+    if any(row.get("verdict") == "WF_PROMISING" for row in actionable):
+        return "WF_HAS_PROMISING_FILTER"
+    if actionable:
+        return "WF_HAS_DAMAGE_REDUCTION"
+    if Decimal(baseline_validation.get("realistic_total_r_closed") or 0) > 0:
+        return "WF_BASELINE_POSITIVE_NO_FILTER"
+    return "WF_LANE_WEAK"
+
+
+def _one_hour_walk_forward_lane_note(
+    baseline_train: dict[str, Any],
+    baseline_validation: dict[str, Any],
+    actionable: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> str:
+    if int(baseline_train.get("closed_count") or 0) < min_sample or int(baseline_validation.get("closed_count") or 0) < min_sample:
+        return f"Closed sample train/validation belum memenuhi minimum {min_sample}."
+    if any(row.get("verdict") == "WF_PROMISING" for row in actionable):
+        return "Ada filter yang bertahan di validation. Layak masuk shadow monitoring."
+    if actionable:
+        return "Ada filter yang mengurangi kerusakan, tapi belum cukup kuat."
+    if Decimal(baseline_validation.get("realistic_total_r_closed") or 0) > 0:
+        return "Baseline validation positif, tetapi filter tambahan belum lebih baik."
+    return "Validation lane masih lemah."
+
+
+def _one_hour_walk_forward_sort_key(row: dict[str, Any]) -> tuple[int, int, Decimal, Decimal, int]:
+    verdict_rank = {
+        "WF_PROMISING": 5,
+        "WF_REDUCES_DAMAGE": 4,
+        "WF_NOISY": 3,
+        "WF_OVERFIT": 2,
+        "WF_REJECT": 1,
+        "WF_NEED_MORE_SAMPLE": 0,
+    }
+    validation = row.get("validation") or {}
+    avg_delta = validation.get("realistic_avg_r_delta_vs_baseline")
+    total_r = validation.get("realistic_total_r_closed")
+    return (
+        verdict_rank.get(str(row.get("verdict")), -1),
+        int(row.get("score") or 0),
+        Decimal(avg_delta) if avg_delta is not None else Decimal("-999"),
+        Decimal(total_r) if total_r is not None else Decimal("-999"),
+        int(validation.get("closed_count") or 0),
+    )
 
 
 def _calibration_lane(

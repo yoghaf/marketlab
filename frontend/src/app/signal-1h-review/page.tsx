@@ -9,6 +9,8 @@ import {
   SignalForwardIntegrityResponse,
   OneHourFilterCandidateRow,
   OneHourFilterCandidateStudyResponse,
+  OneHourWalkForwardCandidate,
+  OneHourWalkForwardResponse,
   SignalPerformanceBucket,
   SignalPerformanceItem,
   SignalPerformanceResponse,
@@ -90,8 +92,10 @@ export default async function Signal1hReviewPage() {
   let performance: SignalPerformanceResponse | null = null;
   let forward: SignalForwardIntegrityResponse | null = null;
   let filterStudy: OneHourFilterCandidateStudyResponse | null = null;
+  let walkForward: OneHourWalkForwardResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
+  let walkForwardError: string | null = null;
   try {
     [performance, forward] = await Promise.all([
       fetchJson<SignalPerformanceResponse>(`/api/signal-candidates/performance/live?${performanceQuery.toString()}`, { revalidateSeconds: 20 }),
@@ -104,6 +108,11 @@ export default async function Signal1hReviewPage() {
     filterStudy = await fetchJson<OneHourFilterCandidateStudyResponse>("/api/signal-candidates/one-hour-filter-study?min_sample=20&limit=12", { revalidateSeconds: 30 });
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "1h filter candidate API failed";
+  }
+  try {
+    walkForward = await fetchJson<OneHourWalkForwardResponse>("/api/signal-candidates/one-hour-walk-forward?min_sample=20&limit=12", { revalidateSeconds: 30 });
+  } catch (err) {
+    walkForwardError = err instanceof Error ? err.message : "1h walk-forward API failed";
   }
 
   const aggregate = performance?.aggregate;
@@ -221,6 +230,40 @@ export default async function Signal1hReviewPage() {
                   ))}
                 </div>
                 <FilterCandidateTable rows={filterStudy?.top_candidates || []} />
+              </>
+            )}
+          </SectionCard>
+
+          <SectionCard title="Walk-forward optimization 1h" description="Train 70% data lama, validation 30% data terbaru. Filter yang bagus di train tapi gagal di validation dianggap overfit. Ini read-only.">
+            {walkForwardError ? (
+              <div className="p-4 text-sm text-stale">{walkForwardError}</div>
+            ) : (
+              <>
+                <div className="grid gap-3 border-b border-line p-4 md:grid-cols-4">
+                  <Insight label="Source" value={walkForward?.source || "-"} />
+                  <Insight label="Promising" value={`${walkForward?.top_candidates.filter((row) => row.verdict === "WF_PROMISING").length ?? 0} filter`} />
+                  <Insight label="Damage reduction" value={`${walkForward?.top_candidates.filter((row) => row.verdict === "WF_REDUCES_DAMAGE").length ?? 0} filter`} />
+                  <Insight label="Latest candle" value={fmtTime(walkForward?.latest_futures_15m_close_time)} />
+                </div>
+                <div className="grid gap-4 p-4 xl:grid-cols-2">
+                  {(walkForward?.lanes || []).map((lane) => (
+                    <div key={lane.lane} className="rounded border border-line bg-white">
+                      <div className="border-b border-line p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-sm font-bold text-ink">{labelFor(lane.stage)} walk-forward</h3>
+                          <StatusBadge value={lane.lane_status} />
+                        </div>
+                        <p className="mt-1 text-sm text-slate-600">{lane.lane_note}</p>
+                      </div>
+                      <div className="grid gap-2 p-3 text-sm md:grid-cols-3">
+                        <Insight label="Train / validation" value={`${lane.train_count} / ${lane.validation_count}`} />
+                        <Insight label="Train realistic R" value={`${fmtSigned(lane.baseline_train.realistic_total_r_closed)}R`} />
+                        <Insight label="Validation realistic R" value={`${fmtSigned(lane.baseline_validation.realistic_total_r_closed)}R`} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <WalkForwardTable rows={walkForward?.top_candidates || []} />
               </>
             )}
           </SectionCard>
@@ -464,6 +507,65 @@ function FilterCandidateTable({ rows }: { rows: OneHourFilterCandidateRow[] }) {
             <tr>
               <td colSpan={9}>
                 <EmptyState title="Belum ada filter 1h yang layak dipantau" detail="Sample 1h belum cukup atau semua filter masih lebih buruk/noisy dari baseline." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WalkForwardTable({ rows }: { rows: OneHourWalkForwardCandidate[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Verdict</th>
+            <th>Filter</th>
+            <th>Train</th>
+            <th>Validation</th>
+            <th>Validation delta</th>
+            <th>SL share delta</th>
+            <th>Score</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.stage}-${row.filter_id}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.stage)}</div>
+                <div className="text-xs text-slate-500">{labelFor(row.direction)} / {row.timeframe}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div>{row.train.closed_count} closed</div>
+                <div className={Number(row.train.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.train.realistic_total_r_closed)}R</div>
+              </td>
+              <td>
+                <div>{row.validation.closed_count} closed</div>
+                <div className={Number(row.validation.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.validation.realistic_total_r_closed)}R</div>
+              </td>
+              <td className={Number(row.validation.realistic_avg_r_delta_vs_baseline || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.validation.realistic_avg_r_delta_vs_baseline)}R avg</td>
+              <td className={Number(row.validation.sl_share_delta_vs_baseline || 0) <= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.validation.sl_share_delta_vs_baseline)}%</td>
+              <td>{row.score}/7</td>
+              <td className="max-w-md text-sm text-slate-600">
+                <div>{row.note}</div>
+                {row.risk_notes.length ? <div className="mt-1 text-xs text-stale">{row.risk_notes.join(" ")}</div> : null}
+              </td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={9}>
+                <EmptyState title="Belum ada walk-forward candidate" detail="Filter 1h belum lolos train/validation atau sample validation belum cukup." />
               </td>
             </tr>
           )}

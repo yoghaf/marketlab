@@ -585,6 +585,61 @@ def test_one_hour_filter_candidate_study_compares_mid_long_and_mid_short() -> No
         assert payload["top_candidates"][0]["action"] == "PROMOTE_TO_SHADOW"
 
 
+def test_one_hour_walk_forward_marks_filter_promising_when_validation_holds() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("s1", "AAAUSDT", "85", True),
+            ("s2", "BBBUSDT", "86", True),
+            ("s3", "CCCUSDT", "30", False),
+            ("s4", "DDDUSDT", "35", False),
+            ("s5", "EEEUSDT", "40", False),
+            ("s6", "FFFUSDT", "87", True),
+            ("s7", "GGGUSDT", "88", True),
+            ("s8", "HHHUSDT", "45", False),
+        ]
+        for index, (signal_id, symbol, funding, is_tp) in enumerate(rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"funding_percentile_30d": funding},
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).one_hour_walk_forward_study(position_lock=False, min_sample=1, limit=10)
+
+        lanes = {lane["stage"]: lane for lane in payload["lanes"]}
+        rows_by_filter = {row["filter_id"]: row for row in lanes["MID_SHORT"]["filter_candidates"]}
+        assert payload["study_scope"] == "one_hour_walk_forward_optimization_read_only"
+        assert rows_by_filter["FUNDING_GE_75"]["verdict"] == "WF_PROMISING"
+        assert rows_by_filter["FUNDING_GE_75"]["validation"]["closed_count"] == 2
+        assert rows_by_filter["FUNDING_GE_75"]["validation"]["realistic_avg_r_delta_vs_baseline"] > 0
+        assert payload["top_candidates"][0]["filter_id"] == "FUNDING_GE_75"
+
+
 def test_calibration_lab_splits_train_validation_and_marks_promising_filter() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

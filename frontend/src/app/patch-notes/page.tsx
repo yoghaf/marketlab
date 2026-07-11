@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-29",
+    title: "1h Walk-Forward Optimization Lab",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan walk-forward optimization read-only untuk menguji filter MID_LONG/MID_SHORT 1h dengan train 70% dan validation 30%.",
+    changes: [
+      "Menambahkan endpoint /api/signal-candidates/one-hour-walk-forward yang default membaca snapshot 1h agar tidak membebani backend.",
+      "Walk-forward memakai closed 1h Signal, realistic R, chronological 70/30 split, dan filter specs existing.",
+      "Halaman /signal-1h-review sekarang menampilkan lane walk-forward, train/validation realistic R, verdict filter, score, dan risk notes.",
+      "Verdict seperti WF_PROMISING, WF_OVERFIT, WF_REDUCES_DAMAGE, dan WF_REJECT hanya untuk riset; tidak mengubah rule live atau execution."
+    ],
+    impact: "Kita bisa membedakan filter 1h yang benar-benar bertahan di data validation dari filter yang cuma bagus di data lama.",
+    links: [
+      { href: "/signal-1h-review", label: "1h Review" },
+      { href: "/signal-quality-lab?timeframe=1h", label: "Quality Lab 1h" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-28",
     title: "1h Filter Candidate Study",
     status: "LIVE",
