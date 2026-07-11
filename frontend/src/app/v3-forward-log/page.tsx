@@ -30,6 +30,7 @@ type V3ForwardSearchParams = Promise<Record<string, string | string[] | undefine
 
 const stages = ["EARLY_LONG", "EARLY_SHORT", "MID_LONG", "MID_SHORT"];
 const timeframes = ["15m", "1h", "4h", "24h"];
+const higherTimeframes = ["1h", "4h", "24h"];
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,8 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
   const stage = firstParam(params.stage);
   const timeframe = firstParam(params.timeframe);
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
-  const positionLock = firstParam(params.position_lock) !== "false";
+  const positionLockParam = firstParam(params.position_lock);
+  const positionLock = positionLockParam === undefined ? false : positionLockParam !== "false";
   const minSample = normalizeNumber(firstParam(params.min_sample), 5, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 50, 10, 200);
   const query = new URLSearchParams({
@@ -62,19 +64,26 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
   const v3 = data?.summary.v3_shadow_signal;
   const v2Perf = v2?.performance;
   const v3Perf = v3?.performance;
+  const laneRows = data?.by_stage_timeframe || [];
+  const higherTfRows = laneRows.filter((row) => higherTimeframes.includes(row.timeframe));
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="V3 Shadow Forward Log"
         badge="READ-ONLY SHADOW LANE"
-        subtitle="Pantauan paper-live V3: semua signal tetap dibuat oleh V2, lalu V3 hanya mengambil subset yang lolos shadow filter. Ini bukan execution dan belum mengganti rule live."
+        subtitle="Pantauan paper-live V3. Fokus riset utama adalah 1h ke atas; 15m tetap ditampilkan sebagai pembanding/noise lane. Ini bukan execution dan belum mengganti rule live."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner?tier=SIGNAL_CANDIDATE&limit=75">Radar Signal</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log?position_lock=false&limit=100">1h+ overview</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log?timeframe=1h&position_lock=false&limit=100">1h</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log?timeframe=4h&position_lock=false&limit=100">4h</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log?timeframe=24h&position_lock=false&limit=100">24h</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log?timeframe=15m&position_lock=false&limit=100">15m compare</Link>
       </div>
 
       {error ? (
@@ -90,7 +99,7 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
             <MetricCard label="Read" value={labelFor(data?.summary.read || "-")} helper="shadow-only verdict" tone={data?.summary.read === "V3_FORWARD_HEALTHY_SHADOW" ? "good" : "warn"} />
           </section>
 
-          <SectionCard title="Forward controls" description="Filter ini hanya mengubah tampilan. V3 shadow tidak mengubah rule live, scanner, TP/SL, atau execution.">
+          <SectionCard title="Forward controls" description="Filter ini hanya mengubah tampilan. Default position lock halaman ini off agar 1h/4h/24h tidak ketutup oleh 15m saat membandingkan lane. Nyalakan lock hanya untuk simulasi live-like satu posisi per symbol.">
             <FilterBar>
               <SelectFilter label="Stage" name="stage" value={stage || ""} options={stages} emptyLabel="All stage" />
               <SelectFilter label="Timeframe" name="timeframe" value={timeframe || ""} options={timeframes} emptyLabel="All timeframe" />
@@ -110,6 +119,10 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
             </FilterBar>
           </SectionCard>
 
+          <SectionCard title="Main research read: 1h ke atas" description="Bagian ini memisahkan 1h, 4h, dan 24h dari 15m. Jadi V3 tidak lagi terbaca seolah-olah cuma 15m. Jika 4h/24h masih kosong, berarti lane itu belum punya V3 pass/sample yang cukup.">
+            <HigherTimeframePanel rows={higherTfRows} />
+          </SectionCard>
+
           <section className="grid gap-4 xl:grid-cols-2">
             <SectionCard title="V2 live signal lane" description="Semua signal live V2 sesuai filter halaman.">
               <ForwardSummary summary={v2} />
@@ -124,7 +137,7 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
           {data?.failure_analysis ? <V3FailurePanel analysis={data.failure_analysis} /> : null}
 
           <SectionCard title="Lane comparison" description="Baca ini untuk melihat apakah MID_LONG/MID_SHORT V3 benar-benar lebih bersih daripada baseline V2.">
-            <LaneTable rows={data?.by_stage_timeframe || []} />
+            <LaneTable rows={laneRows} />
           </SectionCard>
 
           <SectionCard title="Filter contribution" description="Filter V3 mana yang menghasilkan shadow signal dan bagaimana hasilnya.">
@@ -149,6 +162,52 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function HigherTimeframePanel({ rows }: { rows: V3ShadowForwardLaneRow[] }) {
+  const grouped = higherTimeframes.map((timeframe) => {
+    const laneRows = rows.filter((row) => row.timeframe === timeframe);
+    const v3Count = laneRows.reduce((sum, row) => sum + Number(row.v3_shadow_signal_count || 0), 0);
+    const closed = laneRows.reduce((sum, row) => sum + Number(row.v3_shadow_signal.performance.closed_count || 0), 0);
+    const tp = laneRows.reduce((sum, row) => sum + Number(row.v3_shadow_signal.performance.tp_count || 0), 0);
+    const sl = laneRows.reduce((sum, row) => sum + Number(row.v3_shadow_signal.performance.sl_count || 0), 0);
+    const totalR = laneRows.reduce((sum, row) => sum + num(row.v3_shadow_signal.performance.total_r_closed), 0);
+    const realisticR = laneRows.reduce((sum, row) => sum + num(row.v3_shadow_signal.performance.realistic_total_r_closed), 0);
+    const activeStages = laneRows.filter((row) => Number(row.v3_shadow_signal_count || 0) > 0).map((row) => labelFor(row.stage));
+    return { timeframe, laneRows, v3Count, closed, tp, sl, totalR, realisticR, activeStages };
+  });
+
+  return (
+    <div className="grid gap-3 p-4 lg:grid-cols-3">
+      {grouped.map((row) => (
+        <div className="rounded border border-line bg-field/40 p-4" key={row.timeframe}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase text-slate-500">Timeframe</div>
+              <div className="text-2xl font-bold text-ink">{row.timeframe}</div>
+            </div>
+            <StatusBadge value={row.v3Count > 0 ? "HAS_V3_SAMPLE" : "WAITING_SAMPLE"} />
+          </div>
+          <div className="mt-4 grid gap-2 text-sm">
+            <ReadRow label="V3 pass" value={row.v3Count} />
+            <ReadRow label="Closed TP/SL" value={`${row.closed} closed, ${row.tp}/${row.sl}`} />
+            <ReadRow label="Ideal R" value={`${fmtSigned(row.totalR)}R`} />
+            <ReadRow label="Realistic R" value={`${fmtSigned(row.realisticR)}R`} />
+            <ReadRow label="Active stage" value={row.activeStages.length ? row.activeStages.join(", ") : "Belum ada V3 pass"} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReadRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex justify-between gap-3 border-t border-line pt-2">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-right font-semibold text-ink">{value}</span>
     </div>
   );
 }
@@ -615,6 +674,11 @@ function normalizeNumber(value: string | undefined, fallback: number, min: numbe
   const parsed = Number(value ?? fallback);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), min), max);
+}
+
+function num(value?: string | number | null): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function fmtSigned(value?: string | number | null): string {

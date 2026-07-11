@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-11",
+    version: "LAB-32",
+    title: "V3 Higher-Timeframe Read Cleanup",
+    status: "LIVE",
+    area: "Signal research UI",
+    summary: "Merampikan V3 Forward Log agar fokus 1h ke atas tidak tertutup oleh 15m dan position lock.",
+    changes: [
+      "Halaman /v3-forward-log sekarang menampilkan panel Main research read: 1h ke atas untuk 1h, 4h, dan 24h.",
+      "Default position lock pada halaman V3 Forward Log dibuat off agar perbandingan timeframe tidak disembunyikan oleh satu posisi per symbol.",
+      "Menambahkan shortcut 1h+ overview, 1h, 4h, 24h, dan 15m compare supaya lane V3 bisa dibaca terpisah.",
+      "Wording halaman diperjelas: 15m adalah pembanding/noise lane, sedangkan fokus riset utama adalah 1h ke atas."
+    ],
+    impact: "V3 tidak lagi terlihat seolah hanya 15m. Kita bisa langsung melihat apakah 1h/4h/24h punya V3 sample, TP/SL, ideal R, dan realistic R tanpa mengubah rule live.",
+    links: [
+      { href: "/v3-forward-log", label: "V3 Forward Log" },
+      { href: "/v3-forward-log?timeframe=1h&position_lock=false&limit=100", label: "V3 1h" }
+    ]
+  },
+  {
+    date: "2026-07-11",
     version: "LAB-31",
     title: "V3 Completion + Failure Analysis",
     status: "LIVE",
