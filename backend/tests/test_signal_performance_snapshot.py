@@ -9,7 +9,9 @@ from app.models.market import FuturesKline1m, SignalForwardReturnLog
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.signal_performance_snapshot import (
     FORWARD_INTEGRITY_FILE,
+    FORWARD_INTEGRITY_1H_FILE,
     PERFORMANCE_FILE,
+    PERFORMANCE_1H_FILE,
     SignalPerformanceSnapshotRunner,
     SignalPerformanceSnapshotService,
 )
@@ -22,7 +24,9 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     with Session() as db:
         signal_time = datetime(2026, 1, 1, 0, 15)
         db.add(_signal("s1", "AAAUSDT", signal_time, "LONG", "EARLY_LONG", "100", "90", "115"))
+        db.add(_signal("s2", "BBBUSDT", signal_time, "SHORT", "MID_SHORT", "100", "110", "85", timeframe="1h"))
         db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
+        db.add(_candle("BBBUSDT", signal_time, signal_time + timedelta(minutes=15), high="101", low="84", close="85"))
         db.commit()
 
         result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
@@ -30,22 +34,32 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
             forward_integrity_limit=25,
         )
 
-    assert result["performance_items"] == 1
+    assert result["performance_items"] == 2
+    assert result["performance_1h_items"] == 1
     assert (tmp_path / PERFORMANCE_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
+    assert (tmp_path / PERFORMANCE_1H_FILE).exists()
+    assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert not (tmp_path / f"{PERFORMANCE_FILE}.tmp").exists()
 
     service = SignalPerformanceSnapshotService(artifact_dir=tmp_path)
     performance = service.performance(limit=1)
+    performance_1h = service.performance_1h(limit=1)
     integrity = service.forward_integrity(limit=1)
+    integrity_1h = service.forward_integrity_1h(limit=1)
 
     assert performance["cache"]["source"] == "artifact_snapshot"
     assert performance["snapshot"]["read_model"] == "artifact_snapshot"
     assert performance["filters"]["limit"] == 1
-    assert performance["aggregate"]["tp_count"] == 1
+    assert performance["aggregate"]["tp_count"] == 2
     assert len(performance["items"]) == 1
+    assert performance_1h["snapshot"]["filename"] == PERFORMANCE_1H_FILE
+    assert performance_1h["filters"]["timeframe"] == "1h"
+    assert performance_1h["aggregate"]["tp_count"] == 1
+    assert len(performance_1h["items"]) == 1
     assert integrity["cache"]["source"] == "artifact_snapshot"
     assert integrity["snapshot"]["filename"] == FORWARD_INTEGRITY_FILE
+    assert integrity_1h["snapshot"]["filename"] == FORWARD_INTEGRITY_1H_FILE
 
 
 def _signal(
@@ -57,12 +71,13 @@ def _signal(
     entry: str,
     stop: str,
     target: str,
+    timeframe: str = "15m",
 ) -> SignalForwardReturnLog:
     now = datetime(2026, 1, 1, 0, 0)
     return SignalForwardReturnLog(
         signal_id=signal_id,
         symbol=symbol,
-        timeframe="15m",
+        timeframe=timeframe,
         signal_timestamp=signal_time,
         window_open_time=signal_time - timedelta(minutes=15),
         window_close_time=signal_time,

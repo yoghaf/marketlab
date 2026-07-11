@@ -4,6 +4,7 @@ const mainLinks = [
   { href: "/", label: "Overview" },
   { href: "/scanner", label: "Radar" },
   { href: "/signal-performance", label: "Signal History" },
+  { href: "/signal-1h-review", label: "1h Review" },
   { href: "/data-health", label: "System Health" },
   { href: "/universe", label: "Universe" }
 ];

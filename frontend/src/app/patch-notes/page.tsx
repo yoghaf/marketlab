@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-11",
+    version: "LAB-26",
+    title: "1h Signal Review Mode",
+    status: "LIVE",
+    area: "Signal research UI",
+    summary: "Menambahkan halaman khusus untuk membaca Signal timeframe 1h tanpa tercampur noise 15m.",
+    changes: [
+      "Halaman /signal-1h-review menampilkan total R, realistic R, TP/SL, winrate, open signal, stage performance, symbol quality, dan latest closed 1h signals.",
+      "Snapshot Signal History sekarang juga menyimpan performance dan forward integrity khusus 1h agar halaman 1h Review tidak cold-load berat.",
+      "Menu utama menambahkan 1h Review, dan Signal History diberi shortcut ke halaman ini.",
+      "Halaman ini read-only untuk riset kualitas timeframe; tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa mengevaluasi apakah 1h layak menjadi fokus signal utama, sementara 15m tetap dipakai sebagai radar/noise context.",
+    links: [
+      { href: "/signal-1h-review", label: "1h Review" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
     date: "2026-07-10",
     version: "LAB-25",
     title: "Signal History Snapshot Read Model",

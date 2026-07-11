@@ -800,6 +800,18 @@ export type SignalPerformanceBucket = {
 
 export type SignalPerformanceResponse = {
   generated_at_utc: string;
+  snapshot?: {
+    source: string;
+    filename: string;
+    generated_at_utc: string;
+    refresh_owner: string;
+    read_model: string;
+  };
+  cache?: {
+    hit: boolean;
+    source?: string;
+    ttl_seconds?: number | null;
+  };
   epoch: string;
   filters: {
     include_watch_only: boolean;
@@ -832,6 +844,18 @@ export type SignalPerformanceResponse = {
 
 export type SignalForwardIntegrityResponse = {
   generated_at_utc: string;
+  snapshot?: {
+    source: string;
+    filename: string;
+    generated_at_utc: string;
+    refresh_owner: string;
+    read_model: string;
+  };
+  cache?: {
+    hit: boolean;
+    source?: string;
+    ttl_seconds?: number | null;
+  };
   epoch: string;
   filters: {
     include_watch_only: boolean;

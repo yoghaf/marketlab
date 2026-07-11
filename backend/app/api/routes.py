@@ -1264,11 +1264,13 @@ def _default_signal_performance_snapshot(
     limit: int,
 ) -> dict | None:
     if include_watch_only or not position_lock or stage or timeframe or symbol:
-        return None
+        if not (timeframe == "1h" and not include_watch_only and position_lock and not stage and not symbol):
+            return None
     if (result_status or "").lower() != "closed":
         return None
     try:
-        return SignalPerformanceSnapshotService().performance(limit=limit)
+        service = SignalPerformanceSnapshotService()
+        return service.performance_1h(limit=limit) if timeframe == "1h" else service.performance(limit=limit)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
@@ -1282,9 +1284,11 @@ def _default_forward_integrity_snapshot(
     limit: int,
 ) -> dict | None:
     if include_watch_only or not position_lock or stage or timeframe:
-        return None
+        if not (timeframe == "1h" and not include_watch_only and position_lock and not stage):
+            return None
     try:
-        return SignalPerformanceSnapshotService().forward_integrity(limit=limit)
+        service = SignalPerformanceSnapshotService()
+        return service.forward_integrity_1h(limit=limit) if timeframe == "1h" else service.forward_integrity(limit=limit)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
