@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-35",
+    title: "V2 Research Focus UI",
+    status: "LIVE",
+    area: "Product UI / Research UX",
+    summary: "Web dirapikan supaya fokus aktif kembali ke evaluasi V2 realistic, sementara V3/V4 dipertahankan sebagai archive/eksperimen.",
+    changes: [
+      "Main navigation sekarang menaruh Quality Lab sebagai halaman utama riset, bukan V3 Forward Log.",
+      "V3 Forward Log dipindah labelnya menjadi archive di menu Research / Advanced.",
+      "Quality Lab default tidak lagi memuat Archived Calibration/V3; archive hanya dibuka lewat tombol Show V3/V4 Archive.",
+      "Wording Quality Lab diperjelas: fokus aktif adalah V2 Profit/Loss Research, bukan promosi V3/V4."
+    ],
+    impact: "Dashboard jadi lebih runtut untuk kerja sekarang: baca Signal live, cek Signal History, lalu bedah V2 Profit/Loss di Quality Lab. V3/V4 tetap ada sebagai pembanding historis tanpa mengganggu fokus utama.",
+    links: [
+      { href: "/signal-quality-lab", label: "V2 Quality Lab" },
+      { href: "/signal-quality-lab?show_archive=true", label: "Archived V3/V4" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-34",
     title: "V2 Profit/Loss Research",
     status: "LIVE",

@@ -41,6 +41,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   const timeframe = firstParam(params.timeframe);
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
+  const showArchive = firstParam(params.show_archive) === "true";
   const minSample = normalizeNumber(firstParam(params.min_sample), 5, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 25, 5, 100);
   const query = new URLSearchParams({
@@ -78,16 +79,18 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
   }
-  const calibrationQuery = new URLSearchParams({
-    include_watch_only: String(includeWatchOnly),
-    position_lock: String(positionLock),
-    min_sample: String(minSample),
-    limit: String(limit)
-  });
-  try {
-    calibrationLab = await fetchJson<SignalCalibrationLabResponse>(`/api/signal-candidates/calibration-lab?${calibrationQuery.toString()}`, { revalidateSeconds: 30 });
-  } catch (err) {
-    calibrationError = err instanceof Error ? err.message : "Signal Calibration Lab API failed";
+  if (showArchive) {
+    const calibrationQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      min_sample: String(minSample),
+      limit: String(limit)
+    });
+    try {
+      calibrationLab = await fetchJson<SignalCalibrationLabResponse>(`/api/signal-candidates/calibration-lab?${calibrationQuery.toString()}`, { revalidateSeconds: 30 });
+    } catch (err) {
+      calibrationError = err instanceof Error ? err.message : "Signal Calibration Lab API failed";
+    }
   }
   try {
     marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 30 });
@@ -104,7 +107,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       <PageHeader
         title="Signal Quality Lab"
         badge="READ-ONLY ANALYSIS"
-        subtitle="Analisis kenapa Signal menang/kalah: TP vs SL berdasarkan angka evidence aktual, stage, confidence, symbol, drawdown R, dan best/worst signal. Ini tidak mengubah rule dan bukan execution."
+        subtitle="Fokus aktif sekarang: evaluasi V2 realistis. Halaman ini membaca kenapa Signal TP/SL, variabel mana yang membantu, dan bagian mana yang bocor setelah fee/spread/slippage. Ini tidak mengubah rule dan bukan execution."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
@@ -112,6 +115,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-factory">Signal Factory Raw</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={showArchive ? "/signal-quality-lab" : "/signal-quality-lab?show_archive=true"}>{showArchive ? "Hide Archive" : "Show V3/V4 Archive"}</Link>
       </div>
 
       {error ? (
@@ -160,16 +164,26 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
             )}
           </CollapsiblePanel>
 
-          <CollapsiblePanel
-            title="Calibration Lab v1"
-            description="Train/validation split untuk Early/Mid Long/Short. Tujuannya mencari filter yang bertahan di validation, bukan mengganti rule live."
-          >
-            {calibrationError ? (
-              <div className="p-4 text-sm text-stale">{calibrationError}</div>
-            ) : (
-              <CalibrationLab data={calibrationLab} />
-            )}
-          </CollapsiblePanel>
+          {showArchive ? (
+            <CollapsiblePanel
+              title="Archived Calibration / V3"
+              description="Arsip riset V3/V4 lama. Tidak aktif sebagai fokus utama sekarang; dipertahankan hanya untuk pembanding historis."
+            >
+              {calibrationError ? (
+                <div className="p-4 text-sm text-stale">{calibrationError}</div>
+              ) : (
+                <CalibrationLab data={calibrationLab} />
+              )}
+            </CollapsiblePanel>
+          ) : (
+            <SectionCard title="Archived V3/V4 studies" description="Disembunyikan dari default supaya fokus web kembali ke V2 Profit/Loss Research. Buka hanya kalau perlu membandingkan history lama.">
+              <div className="flex flex-wrap gap-2 p-4 text-sm">
+                <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?show_archive=true">Open archived calibration</Link>
+                <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/v3-forward-log">Open V3 Forward Archive</Link>
+                <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-1h-review">Open 1h Review Archive</Link>
+              </div>
+            </SectionCard>
+          )}
 
           <CollapsiblePanel
             title="Market Regime Study"
@@ -612,8 +626,8 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
   if (!data) {
     return (
       <EmptyState
-        title="Calibration Lab belum tersedia"
-        detail="Endpoint calibration belum mengembalikan data. Cek backend atau tunggu signal closed bertambah."
+        title="Archived calibration belum tersedia"
+        detail="Endpoint calibration belum mengembalikan data. Ini arsip V3/V4, bukan fokus aktif V2 sekarang."
       />
     );
   }
@@ -632,7 +646,7 @@ function CalibrationLab({ data }: { data: SignalCalibrationLabResponse | null })
       <div className="grid gap-3 p-4 md:grid-cols-5">
         <Insight label="Active lanes" value={`${activeLanes.length}/16`} />
         <Insight label="Ready lanes" value={String(readyCount)} />
-        <Insight label="V3 candidates" value={String(v3CandidateCount)} />
+        <Insight label="Archived V3 candidates" value={String(v3CandidateCount)} />
         <Insight label="Monitor more" value={String(monitorCount)} />
         <Insight label="Reject overfit" value={String(overfitCount)} />
       </div>
@@ -750,7 +764,7 @@ function PriorityCalibrationCard({
       </div>
       <div className="mt-4 rounded border border-line bg-white p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="font-semibold">Best filter sementara</div>
+          <div className="font-semibold">Archived filter read</div>
           <StatusBadge value={best?.verdict || "NO_FILTER"} />
           {best ? <StatusBadge value={best.promotion_status} /> : null}
         </div>
@@ -773,7 +787,7 @@ function PriorityCalibrationCard({
           </ul>
         ) : null}
         <p className="mt-3 text-slate-600">
-          Action: {promotionAction(best?.promotion_status)}
+          Archive read: {promotionAction(best?.promotion_status)}
         </p>
       </div>
     </div>
@@ -860,7 +874,7 @@ function CalibrationCandidateTable({ rows }: { rows: SignalCalibrationCandidate[
 
 function promotionAction(status?: string) {
   if (status === "V3_CANDIDATE") {
-    return "masuk watch riset V3. Belum mengubah rule live; tunggu sample bertambah dan cek ulang drawdown.";
+    return "arsip V3 pernah menandai ini sebagai kandidat riset, tetapi fokus aktif sekarang tetap V2 realistic research.";
   }
   if (status === "MONITOR_MORE") {
     return "pantau lagi. Ada bagian yang menarik, tapi sample atau separation belum cukup untuk dipromosikan.";

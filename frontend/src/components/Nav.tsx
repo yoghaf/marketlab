@@ -4,17 +4,18 @@ const mainLinks = [
   { href: "/", label: "Overview" },
   { href: "/scanner", label: "Radar" },
   { href: "/signal-performance", label: "Signal History" },
-  { href: "/signal-1h-review", label: "1h Review" },
+  { href: "/signal-quality-lab", label: "Quality Lab" },
   { href: "/data-health", label: "System Health" },
   { href: "/universe", label: "Universe" }
 ];
 
 const researchLinks = [
   { href: "/patch-notes", label: "Patch Notes" },
-  { href: "/signal-quality-lab", label: "Signal Quality Lab" },
-  { href: "/v3-forward-log", label: "V3 Forward Log" },
+  { href: "/signal-quality-lab", label: "V2 Quality Lab" },
+  { href: "/signal-1h-review", label: "1h Review" },
   { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
   { href: "/signal-factory", label: "Signal Factory Raw" },
+  { href: "/v3-forward-log", label: "Archive: V3 Forward Log" },
   { href: "/collectors", label: "Advanced" }
 ];
 
