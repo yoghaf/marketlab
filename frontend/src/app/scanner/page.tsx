@@ -170,11 +170,15 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         <div className="space-y-1 text-xs">
           <StatusBadge value={shortStrategy(item.strategy_version)} />
           <StatusBadge value={item.v3_shadow_status || "V3_SHADOW_UNKNOWN"} />
+          <StatusBadge value={item.quality_shadow_status || "SHADOW_NOT_APPLICABLE"} />
           {item.v3_shadow_filter_label ? (
             <div className="text-slate-600">{item.v3_shadow_filter_label}</div>
           ) : (
             <div className="text-slate-500">{compactReason(item.v3_shadow_reason || "-", 80)}</div>
           )}
+          {item.quality_shadow_filter_label ? (
+            <div className="text-slate-600">{item.quality_shadow_filter_label}</div>
+          ) : null}
         </div>
       </td>
       <td><StatusBadge value={item.scanner_tier} /></td>
@@ -282,6 +286,8 @@ function DetailPanel({ item }: { item: LiveScannerItem }) {
         <DetailItem label="Evidence score" value={fmtNumber(evidenceNumber(item, "evidence_score"))} />
         <DetailItem label="Evidence completeness" value={`${fmtNumber(evidenceNumber(item, "evidence_data_completeness"))}/4`} />
         <DetailItem label="Risk status" value={String(item.evidence_summary.execution_risk_status ?? "-")} />
+        <DetailItem label="Quality shadow" value={item.quality_shadow_status || "SHADOW_NOT_APPLICABLE"} />
+        <DetailItem label="Quality shadow reason" value={item.quality_shadow_reason || "-"} />
         <DetailItem label="Core reasons" value={formatList(item.evidence_summary.core_reasons)} wide />
         <DetailItem label="Evidence reasons" value={formatList(item.evidence_summary.evidence_reasons)} wide />
         <DetailItem label="Risk reasons" value={formatList(item.evidence_summary.execution_risk_reasons)} wide />
@@ -292,6 +298,9 @@ function DetailPanel({ item }: { item: LiveScannerItem }) {
         <DetailItem label="Entry source" value={item.entry_price_source || "-"} />
         <DetailItem label="ATR ref" value={`${item.atr_reference_timeframe || "-"} ${fmtNumber(item.atr_reference_value)}`} />
         <DetailItem label="Position lock" value={item.position_lock_mode || "-"} />
+        <DetailItem label="Shadow filter" value={item.quality_shadow_filter_label || "-"} />
+        <DetailItem label="Shadow range/ATR" value={fmtRatioX(valueToNumber(item.quality_shadow_range_ratio_vs_atr))} />
+        <DetailItem label="Shadow fill" value={item.quality_shadow_fill_quality || "-"} />
         <DetailItem label="Not auto execution" value={String(item.not_execution_instruction ?? true)} />
         <DetailItem label="Visibility" value={item.scanner_visibility_reason} wide />
         <DetailItem label="Warning" value={item.warning_reason || "No scanner warning"} wide />
@@ -368,11 +377,17 @@ function normalizeLimit(value: string | undefined): number {
 function evidenceNumber(item: LiveScannerItem, ...keys: string[]): number | null {
   for (const key of keys) {
     const value = item.evidence_summary[key];
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value !== "") {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
+    const parsed = valueToNumber(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function valueToNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }

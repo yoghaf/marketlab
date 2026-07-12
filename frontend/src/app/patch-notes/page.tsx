@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-38",
+    title: "MID_SHORT 1h Shadow Filter Monitor",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan monitor read-only untuk filter MID_SHORT 1h yang paling layak dipantau: fill good dan range/ATR tidak overextended.",
+    changes: [
+      "Quality Lab sekarang menampilkan Shadow Filter Monitor untuk MID_SHORT 1h: SHADOW_PASS, SHADOW_FAIL, dan SHADOW_UNAVAILABLE.",
+      "Rule shadow yang dipantau: MID_SHORT 1h, realistic fill quality FILL_GOOD, dan range_ratio_vs_atr <= 1.25.",
+      "Radar dan Signal Detail menampilkan status quality shadow, alasan, fill quality, dan range/ATR agar signal bisa diaudit dari halaman utama.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa memantau apakah filter hasil riset benar-benar memisahkan signal MID_SHORT 1h yang lebih bersih sebelum dipromosikan menjadi rule. Ini tetap shadow/read-only.",
+    links: [
+      { href: "/signal-quality-lab?stage=MID_SHORT&timeframe=1h&position_lock=false", label: "MID_SHORT 1h Quality Lab" },
+      { href: "/scanner?tier=SIGNAL_CANDIDATE&limit=75", label: "Radar Signal" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-37",
     title: "Binance Futures Fee Model Clarity",
     status: "LIVE",

@@ -201,6 +201,8 @@ class LiveCandidateScannerTest(unittest.TestCase):
                                     "spot_usage": "filter/evidence_only",
                                     "core_score": 7,
                                     "evidence_score": 2,
+                                    "range_ratio_vs_atr": "1.10",
+                                    "futures_spread_pct": "0.01",
                                 },
                             }
                         ],
@@ -225,6 +227,11 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertEqual(item["take_profit_reference"], "47")
         self.assertEqual(item["timeout_minutes"], 240)
         self.assertEqual(item["atr_reference_timeframe"], "4h")
+        self.assertEqual(item["quality_shadow_status"], "SHADOW_PASS")
+        self.assertEqual(item["quality_shadow_filter_id"], "MID_SHORT_1H_FILL_GOOD_RANGE_OK")
+        self.assertTrue(item["quality_shadow_pass"])
+        self.assertEqual(item["quality_shadow_range_ratio_vs_atr"], "1.10")
+        self.assertEqual(item["quality_shadow_fill_quality"], "FILL_GOOD")
         self.assertTrue(item["not_entry_signal"])
         self.assertTrue(item["not_execution_instruction"])
 

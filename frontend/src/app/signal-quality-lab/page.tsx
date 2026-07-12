@@ -343,6 +343,29 @@ function MidShortRefinementPanel({ data }: { data: SignalQualityMidShortRefineme
         <Insight label="SL share" value={baseline.sl_share_pct == null ? "-" : `${fmtNumber(baseline.sl_share_pct)}%`} />
       </div>
 
+      {data.shadow_monitor ? (
+        <div className="border-t border-line p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-bold text-ink">Shadow Filter Monitor</div>
+              <div className="text-sm text-slate-600">
+                {data.shadow_filter?.label || "MID_SHORT 1h fill good + range/ATR <= 1.25"}.
+                Monitor read-only, belum mengubah rule live.
+              </div>
+            </div>
+            <StatusBadge value="READ_ONLY_SHADOW" />
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Insight label="Shadow pass" value={`${data.shadow_monitor.pass_count} signal`} />
+            <Insight label="Shadow fail" value={`${data.shadow_monitor.fail_count} signal`} />
+            <Insight label="Unavailable" value={`${data.shadow_monitor.unavailable_count} signal`} />
+          </div>
+          <div className="mt-3">
+            <ShadowMonitorTable monitor={data.shadow_monitor} />
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-[1fr_2fr]">
         <div className="space-y-3">
           <div className="rounded border border-line bg-field/50 p-3 text-sm">
@@ -382,6 +405,47 @@ function MidShortRefinementPanel({ data }: { data: SignalQualityMidShortRefineme
         <MidShortRefinementTable rows={data.rejected_filters.slice(0, 12)} />
       </CollapsiblePanel>
     </SectionCard>
+  );
+}
+
+function ShadowMonitorTable({ monitor }: { monitor: NonNullable<SignalQualityMidShortRefinement["shadow_monitor"]> }) {
+  const rows = [
+    { status: "SHADOW_PASS", count: monitor.pass_count, perf: monitor.pass, read: "Filter cocok: fill good dan range/ATR tidak overextended." },
+    { status: "SHADOW_FAIL", count: monitor.fail_count, perf: monitor.fail, read: "Filter gagal: cost/range masih perlu dihindari." },
+    { status: "SHADOW_UNAVAILABLE", count: monitor.unavailable_count, perf: monitor.unavailable, read: "Evidence belum cukup untuk menilai filter." }
+  ];
+
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Sample</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg realistic</th>
+            <th>SL share</th>
+            <th>Max DD</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.status}>
+              <td><StatusBadge value={row.status} /></td>
+              <td>{row.count}</td>
+              <td>{row.perf.tp_count ?? 0} / {row.perf.sl_count ?? 0}</td>
+              <td className={Number(row.perf.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.perf.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.perf.realistic_avg_r_closed)}R</td>
+              <td>{row.perf.sl_share_pct == null ? "-" : `${fmtNumber(row.perf.sl_share_pct)}%`}</td>
+              <td>{fmtSigned(row.perf.max_realistic_drawdown_r)}R</td>
+              <td className="max-w-md text-sm text-slate-600">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

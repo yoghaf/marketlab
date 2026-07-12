@@ -121,11 +121,12 @@ export default async function SignalDetailPage({
         <MetricCard label="Freshness gap" value={fmtGap(item.freshness_gap_minutes ?? item.stale_gap_minutes)} helper={`Stale jika lebih dari 30 menit`} tone={isStale ? "bad" : "good"} />
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard label="Live strategy" value={shortStrategy(item.strategy_version)} helper="Rule yang menghasilkan signal ini" tone="info" />
         <MetricCard label="Shadow strategy" value="V3 shadow" helper="Calibration candidate, read-only" tone="warn" />
         <MetricCard label="V3 shadow status" value={labelFor(item.v3_shadow_status || "UNKNOWN")} helper={item.v3_shadow_filter_label || item.v3_shadow_reason || "-"} tone={item.v3_shadow_status === "V3_SHADOW_PASS" ? "good" : "warn"} />
         <MetricCard label="V3 filter score" value={item.v3_shadow_promotion_score == null ? "-" : `${item.v3_shadow_promotion_score}/7`} helper={item.v3_shadow_filter_id || "No matched filter"} />
+        <MetricCard label="MID_SHORT 1h shadow" value={labelFor(item.quality_shadow_status || "SHADOW_NOT_APPLICABLE")} helper={item.quality_shadow_reason || "Read-only quality monitor"} tone={shadowTone(item.quality_shadow_status)} />
       </section>
 
       <SectionCard title="Signal plan" description="Informasi inti signal. Semua angka entry/SL/TP memakai futures reference, bukan spot entry.">
@@ -148,6 +149,11 @@ export default async function SignalDetailPage({
           <DetailItem label="Round-trip cost" value={`${fmtNumber(item.realistic_round_trip_cost_pct_estimate)}% / ${fmtSigned(item.realistic_cost_r_estimate)}R`} />
           <DetailItem label="Strategy version" value={item.strategy_version || "-"} />
           <DetailItem label="V3 shadow" value={item.v3_shadow_status || "-"} />
+          <DetailItem label="Quality shadow" value={item.quality_shadow_status || "SHADOW_NOT_APPLICABLE"} />
+          <DetailItem label="Quality filter" value={item.quality_shadow_filter_label || "-"} />
+          <DetailItem label="Quality reason" value={item.quality_shadow_reason || "-"} />
+          <DetailItem label="Shadow range/ATR" value={formatEvidenceValue("range_ratio_vs_atr", item.quality_shadow_range_ratio_vs_atr)} />
+          <DetailItem label="Shadow fill" value={item.quality_shadow_fill_quality || "-"} />
           <DetailItem label="Signal time WIB" value={item.signal_time_wib || fmtTime(item.signal_timestamp)} />
           <DetailItem label="Window open" value={fmtTime(data.raw_signal.window_open_time)} />
           <DetailItem label="Window close" value={fmtTime(data.raw_signal.window_close_time)} />
@@ -250,6 +256,13 @@ function fillTone(value?: string | null): "neutral" | "good" | "warn" | "bad" | 
   if (value === "FILL_GOOD") return "good";
   if (value === "FILL_ACCEPTABLE" || value === "SPREAD_UNKNOWN") return "warn";
   if (value === "FILL_BAD") return "bad";
+  return "neutral";
+}
+
+function shadowTone(value?: string | null): "neutral" | "good" | "warn" | "bad" | "info" {
+  if (value === "SHADOW_PASS") return "good";
+  if (value === "SHADOW_FAIL") return "bad";
+  if (value === "SHADOW_UNAVAILABLE") return "warn";
   return "neutral";
 }
 

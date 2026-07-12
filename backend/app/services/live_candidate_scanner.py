@@ -22,6 +22,7 @@ from app.services.signal_candidate_performance import (
     LIVE_STRATEGY_VERSION,
     SHADOW_STRATEGY_VERSION,
     SignalCandidatePerformanceService,
+    mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
 )
 from app.services.utils import json_safe
@@ -209,6 +210,13 @@ class LiveCandidateScannerService:
         inactive_warning = None if is_active else "Symbol is not in active universe"
         warning_reason = inactive_warning or "read-only signal candidate; not an execution instruction"
         v3_shadow = signal_factory_v3_shadow_for_candidate(candidate, v3_shadow_filter_map)
+        quality_shadow = mid_short_1h_quality_shadow_filter(
+            stage=str(candidate.get("setup_type") or ""),
+            timeframe=timeframe,
+            evidence_snapshot=evidence,
+            entry=entry,
+            stop=stop,
+        )
         return json_safe(
             {
                 "symbol": symbol,
@@ -219,6 +227,7 @@ class LiveCandidateScannerService:
                 "inactive_warning": inactive_warning if include_inactive else None,
                 "scanner_visibility_reason": "signal factory final read-only candidate",
                 **v3_shadow,
+                **quality_shadow,
                 "strategy_version": candidate.get("signal_factory_version") or candidate.get("logic_version") or LIVE_STRATEGY_VERSION,
                 "strategy_family": "Signal Factory V2",
                 "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
@@ -396,6 +405,14 @@ class LiveCandidateScannerService:
                 "v3_shadow_filter_expression": None,
                 "v3_shadow_promotion_score": None,
                 "v3_shadow_reason": "Legacy classifier row; V3 shadow is evaluated on Signal Factory candidates.",
+                "quality_shadow_status": "SHADOW_NOT_APPLICABLE",
+                "quality_shadow_filter_id": None,
+                "quality_shadow_filter_label": None,
+                "quality_shadow_filter_expression": None,
+                "quality_shadow_reason": "Legacy classifier row; quality shadow applies to Signal Factory MID_SHORT 1h.",
+                "quality_shadow_pass": False,
+                "quality_shadow_range_ratio_vs_atr": None,
+                "quality_shadow_fill_quality": None,
                 "latest_actual_status": latest_actual_candidate.classifier_status,
                 "latest_actual_observation_timestamp": latest_actual_candidate.window_close_time,
                 "using_fallback_usable_row": using_fallback,

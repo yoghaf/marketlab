@@ -246,6 +246,14 @@ export type LiveScannerItem = {
   v3_shadow_filter_expression?: string | null;
   v3_shadow_promotion_score?: number | null;
   v3_shadow_reason?: string | null;
+  quality_shadow_status?: string | null;
+  quality_shadow_filter_id?: string | null;
+  quality_shadow_filter_label?: string | null;
+  quality_shadow_filter_expression?: string | null;
+  quality_shadow_reason?: string | null;
+  quality_shadow_pass?: boolean | null;
+  quality_shadow_range_ratio_vs_atr?: string | number | null;
+  quality_shadow_fill_quality?: string | null;
   confidence: string;
   confidence_score?: string | null;
   scanner_tier: string;
@@ -730,6 +738,14 @@ export type SignalPerformanceItem = {
   v3_shadow_filter_expression?: string | null;
   v3_shadow_promotion_score?: number | null;
   v3_shadow_reason?: string | null;
+  quality_shadow_status?: string | null;
+  quality_shadow_filter_id?: string | null;
+  quality_shadow_filter_label?: string | null;
+  quality_shadow_filter_expression?: string | null;
+  quality_shadow_reason?: string | null;
+  quality_shadow_pass?: boolean | null;
+  quality_shadow_range_ratio_vs_atr?: string | number | null;
+  quality_shadow_fill_quality?: string | null;
   confidence_tier?: string | null;
   execution_flag?: string | null;
   core_score?: string | number | null;
@@ -1440,6 +1456,20 @@ export type SignalQualityMidShortRefinement = {
     damage_reduction_count: number;
     rejected_count: number;
     readiness: string;
+  };
+  shadow_filter?: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  shadow_monitor?: {
+    pass_count: number;
+    fail_count: number;
+    unavailable_count: number;
+    pass: OneHourWalkForwardPerf;
+    fail: OneHourWalkForwardPerf;
+    unavailable: OneHourWalkForwardPerf;
   };
   top_filters: SignalQualityMidShortRefinementRow[];
   promising_filters: SignalQualityMidShortRefinementRow[];

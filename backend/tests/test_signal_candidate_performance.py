@@ -11,6 +11,7 @@ from app.models.market import FuturesKline1m, MarketlabActiveUniverse, SignalFor
 from app.services.signal_candidate_performance import (
     FilterStudySpec,
     SignalCandidatePerformanceService,
+    mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
@@ -585,12 +586,56 @@ def test_quality_lab_includes_mid_short_1h_refinement_focus() -> None:
         assert refinement["baseline"]["sample_count"] == 3
         assert refinement["baseline"]["tp_count"] == 2
         assert refinement["baseline"]["sl_count"] == 1
+        assert refinement["shadow_filter"]["filter_id"] == "MID_SHORT_1H_FILL_GOOD_RANGE_OK"
+        assert refinement["shadow_monitor"]["pass_count"] == 2
+        assert refinement["shadow_monitor"]["fail_count"] == 1
+        assert refinement["shadow_monitor"]["unavailable_count"] == 0
+        assert refinement["shadow_monitor"]["pass"]["tp_count"] == 2
+        assert refinement["shadow_monitor"]["fail"]["sl_count"] == 1
         top_rows = {row["filter_id"]: row for row in refinement["top_filters"]}
         assert top_rows["FILL_GOOD_ONLY"]["sample_count"] == 2
         assert top_rows["FILL_GOOD_ONLY"]["tp_count"] == 2
         assert top_rows["FILL_GOOD_ONLY"]["sl_count"] == 0
         assert refinement["mitigation_plan"]
         assert refinement["guardrails"][0].startswith("Read-only")
+
+
+def test_mid_short_1h_quality_shadow_filter_is_read_only_and_data_driven() -> None:
+    passed = mid_short_1h_quality_shadow_filter(
+        stage="MID_SHORT",
+        timeframe="1h",
+        evidence_snapshot={"range_ratio_vs_atr": "1.10", "futures_spread_pct": "0.01"},
+        entry=Decimal("50"),
+        stop=Decimal("52"),
+    )
+    failed = mid_short_1h_quality_shadow_filter(
+        stage="MID_SHORT",
+        timeframe="1h",
+        evidence_snapshot={"range_ratio_vs_atr": "1.60", "futures_spread_pct": "0.01"},
+        entry=Decimal("50"),
+        stop=Decimal("52"),
+    )
+    unavailable = mid_short_1h_quality_shadow_filter(
+        stage="MID_SHORT",
+        timeframe="1h",
+        evidence_snapshot={"futures_spread_pct": "0.01"},
+        entry=Decimal("50"),
+        stop=Decimal("52"),
+    )
+    not_applicable = mid_short_1h_quality_shadow_filter(
+        stage="MID_LONG",
+        timeframe="1h",
+        evidence_snapshot={"range_ratio_vs_atr": "1.10", "futures_spread_pct": "0.01"},
+        entry=Decimal("50"),
+        stop=Decimal("48"),
+    )
+
+    assert passed["quality_shadow_status"] == "SHADOW_PASS"
+    assert passed["quality_shadow_pass"] is True
+    assert failed["quality_shadow_status"] == "SHADOW_FAIL"
+    assert "range/ATR" in failed["quality_shadow_reason"]
+    assert unavailable["quality_shadow_status"] == "SHADOW_UNAVAILABLE"
+    assert not_applicable["quality_shadow_status"] == "SHADOW_NOT_APPLICABLE"
 
 
 def test_one_hour_filter_candidate_study_compares_mid_long_and_mid_short() -> None:

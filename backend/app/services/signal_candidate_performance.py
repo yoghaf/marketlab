@@ -32,6 +32,13 @@ REALISTIC_FILL_GOOD_MAX_COST_R = Decimal("0.15")
 REALISTIC_FILL_ACCEPTABLE_MAX_COST_R = Decimal("0.35")
 QUALITY_LAB_CACHE_TTL_SECONDS = 120
 _QUALITY_LAB_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID = "MID_SHORT_1H_FILL_GOOD_RANGE_OK"
+MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL = "MID_SHORT 1h fill good + range/ATR <= 1.25"
+MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION = (
+    "stage == MID_SHORT AND timeframe == 1h AND realistic_fill_quality == FILL_GOOD "
+    "AND range_ratio_vs_atr <= 1.25"
+)
+MID_SHORT_1H_QUALITY_RANGE_ATR_MAX = Decimal("1.25")
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
@@ -1081,6 +1088,14 @@ class SignalCandidatePerformanceService:
         future = candles[position:]
         evidence_snapshot = _evidence_snapshot(signal)
         realistic_assumptions = _realistic_assumptions(entry=entry, risk=risk, evidence_snapshot=evidence_snapshot)
+        quality_shadow = mid_short_1h_quality_shadow_filter(
+            stage=signal.stage,
+            timeframe=signal.timeframe,
+            evidence_snapshot=evidence_snapshot,
+            entry=entry,
+            stop=stop,
+            realistic_fill_quality=str(realistic_assumptions.get("realistic_fill_quality") or ""),
+        )
         base = {
             "signal_id": signal.signal_id,
             "symbol": signal.symbol,
@@ -1111,6 +1126,7 @@ class SignalCandidatePerformanceService:
             "risk": risk,
             "rr": abs(target - entry) / risk if risk > 0 else None,
             **realistic_assumptions,
+            **quality_shadow,
             "result_status": "WAITING_DATA",
             "result_time_utc": None,
             "result_time_wib": None,
@@ -1573,6 +1589,74 @@ def _quality_lab_cache_set(cache_key: tuple[Any, ...], payload: dict[str, Any]) 
         oldest_key = min(_QUALITY_LAB_CACHE, key=lambda key: _QUALITY_LAB_CACHE[key][0])
         _QUALITY_LAB_CACHE.pop(oldest_key, None)
     _QUALITY_LAB_CACHE[cache_key] = (monotonic(), deepcopy(payload))
+
+
+def mid_short_1h_quality_shadow_filter(
+    *,
+    stage: str | None,
+    timeframe: str | None,
+    evidence_snapshot: dict[str, Any] | None,
+    entry: Decimal | None = None,
+    stop: Decimal | None = None,
+    realistic_fill_quality: str | None = None,
+) -> dict[str, Any]:
+    evidence = evidence_snapshot or {}
+    output = {
+        "quality_shadow_filter_id": None,
+        "quality_shadow_filter_label": None,
+        "quality_shadow_filter_expression": None,
+        "quality_shadow_status": "SHADOW_NOT_APPLICABLE",
+        "quality_shadow_pass": False,
+        "quality_shadow_reason": "Only applies to MID_SHORT 1h.",
+        "quality_shadow_range_ratio_vs_atr": None,
+        "quality_shadow_fill_quality": realistic_fill_quality,
+    }
+    if str(stage or "").upper() != "MID_SHORT" or str(timeframe or "") != "1h":
+        return output
+
+    range_ratio = _decimal_or_none(evidence.get("range_ratio_vs_atr"))
+    fill_quality = realistic_fill_quality
+    if fill_quality is None and entry is not None and stop is not None:
+        risk = abs(Decimal(entry) - Decimal(stop))
+        if risk > 0:
+            fill_quality = str(_realistic_assumptions(entry=Decimal(entry), risk=risk, evidence_snapshot=evidence)["realistic_fill_quality"])
+
+    output.update(
+        {
+            "quality_shadow_filter_id": MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID,
+            "quality_shadow_filter_label": MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL,
+            "quality_shadow_filter_expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
+            "quality_shadow_status": "SHADOW_UNAVAILABLE",
+            "quality_shadow_reason": "Missing fill quality or range/ATR evidence.",
+            "quality_shadow_range_ratio_vs_atr": range_ratio,
+            "quality_shadow_fill_quality": fill_quality,
+        }
+    )
+    if not fill_quality or range_ratio is None:
+        return output
+
+    if fill_quality == "FILL_GOOD" and range_ratio <= MID_SHORT_1H_QUALITY_RANGE_ATR_MAX:
+        output.update(
+            {
+                "quality_shadow_status": "SHADOW_PASS",
+                "quality_shadow_pass": True,
+                "quality_shadow_reason": "Fill quality is good and range/ATR is not overextended.",
+            }
+        )
+        return output
+
+    reasons: list[str] = []
+    if fill_quality != "FILL_GOOD":
+        reasons.append(f"fill={fill_quality}")
+    if range_ratio > MID_SHORT_1H_QUALITY_RANGE_ATR_MAX:
+        reasons.append(f"range/ATR {range_ratio} > {MID_SHORT_1H_QUALITY_RANGE_ATR_MAX}")
+    output.update(
+        {
+            "quality_shadow_status": "SHADOW_FAIL",
+            "quality_shadow_reason": "; ".join(reasons) or "Filter conditions not met.",
+        }
+    )
+    return output
 
 
 def _naive(value: datetime) -> datetime:
@@ -3255,6 +3339,9 @@ def _v2_mid_short_1h_refinement(items: list[dict[str, Any]], *, min_sample: int,
         if item.get("stage") == "MID_SHORT" and item.get("timeframe") == "1h"
     ]
     baseline = _walk_forward_perf(lane_items)
+    shadow_pass_items = [item for item in lane_items if item.get("quality_shadow_status") == "SHADOW_PASS"]
+    shadow_fail_items = [item for item in lane_items if item.get("quality_shadow_status") == "SHADOW_FAIL"]
+    shadow_unavailable_items = [item for item in lane_items if item.get("quality_shadow_status") == "SHADOW_UNAVAILABLE"]
     rows: list[dict[str, Any]] = []
     for spec in _v2_mid_short_1h_refinement_specs():
         selected, missing = _apply_filter_spec(lane_items, spec)
@@ -3292,6 +3379,20 @@ def _v2_mid_short_1h_refinement(items: list[dict[str, Any]], *, min_sample: int,
             "damage_reduction_count": len([row for row in promising if row["verdict"] == "REFINEMENT_REDUCES_DAMAGE"]),
             "rejected_count": len(rejected),
             "readiness": _v2_mid_short_refinement_readiness(baseline, promising, min_sample=min_sample),
+        },
+        "shadow_filter": {
+            "filter_id": MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID,
+            "label": MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL,
+            "expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
+            "status_meaning": "SHADOW_PASS means research-only quality gate matched; no live rule changed.",
+        },
+        "shadow_monitor": {
+            "pass_count": len(shadow_pass_items),
+            "fail_count": len(shadow_fail_items),
+            "unavailable_count": len(shadow_unavailable_items),
+            "pass": _walk_forward_perf(shadow_pass_items, baseline=baseline),
+            "fail": _walk_forward_perf(shadow_fail_items, baseline=baseline),
+            "unavailable": _walk_forward_perf(shadow_unavailable_items, baseline=baseline),
         },
         "top_filters": rows[:limit],
         "promising_filters": promising[:limit],
