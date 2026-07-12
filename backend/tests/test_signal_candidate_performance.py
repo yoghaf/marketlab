@@ -360,6 +360,19 @@ def test_quality_lab_groups_stage_confidence_and_drawdown() -> None:
         assert evidence_by_field["price_return"]["tp_median"] == Decimal("2.5")
         assert evidence_by_field["price_return"]["sl_median"] == Decimal("-1.0")
         assert evidence_by_field["price_return"]["delta_tp_minus_sl"] == Decimal("3.5")
+        research = payload["profit_loss_research"]
+        assert research["scope"] == "v2_profit_loss_research_read_only"
+        assert research["summary"]["signals_evaluated"] == 2
+        assert research["summary"]["realistic_read"] in {
+            "IDEAL_PROFIT_COST_DRAG",
+            "REALISTIC_NEGATIVE_NEEDS_FILTER",
+            "REALISTIC_POSITIVE_MONITOR",
+        }
+        assert research["tp_drivers"][0]["field"] == "price_return"
+        lane_rows = {(row["stage"], row["timeframe"]): row for row in research["lane_rows"]}
+        assert lane_rows[("EARLY_LONG", "15m")]["tp_count"] == 1
+        assert lane_rows[("MID_SHORT", "15m")]["sl_count"] == 1
+        assert research["realistic_drag"]["by_stage"]
         assert payload["best_signals"][0]["symbol"] == "AAAUSDT"
         assert payload["worst_signals"][0]["symbol"] == "BBBUSDT"
 

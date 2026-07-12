@@ -267,6 +267,7 @@ class SignalCandidatePerformanceService:
             "by_timeframe": _bucket_rows(evaluated, key="timeframe", min_sample=min_sample),
             "by_volume_rank": _volume_rank_rows(evaluated, min_sample=min_sample),
             "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
+            "profit_loss_research": _v2_profit_loss_research(evaluated, min_sample=min_sample, limit=limit),
             "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
             "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
             "best_signals": best,
@@ -2973,6 +2974,231 @@ def _volume_rank_rows(items: list[dict[str, Any]], *, min_sample: int) -> list[d
         )
         rows.append(row)
     return rows
+
+
+def _v2_profit_loss_research(items: list[dict[str, Any]], *, min_sample: int, limit: int) -> dict[str, Any]:
+    perf = _performance_summary(items)
+    evidence_rows = _evidence_field_rows(items, min_sample=min_sample)
+    driver_rows = [
+        _tp_driver_row(row)
+        for row in evidence_rows
+        if row["quality_flag"] in {"TP_HIGHER", "SL_HIGHER"}
+    ][:limit]
+
+    return {
+        "scope": "v2_profit_loss_research_read_only",
+        "method": (
+            "Compare closed V2 Signal outcomes by TP/SL evidence medians, stage/timeframe lanes, "
+            "and realistic execution drag. This is analysis only and does not alter live rules."
+        ),
+        "summary": {
+            **perf,
+            "sl_share_pct": _sl_share(perf),
+            "realistic_read": _v2_realistic_read(perf, min_sample=min_sample),
+        },
+        "tp_drivers": driver_rows,
+        "lane_rows": _v2_profit_loss_lane_rows(items, min_sample=min_sample, limit=limit),
+        "realistic_drag": _v2_realistic_drag_sections(items, min_sample=min_sample, limit=limit),
+        "read": _v2_profit_loss_research_read(perf, driver_rows, min_sample=min_sample),
+        "guardrails": [
+            "Read-only V2 research; no Signal Factory rule changed.",
+            "No TP/SL formula, classifier threshold, scanner behavior, or outcome calculation changed.",
+            "Rows explain why existing V2 signals TP/SL; they are not execution instructions.",
+        ],
+    }
+
+
+def _tp_driver_row(row: dict[str, Any]) -> dict[str, Any]:
+    delta = row.get("delta_tp_minus_sl")
+    return {
+        "field": row["field"],
+        "label": row["label"],
+        "quality_flag": row["quality_flag"],
+        "direction_read": "TP median higher than SL" if delta is not None and Decimal(delta) > 0 else "TP median lower than SL",
+        "available_count": row["available_count"],
+        "missing_count": row["missing_count"],
+        "available_pct": row["available_pct"],
+        "tp_count": row["tp_count"],
+        "sl_count": row["sl_count"],
+        "tp_median": row["tp_median"],
+        "sl_median": row["sl_median"],
+        "tp_q1": row["tp_q1"],
+        "tp_q3": row["tp_q3"],
+        "sl_q1": row["sl_q1"],
+        "sl_q3": row["sl_q3"],
+        "delta_tp_minus_sl": delta,
+        "read": _tp_driver_read(row),
+    }
+
+
+def _tp_driver_read(row: dict[str, Any]) -> str:
+    field = row["label"]
+    flag = row["quality_flag"]
+    if flag == "TP_HIGHER":
+        return f"{field} cenderung lebih tinggi pada TP daripada SL dalam filter saat ini."
+    if flag == "SL_HIGHER":
+        return f"{field} cenderung lebih tinggi pada SL daripada TP dalam filter saat ini."
+    return f"{field} belum punya gap TP/SL yang bersih."
+
+
+def _v2_profit_loss_lane_rows(items: list[dict[str, Any]], *, min_sample: int, limit: int) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[(str(item.get("stage") or "UNKNOWN"), str(item.get("timeframe") or "UNKNOWN"))].append(item)
+
+    rows = []
+    for (stage, timeframe), lane_items in groups.items():
+        perf = _performance_summary(lane_items)
+        evidence_gap = _top_evidence_gap(lane_items, min_sample=min_sample)
+        row = {
+            "stage": stage,
+            "timeframe": timeframe,
+            "sample_count": len(lane_items),
+            "sl_share_pct": _sl_share(perf),
+            "realistic_read": _v2_realistic_read(perf, min_sample=min_sample),
+            "top_evidence_gap": evidence_gap,
+            "top_loss_symbol": _top_symbol_by_realistic_r(lane_items, reverse=False),
+            "top_profit_symbol": _top_symbol_by_realistic_r(lane_items, reverse=True),
+            **perf,
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) < min_sample,
+            Decimal(row.get("realistic_total_r_closed") or 0),
+            int(row.get("sample_count") or 0),
+        )
+    )
+    return rows[:limit]
+
+
+def _top_evidence_gap(items: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in _evidence_field_rows(items, min_sample=min_sample)
+        if row["quality_flag"] in {"TP_HIGHER", "SL_HIGHER"}
+    ]
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "field": row["field"],
+        "label": row["label"],
+        "quality_flag": row["quality_flag"],
+        "tp_median": row["tp_median"],
+        "sl_median": row["sl_median"],
+        "delta_tp_minus_sl": row["delta_tp_minus_sl"],
+    }
+
+
+def _top_symbol_by_realistic_r(items: list[dict[str, Any]], *, reverse: bool) -> dict[str, Any] | None:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[str(item.get("symbol") or "UNKNOWN")].append(item)
+    rows = []
+    for symbol, symbol_items in groups.items():
+        perf = _performance_summary(symbol_items)
+        rows.append(
+            {
+                "symbol": symbol,
+                "sample_count": len(symbol_items),
+                "closed_count": perf["closed_count"],
+                "tp_count": perf["tp_count"],
+                "sl_count": perf["sl_count"],
+                "total_r_closed": perf["total_r_closed"],
+                "realistic_total_r_closed": perf["realistic_total_r_closed"],
+            }
+        )
+    if not rows:
+        return None
+    rows.sort(key=lambda row: Decimal(row.get("realistic_total_r_closed") or 0), reverse=reverse)
+    return rows[0]
+
+
+def _v2_realistic_drag_sections(items: list[dict[str, Any]], *, min_sample: int, limit: int) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "by_symbol": _v2_realistic_drag_rows(items, key="symbol", min_sample=min_sample, limit=limit),
+        "by_stage": _v2_realistic_drag_rows(items, key="stage", min_sample=min_sample, limit=limit),
+        "by_timeframe": _v2_realistic_drag_rows(items, key="timeframe", min_sample=min_sample, limit=limit),
+        "by_confidence": _v2_realistic_drag_rows(items, key="confidence_tier", min_sample=min_sample, limit=limit),
+        "by_fill_quality": _v2_realistic_drag_rows(items, key="realistic_fill_quality", min_sample=min_sample, limit=limit),
+    }
+
+
+def _v2_realistic_drag_rows(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[str(item.get(key) or "UNKNOWN")].append(item)
+
+    rows = []
+    for bucket, bucket_items in groups.items():
+        perf = _performance_summary(bucket_items)
+        closed_count = int(perf.get("closed_count") or 0)
+        penalty = Decimal(perf.get("realism_penalty_r_closed") or 0)
+        row = {
+            "dimension": key,
+            "bucket": bucket,
+            "sample_count": len(bucket_items),
+            "sl_share_pct": _sl_share(perf),
+            "avg_penalty_r_closed": (penalty / Decimal(closed_count)) if closed_count else None,
+            "realistic_read": _v2_realistic_read(perf, min_sample=min_sample),
+            **perf,
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) < min_sample,
+            Decimal(row.get("realistic_total_r_closed") or 0),
+            Decimal(row.get("realism_penalty_r_closed") or 0),
+            int(row.get("sample_count") or 0),
+        )
+    )
+    return rows[:limit]
+
+
+def _v2_realistic_read(perf: dict[str, Any], *, min_sample: int) -> str:
+    closed_count = int(perf.get("closed_count") or 0)
+    ideal_r = Decimal(perf.get("total_r_closed") or 0)
+    realistic_r = Decimal(perf.get("realistic_total_r_closed") or 0)
+    penalty_r = Decimal(perf.get("realism_penalty_r_closed") or 0)
+    if closed_count < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    if realistic_r > 0:
+        return "REALISTIC_POSITIVE_MONITOR"
+    if ideal_r > 0 and realistic_r <= 0:
+        return "IDEAL_PROFIT_COST_DRAG"
+    if penalty_r > abs(realistic_r):
+        return "COST_DRAG_DOMINANT"
+    if realistic_r < 0:
+        return "REALISTIC_NEGATIVE_NEEDS_FILTER"
+    return "NO_CLEAR_EDGE"
+
+
+def _v2_profit_loss_research_read(
+    perf: dict[str, Any],
+    driver_rows: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> str:
+    closed_count = int(perf.get("closed_count") or 0)
+    realistic_r = Decimal(perf.get("realistic_total_r_closed") or 0)
+    if closed_count < min_sample:
+        return "WAIT_MORE_CLOSED_SAMPLE"
+    if realistic_r > 0 and driver_rows:
+        return "HAS_REALISTIC_POSITIVE_DRIVERS"
+    if realistic_r > 0:
+        return "REALISTIC_POSITIVE_BUT_DRIVERS_WEAK"
+    if driver_rows:
+        return "DRIVERS_FOUND_BUT_REALISTIC_NEGATIVE"
+    return "NO_CLEAR_TP_DRIVER_YET"
 
 
 def _rank_value(item: dict[str, Any]) -> int | None:

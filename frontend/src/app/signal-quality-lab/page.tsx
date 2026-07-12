@@ -18,6 +18,9 @@ import {
   SignalQualityBucket,
   SignalQualityEvidenceField,
   SignalQualityLabResponse,
+  SignalQualityProfitLossLane,
+  SignalQualityProfitLossResearch,
+  SignalQualityRealisticDragRow,
   SignalQualityVolumeRankBucket,
   fetchJson,
   fmtNumber,
@@ -143,6 +146,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
               </label>
             </FilterBar>
           </SectionCard>
+
+          <V2ProfitLossResearchPanel data={data?.profit_loss_research || null} />
 
           <CollapsiblePanel
             title={`Filter Study ${filterStudy?.filters.timeframe || "1h"} ${labelFor(filterStudy?.filters.stage || "MID_SHORT")}`}
@@ -309,6 +314,205 @@ function CollapsiblePanel({
         {children}
       </div>
     </details>
+  );
+}
+
+function V2ProfitLossResearchPanel({ data }: { data: SignalQualityProfitLossResearch | null }) {
+  if (!data) {
+    return (
+      <SectionCard title="V2 Profit/Loss Research" description="Belum ada payload riset V2 dari API.">
+        <EmptyState title="No V2 research data" detail="Refresh setelah backend Quality Lab mengirim profit_loss_research." />
+      </SectionCard>
+    );
+  }
+
+  const summary = data.summary;
+  const dragRows = [
+    ...data.realistic_drag.by_stage.slice(0, 4),
+    ...data.realistic_drag.by_timeframe.slice(0, 4),
+    ...data.realistic_drag.by_fill_quality.slice(0, 4),
+    ...data.realistic_drag.by_symbol.slice(0, 8)
+  ].slice(0, 16);
+
+  return (
+    <SectionCard
+      title="V2 Profit/Loss Research"
+      description="Membaca kenapa V2 TP/SL dan kenapa realistic R bisa beda dari ideal R. Ini riset read-only, bukan perubahan rule."
+    >
+      <div className="grid gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
+        <Insight label="Read" value={labelFor(data.read)} />
+        <Insight label="Ideal closed" value={`${fmtSigned(summary.total_r_closed)}R`} />
+        <Insight label="Realistic closed" value={`${fmtSigned(summary.realistic_total_r_closed)}R`} />
+        <Insight label="Penalty" value={`${fmtSigned(summary.realism_penalty_r_closed)}R`} />
+        <Insight label="TP / SL" value={`${summary.tp_count ?? 0} / ${summary.sl_count ?? 0}`} />
+        <Insight label="SL share" value={summary.sl_share_pct == null ? "-" : `${fmtNumber(summary.sl_share_pct)}%`} />
+      </div>
+
+      <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+        <div>
+          <div className="mb-2 text-sm font-bold">Variabel yang sering membedakan TP vs SL</div>
+          <ProfitLossDriverTable rows={data.tp_drivers.slice(0, 8)} />
+        </div>
+        <div>
+          <div className="mb-2 text-sm font-bold">Realistic drag terbesar</div>
+          <RealisticDragTable rows={dragRows} />
+        </div>
+      </div>
+
+      <div className="border-t border-line">
+        <div className="px-4 py-3 text-sm font-bold">Stage + timeframe V2</div>
+        <ProfitLossLaneTable rows={data.lane_rows} />
+      </div>
+    </SectionCard>
+  );
+}
+
+function ProfitLossDriverTable({ rows }: { rows: SignalQualityProfitLossResearch["tp_drivers"] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Evidence</th>
+            <th>Flag</th>
+            <th>TP / SL</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>Delta</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td><StatusBadge value={row.quality_flag} /></td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>{fmtNumber(row.tp_median)}</td>
+              <td>{fmtNumber(row.sl_median)}</td>
+              <td>{fmtSigned(row.delta_tp_minus_sl)}</td>
+              <td className="max-w-sm text-sm text-slate-600">{row.read}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={7}>
+                <EmptyState title="Belum ada TP driver bersih" detail="TP dan SL belum punya gap median evidence yang cukup menurut min sample." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProfitLossLaneTable({ rows }: { rows: SignalQualityProfitLossLane[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Read</th>
+            <th>Sample</th>
+            <th>TP / SL / Open</th>
+            <th>Ideal R</th>
+            <th>Realistic R</th>
+            <th>Penalty</th>
+            <th>SL share</th>
+            <th>Evidence gap</th>
+            <th>Worst symbol</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.stage}-${row.timeframe}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.stage)}</div>
+                <div className="text-xs text-slate-500">{row.timeframe}</div>
+              </td>
+              <td><StatusBadge value={row.realistic_read} /></td>
+              <td>{row.sample_count}</td>
+              <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
+              <td>{fmtSigned(row.total_r_closed)}R</td>
+              <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realism_penalty_r_closed)}R</td>
+              <td>{row.sl_share_pct == null ? "-" : `${fmtNumber(row.sl_share_pct)}%`}</td>
+              <td>
+                {row.top_evidence_gap ? (
+                  <div>
+                    <div className="font-semibold">{row.top_evidence_gap.label}</div>
+                    <div className="text-xs text-slate-500">{fmtSigned(row.top_evidence_gap.delta_tp_minus_sl)}</div>
+                  </div>
+                ) : "-"}
+              </td>
+              <td>
+                {row.top_loss_symbol ? (
+                  <div>
+                    <div className="font-semibold">{row.top_loss_symbol.symbol}</div>
+                    <div className="text-xs text-slate-500">{fmtSigned(row.top_loss_symbol.realistic_total_r_closed)}R realistic</div>
+                  </div>
+                ) : "-"}
+              </td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={10}>
+                <EmptyState title="No lane rows" detail="Belum ada Signal untuk filter ini." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RealisticDragTable({ rows }: { rows: SignalQualityRealisticDragRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>Read</th>
+            <th>Sample</th>
+            <th>Ideal</th>
+            <th>Realistic</th>
+            <th>Penalty</th>
+            <th>Avg penalty</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.dimension}-${row.bucket}`}>
+              <td>
+                <div className="font-semibold">{labelFor(row.bucket)}</div>
+                <div className="text-xs text-slate-500">{row.dimension}</div>
+              </td>
+              <td><StatusBadge value={row.realistic_read} /></td>
+              <td>{row.sample_count}</td>
+              <td>{fmtSigned(row.total_r_closed)}R</td>
+              <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realism_penalty_r_closed)}R</td>
+              <td>{fmtSigned(row.avg_penalty_r_closed)}R</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={7}>
+                <EmptyState title="No drag rows" detail="Belum ada bucket realistic drag yang bisa dibaca." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

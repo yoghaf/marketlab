@@ -1335,6 +1335,79 @@ export type SignalQualityEvidenceField = {
   delta_tp_minus_sl?: string | number | null;
 };
 
+export type SignalQualityTopSymbolR = {
+  symbol: string;
+  sample_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  total_r_closed: string | number;
+  realistic_total_r_closed?: string | number | null;
+};
+
+export type SignalQualityEvidenceGap = {
+  field: string;
+  label: string;
+  quality_flag: string;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  delta_tp_minus_sl?: string | number | null;
+};
+
+export type SignalQualityProfitLossDriver = SignalQualityEvidenceGap & {
+  direction_read: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  read: string;
+};
+
+export type SignalQualityProfitLossLane = SignalPerformanceBucket & {
+  stage: string;
+  timeframe: string;
+  sample_count: number;
+  sl_share_pct?: string | number | null;
+  realistic_read: string;
+  top_evidence_gap?: SignalQualityEvidenceGap | null;
+  top_loss_symbol?: SignalQualityTopSymbolR | null;
+  top_profit_symbol?: SignalQualityTopSymbolR | null;
+};
+
+export type SignalQualityRealisticDragRow = SignalPerformanceBucket & {
+  dimension: string;
+  bucket: string;
+  sample_count: number;
+  sl_share_pct?: string | number | null;
+  avg_penalty_r_closed?: string | number | null;
+  realistic_read: string;
+};
+
+export type SignalQualityProfitLossResearch = {
+  scope: string;
+  method: string;
+  summary: SignalPerformanceBucket & {
+    sl_share_pct?: string | number | null;
+    realistic_read: string;
+  };
+  tp_drivers: SignalQualityProfitLossDriver[];
+  lane_rows: SignalQualityProfitLossLane[];
+  realistic_drag: {
+    by_symbol: SignalQualityRealisticDragRow[];
+    by_stage: SignalQualityRealisticDragRow[];
+    by_timeframe: SignalQualityRealisticDragRow[];
+    by_confidence: SignalQualityRealisticDragRow[];
+    by_fill_quality: SignalQualityRealisticDragRow[];
+  };
+  read: string;
+  guardrails: string[];
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;
@@ -1758,6 +1831,7 @@ export type SignalQualityLabResponse = {
   by_timeframe: SignalQualityBucket[];
   by_volume_rank: SignalQualityVolumeRankBucket[];
   evidence_fields: SignalQualityEvidenceField[];
+  profit_loss_research?: SignalQualityProfitLossResearch;
   top_symbols: SignalQualityBucket[];
   weak_symbols: SignalQualityBucket[];
   best_signals: SignalPerformanceItem[];

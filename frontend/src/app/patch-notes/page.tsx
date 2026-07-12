@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-34",
+    title: "V2 Profit/Loss Research",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Quality Lab sekarang membedah V2: kenapa signal TP/SL, kenapa realistic R bisa negatif, dan variabel evidence apa yang paling membedakan TP dari SL.",
+    changes: [
+      "Endpoint /api/signal-candidates/quality-lab sekarang mengirim profit_loss_research read-only.",
+      "Panel baru di /signal-quality-lab menampilkan ideal R vs realistic R, realism penalty, SL share, dan read status V2.",
+      "Menambahkan tabel TP driver dari median evidence TP vs SL serta lane stage/timeframe yang paling bocor secara realistic R.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa balik riset ke V2 secara angka: variabel apa yang sering muncul saat TP, lane mana yang loss-heavy, dan bagian mana yang perlu difilter agar realistic R tidak kalah oleh spread, fee, dan slippage.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-quality-lab?timeframe=1h&position_lock=false", label: "V2 1h Research" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-33",
     title: "V3 1h+ Quality Audit",
     status: "LIVE",
