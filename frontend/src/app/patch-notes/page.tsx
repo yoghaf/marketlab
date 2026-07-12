@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-12",
+    version: "LAB-33",
+    title: "V3 1h+ Quality Audit",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan audit kualitas V3 untuk 1h, 4h, dan 24h agar penyebab TP/SL bisa dibaca per stage dan timeframe.",
+    changes: [
+      "Endpoint /api/v3-shadow/forward-log sekarang mengirim higher_timeframe_quality_audit read-only.",
+      "Audit memisahkan 1h, 4h, dan 24h dari 15m, lalu membaca sample, TP/SL, ideal R, realistic R, dan verdict per lane.",
+      "Halaman /v3-forward-log menampilkan panel V3 1h+ Quality Audit dengan worst filter, worst symbol, dan evidence gap per lane.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa membedah kenapa V3 1h+ masih loss-heavy atau cost-drag sebelum membuat refinement baru. Ini menjawab lane mana yang layak monitor, mana yang perlu ditolak, dan mana yang masih butuh sample.",
+    links: [
+      { href: "/v3-forward-log?position_lock=false&limit=100", label: "V3 1h+ Audit" },
+      { href: "/v3-forward-log?timeframe=1h&position_lock=false&limit=100", label: "V3 1h Detail" }
+    ]
+  },
+  {
     date: "2026-07-11",
     version: "LAB-32",
     title: "V3 Higher-Timeframe Read Cleanup",

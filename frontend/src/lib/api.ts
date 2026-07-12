@@ -1136,6 +1136,60 @@ export type V3FailureAnalysis = {
   guardrails: string[];
 };
 
+export type V3HigherTimeframeSummaryRow = {
+  timeframe: string;
+  v2_signal_count: number;
+  v3_signal_count: number;
+  v3_closed_count: number;
+  v3_tp_count: number;
+  v3_sl_count: number;
+  v3_total_r_closed?: string | number | null;
+  v3_realistic_total_r_closed?: string | number | null;
+  v3_winrate_pct?: string | number | null;
+  v3_sl_share_pct?: string | number | null;
+  realistic_avg_delta_vs_v2?: string | number | null;
+  verdict: string;
+  read: string;
+};
+
+export type V3HigherTimeframeLaneRow = V3HigherTimeframeSummaryRow & {
+  stage: string;
+  v3_both_count: number;
+  v3_open_count: number;
+  v3_avg_r_closed?: string | number | null;
+  v3_realistic_avg_r_closed?: string | number | null;
+  worst_filter_id?: string | null;
+  worst_filter_label?: string | null;
+  worst_filter_sl_count: number;
+  worst_symbol?: string | null;
+  worst_symbol_sl_count: number;
+  top_evidence_field?: string | null;
+  top_evidence_label?: string | null;
+  top_evidence_quality_flag?: string | null;
+  top_evidence_tp_median?: string | number | null;
+  top_evidence_sl_median?: string | number | null;
+};
+
+export type V3HigherTimeframeQualityAudit = {
+  scope: string;
+  timeframes: string[];
+  summary: {
+    higher_timeframe_v2_signal_count: number;
+    higher_timeframe_v3_signal_count: number;
+    higher_timeframe_v3_closed_count: number;
+    active_lane_count: number;
+    ready_lane_count: number;
+    monitor_lane_count: number;
+    noisy_lane_count: number;
+    waiting_lane_count: number;
+    audit_readiness: string;
+  };
+  timeframe_rows: V3HigherTimeframeSummaryRow[];
+  lane_rows: V3HigherTimeframeLaneRow[];
+  priority_lanes: V3HigherTimeframeLaneRow[];
+  guardrails: string[];
+};
+
 export type V3ShadowForwardAudit = {
   executive_verdict: string;
   promotion_readiness: string;
@@ -1189,6 +1243,7 @@ export type V3ShadowForwardLogResponse = {
   };
   audit?: V3ShadowForwardAudit;
   failure_analysis?: V3FailureAnalysis;
+  higher_timeframe_quality_audit?: V3HigherTimeframeQualityAudit;
   by_stage_timeframe: V3ShadowForwardLaneRow[];
   by_filter: V3ShadowFilterRow[];
   latest_v3_open_signals: SignalPerformanceItem[];

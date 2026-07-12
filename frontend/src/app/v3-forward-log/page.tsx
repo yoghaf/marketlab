@@ -12,6 +12,9 @@ import {
   V3FailureBucketRow,
   V3FailureEvidenceRow,
   V3FailureLaneRow,
+  V3HigherTimeframeLaneRow,
+  V3HigherTimeframeQualityAudit,
+  V3HigherTimeframeSummaryRow,
   V3ShadowFilterRow,
   V3ShadowForwardAudit,
   V3ShadowForwardFilterDecision,
@@ -123,6 +126,10 @@ export default async function V3ForwardLogPage({ searchParams }: { searchParams:
             <HigherTimeframePanel rows={higherTfRows} />
           </SectionCard>
 
+          {data?.higher_timeframe_quality_audit ? (
+            <V3HigherTimeframeQualityPanel audit={data.higher_timeframe_quality_audit} />
+          ) : null}
+
           <section className="grid gap-4 xl:grid-cols-2">
             <SectionCard title="V2 live signal lane" description="Semua signal live V2 sesuai filter halaman.">
               <ForwardSummary summary={v2} />
@@ -209,6 +216,127 @@ function ReadRow({ label, value }: { label: string; value: string | number }) {
       <span className="text-slate-500">{label}</span>
       <span className="text-right font-semibold text-ink">{value}</span>
     </div>
+  );
+}
+
+function V3HigherTimeframeQualityPanel({ audit }: { audit: V3HigherTimeframeQualityAudit }) {
+  const summary = audit.summary;
+  return (
+    <SectionCard
+      title="V3 1h+ Quality Audit"
+      description="Audit khusus 1h, 4h, dan 24h: stage dipisah, realistic R dibaca, lalu penyebab SL dilihat dari filter, symbol, dan evidence gap. Ini bukan rule baru."
+    >
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Insight label="Readiness" value={labelFor(summary.audit_readiness)} />
+        <Insight label="V3 1h+ signals" value={summary.higher_timeframe_v3_signal_count} />
+        <Insight label="Closed" value={summary.higher_timeframe_v3_closed_count} />
+        <Insight label="Ready lanes" value={summary.ready_lane_count} />
+        <Insight label="Monitor lanes" value={summary.monitor_lane_count} />
+        <Insight label="Noisy lanes" value={summary.noisy_lane_count} />
+      </div>
+      <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-[0.9fr_1.4fr]">
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Timeframe read</h3>
+          <V3HigherTimeframeSummaryTable rows={audit.timeframe_rows} />
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-bold text-ink">Priority lane read</h3>
+          <V3HigherTimeframeLaneTable rows={audit.priority_lanes.length ? audit.priority_lanes : audit.lane_rows.filter((row) => row.v3_signal_count > 0)} compact />
+        </div>
+      </div>
+      <div className="border-t border-line">
+        <h3 className="px-4 pt-4 text-sm font-bold text-ink">All 1h+ lanes</h3>
+        <V3HigherTimeframeLaneTable rows={audit.lane_rows} />
+      </div>
+      <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
+        {audit.guardrails.map((item) => (
+          <div className="rounded border border-line bg-field/40 p-3 font-semibold text-slate-700" key={item}>{item}</div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function V3HigherTimeframeSummaryTable({ rows }: { rows: V3HigherTimeframeSummaryRow[] }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>TF</th>
+          <th>V3</th>
+          <th>TP / SL</th>
+          <th>Ideal R</th>
+          <th>Realistic R</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`htf-${row.timeframe}`}>
+            <td className="font-semibold">{row.timeframe}</td>
+            <td>{row.v3_signal_count} / closed {row.v3_closed_count}</td>
+            <td>{row.v3_tp_count} / {row.v3_sl_count}</td>
+            <td>{fmtSigned(row.v3_total_r_closed)}R</td>
+            <td>{fmtSigned(row.v3_realistic_total_r_closed)}R</td>
+            <td><StatusBadge value={row.verdict} /></td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={6} title="Belum ada audit timeframe" />}
+      </tbody>
+    </TableShell>
+  );
+}
+
+function V3HigherTimeframeLaneTable({ rows, compact = false }: { rows: V3HigherTimeframeLaneRow[]; compact?: boolean }) {
+  return (
+    <TableShell>
+      <thead>
+        <tr>
+          <th>Lane</th>
+          <th>V3</th>
+          <th>TP / SL</th>
+          <th>Realistic R</th>
+          <th>Worst cause</th>
+          {!compact && <th>Evidence gap</th>}
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={`htf-lane-${row.stage}-${row.timeframe}-${compact ? "compact" : "full"}`}>
+            <td>
+              <div className="font-semibold">{labelFor(row.stage)}</div>
+              <div className="text-xs text-slate-500">{row.timeframe}</div>
+            </td>
+            <td>{row.v3_signal_count} / closed {row.v3_closed_count}</td>
+            <td>{row.v3_tp_count} / {row.v3_sl_count}</td>
+            <td>
+              <div>{fmtSigned(row.v3_realistic_total_r_closed)}R</div>
+              <div className="text-xs text-slate-500">avg {fmtSigned(row.v3_realistic_avg_r_closed)}R</div>
+            </td>
+            <td className="max-w-[24rem] text-xs text-slate-600">
+              <div>{row.worst_filter_label ? `Filter: ${compactReason(row.worst_filter_label, 70)} (${row.worst_filter_sl_count} SL)` : "Filter: -"}</div>
+              <div>{row.worst_symbol ? `Symbol: ${row.worst_symbol} (${row.worst_symbol_sl_count} SL)` : "Symbol: -"}</div>
+            </td>
+            {!compact && (
+              <td className="max-w-[20rem] text-xs text-slate-600">
+                {row.top_evidence_label ? (
+                  <>
+                    <div>{row.top_evidence_label}</div>
+                    <div>TP {fmtNumber(row.top_evidence_tp_median)} vs SL {fmtNumber(row.top_evidence_sl_median)}</div>
+                  </>
+                ) : "-"}
+              </td>
+            )}
+            <td>
+              <StatusBadge value={row.verdict} />
+              <div className="mt-1 max-w-[24rem] text-xs text-slate-500">{compactReason(row.read, 120)}</div>
+            </td>
+          </tr>
+        ))}
+        {!rows.length && <EmptyRow colSpan={compact ? 6 : 7} title="Belum ada lane 1h+ untuk dibaca" />}
+      </tbody>
+    </TableShell>
   );
 }
 

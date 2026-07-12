@@ -795,6 +795,12 @@ class SignalCandidatePerformanceService:
                 min_sample=min_sample,
                 limit=limit,
             ),
+            "higher_timeframe_quality_audit": _v3_higher_timeframe_quality_audit(
+                v2_items=evaluated,
+                v3_items=v3_items,
+                min_sample=min_sample,
+                limit=limit,
+            ),
             "by_stage_timeframe": lane_rows,
             "by_filter": filter_rows,
             "latest_v3_open_signals": _sorted_signal_rows(v3_open, limit=limit),
@@ -2195,6 +2201,252 @@ def _v3_failure_analysis(
             "Use this analysis to decide whether V3 is complete or still needs refinement.",
         ],
     }
+
+
+def _v3_higher_timeframe_quality_audit(
+    *,
+    v2_items: list[dict[str, Any]],
+    v3_items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    higher_timeframes = ("1h", "4h", "24h")
+    stages = ("MID_LONG", "MID_SHORT", "EARLY_LONG", "EARLY_SHORT")
+    lane_rows: list[dict[str, Any]] = []
+    timeframe_rows: list[dict[str, Any]] = []
+
+    for timeframe in higher_timeframes:
+        timeframe_v2 = [item for item in v2_items if item.get("timeframe") == timeframe]
+        timeframe_v3 = [item for item in v3_items if item.get("timeframe") == timeframe]
+        timeframe_perf = _performance_summary(timeframe_v3)
+        timeframe_v2_perf = _performance_summary(timeframe_v2)
+        timeframe_rows.append(
+            {
+                "timeframe": timeframe,
+                "v2_signal_count": len(timeframe_v2),
+                "v3_signal_count": len(timeframe_v3),
+                "v3_closed_count": int(timeframe_perf.get("closed_count") or 0),
+                "v3_tp_count": int(timeframe_perf.get("tp_count") or 0),
+                "v3_sl_count": int(timeframe_perf.get("sl_count") or 0),
+                "v3_total_r_closed": timeframe_perf.get("total_r_closed"),
+                "v3_realistic_total_r_closed": timeframe_perf.get("realistic_total_r_closed"),
+                "v3_winrate_pct": timeframe_perf.get("winrate_pct"),
+                "v3_sl_share_pct": _sl_share(timeframe_perf),
+                "realistic_avg_delta_vs_v2": _decimal_delta(
+                    timeframe_perf.get("realistic_avg_r_closed"),
+                    timeframe_v2_perf.get("realistic_avg_r_closed"),
+                ),
+                "verdict": _v3_higher_timeframe_verdict(timeframe_perf, timeframe_v2_perf, min_sample=min_sample),
+                "read": _v3_higher_timeframe_read(timeframe, "ALL", timeframe_perf, timeframe_v2_perf, None, None, None, min_sample=min_sample),
+            }
+        )
+
+        for stage in stages:
+            lane_v2 = [item for item in timeframe_v2 if item.get("stage") == stage]
+            lane_v3 = [item for item in timeframe_v3 if item.get("stage") == stage]
+            lane_closed = [item for item in lane_v3 if item.get("result_status") in COMPLETED_OUTCOMES]
+            lane_sl = [item for item in lane_closed if item.get("result_status") == "SL_HIT"]
+            lane_perf = _performance_summary(lane_v3)
+            lane_v2_perf = _performance_summary(lane_v2)
+            evidence_rows = _evidence_field_rows(lane_closed, min_sample=max(3, min_sample))
+            evidence_gap = next(
+                (
+                    row
+                    for row in evidence_rows
+                    if row.get("quality_flag") not in {"SAMPLE_TOO_SMALL", "NO_CLEAR_GAP"}
+                ),
+                None,
+            )
+            worst_filter = next(
+                (
+                    row
+                    for row in _v3_failure_bucket_rows(
+                        lane_v3,
+                        key="v3_shadow_filter_id",
+                        label_key="v3_shadow_filter_label",
+                        min_sample=1,
+                        limit=limit,
+                    )
+                    if int(row.get("sl_count") or 0) > 0
+                ),
+                None,
+            )
+            worst_symbol = next(
+                (
+                    row
+                    for row in _v3_failure_bucket_rows(
+                        lane_sl,
+                        key="symbol",
+                        label_key=None,
+                        min_sample=1,
+                        limit=limit,
+                        sort_by_loss=True,
+                    )
+                    if int(row.get("sl_count") or 0) > 0
+                ),
+                None,
+            )
+            verdict = _v3_higher_timeframe_verdict(lane_perf, lane_v2_perf, min_sample=min_sample)
+            lane_rows.append(
+                {
+                    "stage": stage,
+                    "timeframe": timeframe,
+                    "v2_signal_count": len(lane_v2),
+                    "v3_signal_count": len(lane_v3),
+                    "v3_closed_count": int(lane_perf.get("closed_count") or 0),
+                    "v3_tp_count": int(lane_perf.get("tp_count") or 0),
+                    "v3_sl_count": int(lane_perf.get("sl_count") or 0),
+                    "v3_both_count": int(lane_perf.get("both_hit_count") or 0),
+                    "v3_open_count": int(lane_perf.get("open_count") or 0),
+                    "v3_total_r_closed": lane_perf.get("total_r_closed"),
+                    "v3_realistic_total_r_closed": lane_perf.get("realistic_total_r_closed"),
+                    "v3_avg_r_closed": lane_perf.get("avg_r_closed"),
+                    "v3_realistic_avg_r_closed": lane_perf.get("realistic_avg_r_closed"),
+                    "v3_winrate_pct": lane_perf.get("winrate_pct"),
+                    "v3_sl_share_pct": _sl_share(lane_perf),
+                    "realistic_avg_delta_vs_v2": _decimal_delta(
+                        lane_perf.get("realistic_avg_r_closed"),
+                        lane_v2_perf.get("realistic_avg_r_closed"),
+                    ),
+                    "worst_filter_id": worst_filter.get("bucket") if worst_filter else None,
+                    "worst_filter_label": worst_filter.get("label") if worst_filter else None,
+                    "worst_filter_sl_count": int(worst_filter.get("sl_count") or 0) if worst_filter else 0,
+                    "worst_symbol": worst_symbol.get("bucket") if worst_symbol else None,
+                    "worst_symbol_sl_count": int(worst_symbol.get("sl_count") or 0) if worst_symbol else 0,
+                    "top_evidence_field": evidence_gap.get("field") if evidence_gap else None,
+                    "top_evidence_label": evidence_gap.get("label") if evidence_gap else None,
+                    "top_evidence_quality_flag": evidence_gap.get("quality_flag") if evidence_gap else None,
+                    "top_evidence_tp_median": evidence_gap.get("tp_median") if evidence_gap else None,
+                    "top_evidence_sl_median": evidence_gap.get("sl_median") if evidence_gap else None,
+                    "verdict": verdict,
+                    "read": _v3_higher_timeframe_read(
+                        timeframe,
+                        stage,
+                        lane_perf,
+                        lane_v2_perf,
+                        worst_filter,
+                        worst_symbol,
+                        evidence_gap,
+                        min_sample=min_sample,
+                    ),
+                }
+            )
+
+    active_lanes = [row for row in lane_rows if int(row.get("v3_signal_count") or 0) > 0]
+    ready_lanes = [row for row in lane_rows if int(row.get("v3_closed_count") or 0) >= min_sample]
+    noisy_lanes = [row for row in ready_lanes if row.get("verdict") in {"LOSS_HEAVY", "REALISTIC_NEGATIVE", "COST_DRAG"}]
+    monitor_lanes = [row for row in ready_lanes if row.get("verdict") in {"MONITOR_CANDIDATE", "PARTIAL_IMPROVEMENT"}]
+    lane_rows.sort(
+        key=lambda row: (
+            row.get("timeframe") not in {"1h", "4h", "24h"},
+            {"1h": 0, "4h": 1, "24h": 2}.get(str(row.get("timeframe")), 99),
+            int(row.get("v3_signal_count") or 0) == 0,
+            str(row.get("stage") or ""),
+        )
+    )
+    return {
+        "scope": "v3_higher_timeframe_quality_audit_read_only",
+        "timeframes": list(higher_timeframes),
+        "summary": {
+            "higher_timeframe_v2_signal_count": sum(int(row.get("v2_signal_count") or 0) for row in timeframe_rows),
+            "higher_timeframe_v3_signal_count": sum(int(row.get("v3_signal_count") or 0) for row in timeframe_rows),
+            "higher_timeframe_v3_closed_count": sum(int(row.get("v3_closed_count") or 0) for row in timeframe_rows),
+            "active_lane_count": len(active_lanes),
+            "ready_lane_count": len(ready_lanes),
+            "monitor_lane_count": len(monitor_lanes),
+            "noisy_lane_count": len(noisy_lanes),
+            "waiting_lane_count": len([row for row in lane_rows if int(row.get("v3_signal_count") or 0) == 0]),
+            "audit_readiness": _v3_higher_timeframe_audit_readiness(ready_lanes, monitor_lanes, noisy_lanes),
+        },
+        "timeframe_rows": timeframe_rows,
+        "lane_rows": lane_rows,
+        "priority_lanes": sorted(
+            [row for row in lane_rows if int(row.get("v3_closed_count") or 0) >= min_sample],
+            key=lambda row: (
+                row.get("verdict") in {"MONITOR_CANDIDATE", "PARTIAL_IMPROVEMENT"},
+                Decimal(row.get("v3_realistic_total_r_closed") or 0),
+                Decimal(row.get("v3_total_r_closed") or 0),
+            ),
+            reverse=True,
+        )[:limit],
+        "guardrails": [
+            "Higher-timeframe quality audit only reads logged V3 shadow outcomes.",
+            "1h, 4h, and 24h are evaluated separately; 15m is not mixed into these verdicts.",
+            "This audit does not change Signal Factory rules, scanner behavior, TP/SL formula, or execution.",
+        ],
+    }
+
+
+def _v3_higher_timeframe_verdict(v3_perf: dict[str, Any], v2_perf: dict[str, Any], *, min_sample: int) -> str:
+    closed = int(v3_perf.get("closed_count") or 0)
+    if closed <= 0:
+        return "WAITING_V3_SAMPLE"
+    if closed < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    realistic_total = _decimal_or_zero(v3_perf.get("realistic_total_r_closed"))
+    ideal_total = _decimal_or_zero(v3_perf.get("total_r_closed"))
+    realistic_avg_delta = _decimal_delta(v3_perf.get("realistic_avg_r_closed"), v2_perf.get("realistic_avg_r_closed"))
+    sl_share = _sl_share(v3_perf)
+    tp_count = int(v3_perf.get("tp_count") or 0)
+    sl_count = int(v3_perf.get("sl_count") or 0)
+    if realistic_total > 0 and ideal_total > 0 and sl_count <= tp_count and (realistic_avg_delta is None or realistic_avg_delta >= 0):
+        return "MONITOR_CANDIDATE"
+    if ideal_total > 0 and realistic_total < 0:
+        return "COST_DRAG"
+    if realistic_total > 0 or (realistic_avg_delta is not None and realistic_avg_delta > 0):
+        return "PARTIAL_IMPROVEMENT"
+    if sl_count > tp_count or (sl_share is not None and sl_share > Decimal("55")):
+        return "LOSS_HEAVY"
+    if realistic_total < 0:
+        return "REALISTIC_NEGATIVE"
+    return "MIXED"
+
+
+def _v3_higher_timeframe_audit_readiness(
+    ready_lanes: list[dict[str, Any]],
+    monitor_lanes: list[dict[str, Any]],
+    noisy_lanes: list[dict[str, Any]],
+) -> str:
+    if not ready_lanes:
+        return "WAITING_HIGHER_TIMEFRAME_SAMPLE"
+    if monitor_lanes and not noisy_lanes:
+        return "HIGHER_TIMEFRAME_MONITOR_READY"
+    if monitor_lanes:
+        return "MIXED_MONITOR_AND_NOISY_LANES"
+    return "HIGHER_TIMEFRAME_NEEDS_REFINEMENT"
+
+
+def _v3_higher_timeframe_read(
+    timeframe: str,
+    stage: str,
+    v3_perf: dict[str, Any],
+    v2_perf: dict[str, Any],
+    worst_filter: dict[str, Any] | None,
+    worst_symbol: dict[str, Any] | None,
+    evidence_gap: dict[str, Any] | None,
+    *,
+    min_sample: int,
+) -> str:
+    closed = int(v3_perf.get("closed_count") or 0)
+    if closed <= 0:
+        return f"{stage} {timeframe}: belum ada V3 pass/sample."
+    if closed < min_sample:
+        return f"{stage} {timeframe}: sample closed {closed}, belum cukup untuk verdict kuat."
+    verdict = _v3_higher_timeframe_verdict(v3_perf, v2_perf, min_sample=min_sample)
+    parts = [
+        f"{stage} {timeframe}: {verdict}",
+        f"TP/SL {int(v3_perf.get('tp_count') or 0)}/{int(v3_perf.get('sl_count') or 0)}",
+        f"realistic R {v3_perf.get('realistic_total_r_closed')}",
+    ]
+    if worst_filter:
+        parts.append(f"worst filter {worst_filter.get('label')} ({worst_filter.get('sl_count')} SL)")
+    if worst_symbol:
+        parts.append(f"worst symbol {worst_symbol.get('bucket')} ({worst_symbol.get('sl_count')} SL)")
+    if evidence_gap:
+        parts.append(
+            f"evidence gap {evidence_gap.get('label')} TP {evidence_gap.get('tp_median')} vs SL {evidence_gap.get('sl_median')}"
+        )
+    return "; ".join(parts) + "."
 
 
 def _v3_failure_readiness(*, v2_perf: dict[str, Any], v3_perf: dict[str, Any], min_sample: int) -> str:

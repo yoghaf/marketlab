@@ -938,6 +938,15 @@ def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
         assert forward["failure_analysis"]["loss_by_filter"][0]["read"] == "FILTER_HEALTHY"
         assert forward["failure_analysis"]["evidence_tp_vs_sl"]
         assert "does not create V4" in forward["failure_analysis"]["guardrails"][1]
+        htf = forward["higher_timeframe_quality_audit"]
+        assert htf["scope"] == "v3_higher_timeframe_quality_audit_read_only"
+        assert htf["summary"]["higher_timeframe_v3_signal_count"] == 15
+        one_hour_rows = [row for row in htf["lane_rows"] if row["timeframe"] == "1h" and row["stage"] == "MID_SHORT"]
+        assert one_hour_rows
+        assert one_hour_rows[0]["v3_tp_count"] == 15
+        assert one_hour_rows[0]["v3_sl_count"] == 0
+        assert one_hour_rows[0]["worst_filter_id"] is None
+        assert "does not change Signal Factory rules" in htf["guardrails"][2]
 
 
 def _signal(
