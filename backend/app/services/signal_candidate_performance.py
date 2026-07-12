@@ -22,7 +22,11 @@ LIVE_STRATEGY_VERSION = "SIGNAL_FACTORY_V2_LIVE"
 SHADOW_STRATEGY_VERSION = "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION"
 FORWARD_DATA_STALE_MINUTES = 30
 REALISTIC_MODEL_VERSION = "REALISTIC_PAPER_EXECUTION_V1"
-REALISTIC_FEE_PCT_PER_SIDE = Decimal("0.05")
+REALISTIC_FEE_MODEL = "BINANCE_USDS_M_FUTURES_VIP0_TAKER_TAKER"
+REALISTIC_FEE_SOURCE = "Binance USDⓈ-M Futures regular user taker fee"
+REALISTIC_BINANCE_FUTURES_MAKER_FEE_PCT_PER_SIDE = Decimal("0.02")
+REALISTIC_BINANCE_FUTURES_TAKER_FEE_PCT_PER_SIDE = Decimal("0.05")
+REALISTIC_FEE_PCT_PER_SIDE = REALISTIC_BINANCE_FUTURES_TAKER_FEE_PCT_PER_SIDE
 REALISTIC_SLIPPAGE_PCT_PER_SIDE = Decimal("0.02")
 REALISTIC_FILL_GOOD_MAX_COST_R = Decimal("0.15")
 REALISTIC_FILL_ACCEPTABLE_MAX_COST_R = Decimal("0.35")
@@ -1615,7 +1619,11 @@ def _realistic_assumptions(
         fill_quality = "FILL_BAD"
     return {
         "realistic_model_version": REALISTIC_MODEL_VERSION,
+        "realistic_fee_model": REALISTIC_FEE_MODEL,
+        "realistic_fee_source": REALISTIC_FEE_SOURCE,
         "realistic_fee_pct_per_side": REALISTIC_FEE_PCT_PER_SIDE,
+        "realistic_taker_fee_pct_per_side": REALISTIC_BINANCE_FUTURES_TAKER_FEE_PCT_PER_SIDE,
+        "realistic_maker_fee_pct_per_side": REALISTIC_BINANCE_FUTURES_MAKER_FEE_PCT_PER_SIDE,
         "realistic_slippage_pct_per_side": REALISTIC_SLIPPAGE_PCT_PER_SIDE,
         "realistic_futures_spread_pct": spread_pct,
         "realistic_spread_source": "signal_evidence.futures_spread_pct" if spread_pct is not None else "missing",

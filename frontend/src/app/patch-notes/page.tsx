@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-37",
+    title: "Binance Futures Fee Model Clarity",
+    status: "LIVE",
+    area: "Signal realism model",
+    summary: "Realistic R sekarang menampilkan asumsi fee secara eksplisit sebagai Binance USD-M Futures VIP0 taker/taker.",
+    changes: [
+      "Realistic model memakai Binance futures taker fee 0.05% per side untuk entry dan exit paper-live.",
+      "Maker fee 0.02% disimpan sebagai referensi, tetapi tidak dipakai untuk realistic R karena TP/SL trigger diasumsikan taker.",
+      "Signal detail menampilkan fee model, taker fee, maker reference, spread, slippage, dan round-trip cost.",
+      "Wording Signal History dan 1h Review diperjelas menjadi Binance taker fee + spread + slippage."
+    ],
+    impact: "Angka realistic R sekarang lebih transparan: kalau hasil turun, penyebab biaya bisa dibaca jelas dari Binance taker fee, spread futures, slippage, dan jarak risk.",
+    links: [
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/scanner", label: "Radar" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-36",
     title: "MID_SHORT 1h Refinement Focus",
     status: "LIVE",

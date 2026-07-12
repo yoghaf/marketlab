@@ -135,6 +135,10 @@ def test_realistic_execution_adds_fee_spread_and_slippage_penalty() -> None:
         assert item["result_status"] == "TP_HIT"
         assert item["realized_r"] == Decimal("1.5")
         assert item["realistic_model_version"] == "REALISTIC_PAPER_EXECUTION_V1"
+        assert item["realistic_fee_model"] == "BINANCE_USDS_M_FUTURES_VIP0_TAKER_TAKER"
+        assert item["realistic_fee_pct_per_side"] == Decimal("0.05")
+        assert item["realistic_taker_fee_pct_per_side"] == Decimal("0.05")
+        assert item["realistic_maker_fee_pct_per_side"] == Decimal("0.02")
         assert item["realistic_fill_quality"] == "FILL_GOOD"
         assert item["realistic_realized_r"] < item["realized_r"]
         assert item["realism_penalty_r"] > Decimal("0")

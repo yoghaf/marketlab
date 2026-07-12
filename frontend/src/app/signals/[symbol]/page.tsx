@@ -100,7 +100,7 @@ export default async function SignalDetailPage({
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard label="Position state" value={labelFor(item.result_status)} helper={positionText(item.result_status, rValue)} tone={resultTone} />
         <MetricCard label={isOpen || isStale ? "Ideal current R" : "Ideal final R"} value={`${fmtSigned(rValue)}R`} helper="Candle high/low ideal" tone={resultTone} />
-        <MetricCard label={isOpen || isStale ? "Realistic current R" : "Realistic final R"} value={`${fmtSigned(realisticRValue)}R`} helper="Fee + spread + slippage" tone={Number(realisticRValue || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label={isOpen || isStale ? "Realistic current R" : "Realistic final R"} value={`${fmtSigned(realisticRValue)}R`} helper="Binance taker fee + spread + slippage" tone={Number(realisticRValue || 0) >= 0 ? "good" : "bad"} />
         <MetricCard label="Realism penalty" value={`${fmtSigned(item.realism_penalty_r)}R`} helper="Selisih ideal vs realistic" tone={Number(item.realism_penalty_r || 0) > 0 ? "warn" : "good"} />
         <MetricCard label="Entry futures" value={fmtPrice(item.entry)} helper={fmtTime(item.signal_timestamp)} />
         <MetricCard label="SL reference" value={fmtPrice(item.stop_loss)} helper={`Risk ${fmtPrice(item.risk)}`} tone="bad" />
@@ -139,8 +139,10 @@ export default async function SignalDetailPage({
           <DetailItem label="Candidate status" value={item.candidate_status} />
           <DetailItem label="Execution flag" value={item.execution_flag || "-"} />
           <DetailItem label="Realistic model" value={item.realistic_model_version || "-"} />
+          <DetailItem label="Fee model" value={labelFor(item.realistic_fee_model || "-")} />
           <DetailItem label="Realistic result" value={labelFor(item.realistic_result_status || "-")} />
-          <DetailItem label="Fee / side" value={`${fmtNumber(item.realistic_fee_pct_per_side)}%`} />
+          <DetailItem label="Binance taker fee / side" value={`${fmtNumber(item.realistic_taker_fee_pct_per_side ?? item.realistic_fee_pct_per_side)}%`} />
+          <DetailItem label="Binance maker reference" value={`${fmtNumber(item.realistic_maker_fee_pct_per_side)}%`} />
           <DetailItem label="Slippage / side" value={`${fmtNumber(item.realistic_slippage_pct_per_side)}%`} />
           <DetailItem label="Futures spread" value={item.realistic_futures_spread_pct == null ? "Missing" : `${fmtNumber(item.realistic_futures_spread_pct)}%`} />
           <DetailItem label="Round-trip cost" value={`${fmtNumber(item.realistic_round_trip_cost_pct_estimate)}% / ${fmtSigned(item.realistic_cost_r_estimate)}R`} />

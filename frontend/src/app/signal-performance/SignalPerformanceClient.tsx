@@ -76,7 +76,7 @@ export function SignalPerformanceClient() {
     <div className="space-y-5">
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard label="Ideal R Closed" value={`${fmtSigned(aggregate?.total_r_closed)}R`} helper="Candle high/low ideal" tone={Number(aggregate?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
-        <MetricCard label="Realistic R Closed" value={`${fmtSigned(aggregate?.realistic_total_r_closed)}R`} helper="Fee + spread + slippage" tone={Number(aggregate?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+        <MetricCard label="Realistic R Closed" value={`${fmtSigned(aggregate?.realistic_total_r_closed)}R`} helper="Binance taker fee + spread + slippage" tone={Number(aggregate?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
         <MetricCard label="Realism penalty" value={`${fmtSigned(aggregate?.realism_penalty_r_closed)}R`} helper="Selisih ideal vs realistic" tone={Number(aggregate?.realism_penalty_r_closed || 0) > 0 ? "warn" : "good"} />
         <MetricCard label="Winrate" value={aggregate?.winrate_pct == null ? "-" : `${fmtNumber(aggregate.winrate_pct)}%`} helper="TP / (TP + SL)" tone="info" />
         <MetricCard label="TP / SL" value={`${aggregate?.tp_count ?? 0} / ${aggregate?.sl_count ?? 0}`} helper={`${aggregate?.closed_count ?? 0} closed`} />

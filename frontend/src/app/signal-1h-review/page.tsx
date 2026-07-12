@@ -162,7 +162,7 @@ export default async function Signal1hReviewPage() {
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             <MetricCard label="1h evaluated" value={aggregate?.signals_evaluated ?? 0} helper={`${aggregate?.signals_skipped ?? 0} skipped by lock`} />
             <MetricCard label="Ideal R" value={`${fmtSigned(aggregate?.total_r_closed)}R`} helper="Closed TP/SL/BOTH" tone={Number(aggregate?.total_r_closed || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="Realistic R" value={`${fmtSigned(aggregate?.realistic_total_r_closed)}R`} helper="Fee + spread + slippage" tone={Number(aggregate?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="Realistic R" value={`${fmtSigned(aggregate?.realistic_total_r_closed)}R`} helper="Binance taker fee + spread + slippage" tone={Number(aggregate?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
             <MetricCard label="TP / SL" value={`${aggregate?.tp_count ?? 0} / ${aggregate?.sl_count ?? 0}`} helper={`${aggregate?.closed_count ?? 0} closed`} />
             <MetricCard label="Winrate" value={aggregate?.winrate_pct == null ? "-" : `${fmtNumber(aggregate.winrate_pct)}%`} helper="TP / (TP + SL)" tone="info" />
             <MetricCard label="Open 1h" value={forward?.summary?.fresh_open_count ?? 0} helper={`${fmtSigned(sumOpenR(openItems))}R active`} tone="warn" />

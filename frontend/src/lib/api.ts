@@ -742,7 +742,11 @@ export type SignalPerformanceItem = {
   risk?: string | number | null;
   rr?: string | number | null;
   realistic_model_version?: string | null;
+  realistic_fee_model?: string | null;
+  realistic_fee_source?: string | null;
   realistic_fee_pct_per_side?: string | number | null;
+  realistic_taker_fee_pct_per_side?: string | number | null;
+  realistic_maker_fee_pct_per_side?: string | number | null;
   realistic_slippage_pct_per_side?: string | number | null;
   realistic_futures_spread_pct?: string | number | null;
   realistic_spread_source?: string | null;
