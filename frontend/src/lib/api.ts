@@ -1478,6 +1478,69 @@ export type SignalQualityMidShortRefinement = {
   guardrails: string[];
 };
 
+export type MidShortShadowStatusRow = OneHourWalkForwardPerf & {
+  shadow_status: string;
+  bucket: string;
+  label: string;
+  sample_retention_pct?: string | number | null;
+  read: string;
+};
+
+export type MidShortShadowForwardLogResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    result_status?: string | null;
+    limit: number;
+    min_sample: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  shadow_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    range_atr_max: string | number;
+    status_meaning: string;
+  };
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    source_count: number;
+    pass_count: number;
+    fail_count: number;
+    unavailable_count: number;
+    not_applicable_count: number;
+    pass_retention_pct?: string | number | null;
+    fail_retention_pct?: string | number | null;
+    realistic_total_r_delta_pass_vs_fail?: string | number | null;
+    realistic_avg_r_delta_pass_vs_fail?: string | number | null;
+    read: string;
+  };
+  baseline: OneHourWalkForwardPerf;
+  by_shadow_status: MidShortShadowStatusRow[];
+  latest_pass_signals: SignalPerformanceItem[];
+  latest_fail_signals: SignalPerformanceItem[];
+  latest_unavailable_signals: SignalPerformanceItem[];
+  items: SignalPerformanceItem[];
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;

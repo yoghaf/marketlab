@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-39",
+    title: "MID_SHORT 1h Shadow Forward Log",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Menambahkan halaman forward log khusus untuk memantau filter shadow MID_SHORT 1h secara read-only.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-shadow-forward-log memisahkan SHADOW_PASS, SHADOW_FAIL, dan SHADOW_UNAVAILABLE dari signal MID_SHORT 1h yang sudah dilog.",
+      "Halaman /shadow-forward-log menampilkan baseline, pass/fail/unavailable, realistic R, SL share, drawdown, latest rows, dan link ke Signal Detail.",
+      "Quality Lab dan menu Research / Advanced sekarang punya akses langsung ke MID_SHORT Shadow Log.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa mengamati apakah filter fill-good + range/ATR <= 1.25 benar-benar lebih bersih secara forward sebelum dipromosikan. Ini tetap shadow/read-only.",
+    links: [
+      { href: "/shadow-forward-log", label: "MID_SHORT Shadow Log" },
+      { href: "/signal-quality-lab?stage=MID_SHORT&timeframe=1h&position_lock=false", label: "MID_SHORT Quality Lab" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-38",
     title: "MID_SHORT 1h Shadow Filter Monitor",
     status: "LIVE",

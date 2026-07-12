@@ -66,6 +66,8 @@ _SCANNER_LIVE_CACHE_LOCK = Lock()
 _SCANNER_LIVE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_QUALITY_CACHE_LOCK = Lock()
 _SIGNAL_QUALITY_CACHE: dict[tuple, tuple[float, dict]] = {}
+_MID_SHORT_SHADOW_FORWARD_CACHE_LOCK = Lock()
+_MID_SHORT_SHADOW_FORWARD_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FILTER_STUDY_CACHE_LOCK = Lock()
 _SIGNAL_FILTER_STUDY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_ONE_HOUR_FILTER_STUDY_CACHE_LOCK = Lock()
@@ -480,6 +482,44 @@ def signal_candidates_quality_lab(
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_QUALITY_CACHE_LOCK:
         _SIGNAL_QUALITY_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/signal-candidates/mid-short-1h-shadow-forward-log")
+def signal_candidates_mid_short_1h_shadow_forward_log(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    result_status: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 300))
+    normalized_result_status = None if result_status in {"", "ALL"} else result_status
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_result_status or "",
+        normalized_limit,
+    )
+    now = monotonic()
+    with _MID_SHORT_SHADOW_FORWARD_CACHE_LOCK:
+        cached = _MID_SHORT_SHADOW_FORWARD_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).mid_short_1h_shadow_forward_log(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            result_status=normalized_result_status,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _MID_SHORT_SHADOW_FORWARD_CACHE_LOCK:
+        _MID_SHORT_SHADOW_FORWARD_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

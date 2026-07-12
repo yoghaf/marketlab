@@ -307,6 +307,112 @@ class SignalCandidatePerformanceService:
         _quality_lab_cache_set(cache_key, payload)
         return payload
 
+    def mid_short_1h_shadow_forward_log(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        result_status: str | None = None,
+        limit: int = 100,
+        min_sample: int = 20,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage="MID_SHORT",
+            timeframe="1h",
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        evaluated = _filter_by_result_status(evaluated, result_status)
+        baseline = _walk_forward_perf(evaluated)
+        pass_items = [item for item in evaluated if item.get("quality_shadow_status") == "SHADOW_PASS"]
+        fail_items = [item for item in evaluated if item.get("quality_shadow_status") == "SHADOW_FAIL"]
+        unavailable_items = [item for item in evaluated if item.get("quality_shadow_status") == "SHADOW_UNAVAILABLE"]
+        not_applicable_items = [
+            item for item in evaluated if item.get("quality_shadow_status") == "SHADOW_NOT_APPLICABLE"
+        ]
+        pass_perf = _walk_forward_perf(pass_items)
+        fail_perf = _walk_forward_perf(fail_items)
+        by_status = _quality_shadow_status_rows(
+            {
+                "SHADOW_PASS": pass_items,
+                "SHADOW_FAIL": fail_items,
+                "SHADOW_UNAVAILABLE": unavailable_items,
+                "SHADOW_NOT_APPLICABLE": not_applicable_items,
+            },
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "result_status": result_status,
+                "limit": limit,
+                "min_sample": min_sample,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_shadow_forward_log",
+            "study_scope": "read_only_mid_short_1h_quality_shadow_forward_monitor",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "shadow_filter": {
+                "filter_id": MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID,
+                "label": MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL,
+                "expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
+                "range_atr_max": MID_SHORT_1H_QUALITY_RANGE_ATR_MAX,
+                "status_meaning": "SHADOW_PASS means this logged MID_SHORT 1h signal matched the read-only quality gate.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "source_count": len(evaluated),
+                "pass_count": len(pass_items),
+                "fail_count": len(fail_items),
+                "unavailable_count": len(unavailable_items),
+                "not_applicable_count": len(not_applicable_items),
+                "pass_retention_pct": _retention(len(pass_items), len(evaluated)),
+                "fail_retention_pct": _retention(len(fail_items), len(evaluated)),
+                "realistic_total_r_delta_pass_vs_fail": _decimal_delta(
+                    pass_perf.get("realistic_total_r_closed"),
+                    fail_perf.get("realistic_total_r_closed"),
+                ),
+                "realistic_avg_r_delta_pass_vs_fail": _decimal_delta(
+                    pass_perf.get("realistic_avg_r_closed"),
+                    fail_perf.get("realistic_avg_r_closed"),
+                ),
+                "read": _quality_shadow_forward_read(
+                    baseline=baseline,
+                    pass_perf=pass_perf,
+                    fail_perf=fail_perf,
+                    min_sample=min_sample,
+                ),
+            },
+            "baseline": baseline,
+            "by_shadow_status": by_status,
+            "latest_pass_signals": _sorted_signal_rows(pass_items, limit=limit),
+            "latest_fail_signals": _sorted_signal_rows(fail_items, limit=limit),
+            "latest_unavailable_signals": _sorted_signal_rows(unavailable_items, limit=limit),
+            "items": _sorted_signal_rows(evaluated, limit=limit),
+            "guardrails": [
+                "Shadow Forward Log is derived from logged Signal Factory V2 signals.",
+                "SHADOW_PASS is research-only and does not change the live scanner decision.",
+                "Signal Factory rules, TP/SL formula, outcome logic, and execution stay unchanged.",
+                "Use this page to observe whether MID_SHORT 1h quality filtering keeps improving forward results.",
+            ],
+        }
+
     def forward_integrity(
         self,
         *,
@@ -3404,6 +3510,82 @@ def _v2_mid_short_1h_refinement(items: list[dict[str, Any]], *, min_sample: int,
             "Filters must be forward-observed before any promotion to production rule.",
         ],
     }
+
+
+def _quality_shadow_status_rows(
+    groups: dict[str, list[dict[str, Any]]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    label_by_status = {
+        "SHADOW_PASS": "Pass quality gate",
+        "SHADOW_FAIL": "Failed quality gate",
+        "SHADOW_UNAVAILABLE": "Missing gate evidence",
+        "SHADOW_NOT_APPLICABLE": "Not applicable",
+    }
+    rows: list[dict[str, Any]] = []
+    total = int(baseline.get("sample_count") or baseline.get("signals_evaluated") or 0)
+    for status in ("SHADOW_PASS", "SHADOW_FAIL", "SHADOW_UNAVAILABLE", "SHADOW_NOT_APPLICABLE"):
+        items = groups.get(status, [])
+        perf = _walk_forward_perf(items, baseline=baseline)
+        row = {
+            "shadow_status": status,
+            "bucket": status,
+            "label": label_by_status.get(status, status),
+            "sample_count": len(items),
+            "sample_retention_pct": _retention(len(items), total),
+            "read": _quality_shadow_status_read(status, perf, min_sample=min_sample),
+            **perf,
+        }
+        rows.append(row)
+    return rows
+
+
+def _quality_shadow_status_read(status: str, perf: dict[str, Any], *, min_sample: int) -> str:
+    closed = int(perf.get("closed_count") or 0)
+    if int(perf.get("sample_count") or 0) <= 0:
+        return "NO_SAMPLE"
+    if closed < min_sample:
+        return "WAIT_MORE_CLOSED_SAMPLE"
+    realistic_total = Decimal(perf.get("realistic_total_r_closed") or 0)
+    sl_share = perf.get("sl_share_pct")
+    if status == "SHADOW_PASS" and realistic_total > 0 and (sl_share is None or Decimal(sl_share) <= Decimal("50")):
+        return "PASS_HEALTHY_SO_FAR"
+    if status == "SHADOW_PASS" and realistic_total > 0:
+        return "PASS_POSITIVE_BUT_STILL_NOISY"
+    if status == "SHADOW_FAIL" and realistic_total < 0:
+        return "FAIL_BUCKET_WEAK_AS_EXPECTED"
+    if status == "SHADOW_UNAVAILABLE":
+        return "EVIDENCE_MISSING_MONITOR"
+    return "MIXED_MONITOR_MORE"
+
+
+def _quality_shadow_forward_read(
+    *,
+    baseline: dict[str, Any],
+    pass_perf: dict[str, Any],
+    fail_perf: dict[str, Any],
+    min_sample: int,
+) -> str:
+    if int(pass_perf.get("closed_count") or 0) < min_sample:
+        return "SHADOW_PASS_NEEDS_MORE_SAMPLE"
+    pass_realistic = Decimal(pass_perf.get("realistic_total_r_closed") or 0)
+    pass_avg = pass_perf.get("realistic_avg_r_closed")
+    fail_avg = fail_perf.get("realistic_avg_r_closed")
+    pass_sl = pass_perf.get("sl_share_pct")
+    baseline_sl = baseline.get("sl_share_pct")
+    if (
+        pass_realistic > 0
+        and pass_avg is not None
+        and fail_avg is not None
+        and Decimal(pass_avg) > Decimal(fail_avg)
+        and (baseline_sl is None or pass_sl is None or Decimal(pass_sl) <= Decimal(baseline_sl))
+    ):
+        return "SHADOW_PASS_OUTPERFORMS_FAIL"
+    if pass_realistic > 0:
+        return "SHADOW_PASS_POSITIVE_MONITOR_MORE"
+    return "SHADOW_PASS_NOT_CLEAN_YET"
 
 
 def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:

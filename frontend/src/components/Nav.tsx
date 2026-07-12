@@ -12,6 +12,7 @@ const mainLinks = [
 const researchLinks = [
   { href: "/patch-notes", label: "Patch Notes" },
   { href: "/signal-quality-lab", label: "V2 Quality Lab" },
+  { href: "/shadow-forward-log", label: "MID_SHORT Shadow Log" },
   { href: "/signal-1h-review", label: "1h Review" },
   { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
   { href: "/signal-factory", label: "Signal Factory Raw" },

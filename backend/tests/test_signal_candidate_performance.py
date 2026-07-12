@@ -1076,6 +1076,55 @@ def test_v3_shadow_comparison_splits_pass_subset_from_v2_baseline() -> None:
         assert "does not change Signal Factory rules" in htf["guardrails"][2]
 
 
+def test_mid_short_1h_shadow_forward_log_splits_quality_gate_statuses() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("pass", "PASSUSDT", base_time, "1.00", "101", "84", "86"),
+            ("fail", "FAILUSDT", base_time + timedelta(minutes=15), "1.80", "111", "98", "109"),
+            ("missing", "MISSUSDT", base_time + timedelta(minutes=30), None, "105", "97", "99"),
+        ]
+        for signal_id, symbol, signal_time, range_ratio, high, low, close in rows:
+            evidence = {"futures_spread_pct": "0.01"}
+            if range_ratio is not None:
+                evidence["range_ratio_vs_atr"] = range_ratio
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence=evidence,
+                )
+            )
+            db.add(_candle(symbol, signal_time, signal_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_shadow_forward_log(position_lock=False, limit=10)
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["pass_count"] == 1
+        assert payload["summary"]["fail_count"] == 1
+        assert payload["summary"]["unavailable_count"] == 1
+        statuses = {row["shadow_status"]: row for row in payload["by_shadow_status"]}
+        assert statuses["SHADOW_PASS"]["tp_count"] == 1
+        assert statuses["SHADOW_FAIL"]["sl_count"] == 1
+        assert statuses["SHADOW_UNAVAILABLE"]["open_count"] == 1
+        assert payload["latest_pass_signals"][0]["symbol"] == "PASSUSDT"
+        assert payload["latest_fail_signals"][0]["symbol"] == "FAILUSDT"
+        assert payload["latest_unavailable_signals"][0]["symbol"] == "MISSUSDT"
+        assert payload["shadow_filter"]["filter_id"] == "MID_SHORT_1H_FILL_GOOD_RANGE_OK"
+
+
 def _signal(
     signal_id: str,
     symbol: str,
