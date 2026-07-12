@@ -28,6 +28,7 @@ const patches: PatchItem[] = [
       "Endpoint /api/signal-candidates/quality-lab sekarang mengirim mid_short_1h_refinement read-only.",
       "Halaman /signal-quality-lab menampilkan panel Main Research: MID_SHORT 1h Refinement di bagian atas.",
       "Panel baru membandingkan cost gate, spread, volume, range/ATR, price/ATR, funding, global long/short, OI z-score, dan kombinasi filter.",
+      "Quality Lab memakai cache pendek untuk mengurangi hitung ulang berat saat halaman di-refresh berkali-kali.",
       "Archive V3/V4 tetap disembunyikan default supaya riset aktif tidak tercampur dengan eksperimen lama."
     ],
     impact: "Arah kerja jadi lebih jelas: bukan bikin V4 baru, tapi membedah kenapa MID_SHORT 1h idealnya sempat bagus namun realistic R bocor, lalu memantau filter yang benar-benar mengurangi SL/cost drag sebelum rule live diubah.",

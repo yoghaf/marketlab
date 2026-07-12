@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections import Counter, defaultdict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from time import monotonic
 from typing import Any, Callable
 
 from sqlalchemy import asc, func, or_, select
@@ -24,6 +26,8 @@ REALISTIC_FEE_PCT_PER_SIDE = Decimal("0.05")
 REALISTIC_SLIPPAGE_PCT_PER_SIDE = Decimal("0.02")
 REALISTIC_FILL_GOOD_MAX_COST_R = Decimal("0.15")
 REALISTIC_FILL_ACCEPTABLE_MAX_COST_R = Decimal("0.35")
+QUALITY_LAB_CACHE_TTL_SECONDS = 120
+_QUALITY_LAB_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
@@ -222,6 +226,20 @@ class SignalCandidatePerformanceService:
         min_sample: int = 5,
         limit: int = 25,
     ) -> dict[str, Any]:
+        cache_key = (
+            id(self.db.get_bind()),
+            epoch,
+            include_watch_only,
+            position_lock,
+            stage,
+            timeframe,
+            int(min_sample),
+            int(limit),
+        )
+        cached = _quality_lab_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         evaluated, skipped, latest_candle_time = self._evaluated_context(
             epoch=epoch,
             include_watch_only=include_watch_only,
@@ -241,7 +259,7 @@ class SignalCandidatePerformanceService:
             reverse=True,
         )[:limit]
 
-        return {
+        payload = {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
             "filters": {
@@ -275,6 +293,8 @@ class SignalCandidatePerformanceService:
             "worst_signals": worst,
             "open_signals": open_items,
         }
+        _quality_lab_cache_set(cache_key, payload)
+        return payload
 
     def forward_integrity(
         self,
@@ -1530,7 +1550,25 @@ def build_one_hour_v4_shadow_monitor_payload(
             "No TP/SL formula or outcome calculation changed.",
             "V4 shadow status is research-only and not an execution instruction.",
         ],
-    }
+        }
+
+
+def _quality_lab_cache_get(cache_key: tuple[Any, ...]) -> dict[str, Any] | None:
+    cached = _QUALITY_LAB_CACHE.get(cache_key)
+    if cached is None:
+        return None
+    created_at, payload = cached
+    if monotonic() - created_at > QUALITY_LAB_CACHE_TTL_SECONDS:
+        _QUALITY_LAB_CACHE.pop(cache_key, None)
+        return None
+    return deepcopy(payload)
+
+
+def _quality_lab_cache_set(cache_key: tuple[Any, ...], payload: dict[str, Any]) -> None:
+    if len(_QUALITY_LAB_CACHE) > 32:
+        oldest_key = min(_QUALITY_LAB_CACHE, key=lambda key: _QUALITY_LAB_CACHE[key][0])
+        _QUALITY_LAB_CACHE.pop(oldest_key, None)
+    _QUALITY_LAB_CACHE[cache_key] = (monotonic(), deepcopy(payload))
 
 
 def _naive(value: datetime) -> datetime:

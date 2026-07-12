@@ -62,7 +62,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   let filterStudyError: string | null = null;
   let marketRegimeError: string | null = null;
   try {
-    data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 20 });
+    data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
   } catch (err) {
     error = err instanceof Error ? err.message : "Signal Quality Lab API failed";
   }
@@ -75,12 +75,12 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
     limit: String(limit)
   });
   try {
-    filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 20 });
+    filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 120 });
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
   }
   try {
-    marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 30 });
+    marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 300 });
   } catch (err) {
     marketRegimeError = err instanceof Error ? err.message : "Market Regime Study API failed";
   }
