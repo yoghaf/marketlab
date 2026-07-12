@@ -524,6 +524,71 @@ def test_filter_study_targets_mid_short_1h_and_ranks_filters() -> None:
         assert rows["VOLUME_LE_1_50"]["sample_count"] == 2
 
 
+def test_quality_lab_includes_mid_short_1h_refinement_focus() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("tp1", "AAAUSDT", True, "1.10", "1.10", "0.90", "-0.10", "80", "1.35", "2.5", "0.01"),
+            ("sl1", "BBBUSDT", False, "2.20", "1.90", "1.80", "0.90", "40", "0.95", "0.5", "4.00"),
+            ("tp2", "CCCUSDT", True, "1.20", "1.00", "1.00", "-0.20", "85", "1.40", "3.0", "0.01"),
+        ]
+        for index, (signal_id, symbol, is_tp, volume, range_atr, price_atr, price_return, funding, glsr, oi_z, spread) in enumerate(rows):
+            signal_time = base_time + timedelta(minutes=15 * index)
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={
+                        "volume_ratio_vs_lookback": volume,
+                        "range_ratio_vs_atr": range_atr,
+                        "price_atr_multiple": price_atr,
+                        "price_return": price_return,
+                        "funding_percentile_30d": funding,
+                        "global_long_short_ratio": glsr,
+                        "oi_zscore": oi_z,
+                        "futures_spread_pct": spread,
+                    },
+                )
+            )
+            db.add(
+                _candle(
+                    symbol,
+                    signal_time,
+                    signal_time + timedelta(minutes=15),
+                    high="101" if is_tp else "111",
+                    low="84" if is_tp else "98",
+                    close="86" if is_tp else "109",
+                )
+            )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).quality_lab(position_lock=False, min_sample=1, limit=10)
+
+        refinement = payload["mid_short_1h_refinement"]
+        assert refinement["scope"] == "v2_mid_short_1h_refinement_read_only"
+        assert refinement["stage"] == "MID_SHORT"
+        assert refinement["timeframe"] == "1h"
+        assert refinement["baseline"]["sample_count"] == 3
+        assert refinement["baseline"]["tp_count"] == 2
+        assert refinement["baseline"]["sl_count"] == 1
+        top_rows = {row["filter_id"]: row for row in refinement["top_filters"]}
+        assert top_rows["FILL_GOOD_ONLY"]["sample_count"] == 2
+        assert top_rows["FILL_GOOD_ONLY"]["tp_count"] == 2
+        assert top_rows["FILL_GOOD_ONLY"]["sl_count"] == 0
+        assert refinement["mitigation_plan"]
+        assert refinement["guardrails"][0].startswith("Read-only")
+
+
 def test_one_hour_filter_candidate_study_compares_mid_long_and_mid_short() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

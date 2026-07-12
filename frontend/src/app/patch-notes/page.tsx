@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-36",
+    title: "MID_SHORT 1h Refinement Focus",
+    status: "LIVE",
+    area: "Signal research UI/API",
+    summary: "Quality Lab sekarang difokuskan ke riset utama MID_SHORT 1h: baseline realistic R, filter yang mengurangi damage, filter yang ditolak, dan rencana mitigasi.",
+    changes: [
+      "Endpoint /api/signal-candidates/quality-lab sekarang mengirim mid_short_1h_refinement read-only.",
+      "Halaman /signal-quality-lab menampilkan panel Main Research: MID_SHORT 1h Refinement di bagian atas.",
+      "Panel baru membandingkan cost gate, spread, volume, range/ATR, price/ATR, funding, global long/short, OI z-score, dan kombinasi filter.",
+      "Archive V3/V4 tetap disembunyikan default supaya riset aktif tidak tercampur dengan eksperimen lama."
+    ],
+    impact: "Arah kerja jadi lebih jelas: bukan bikin V4 baru, tapi membedah kenapa MID_SHORT 1h idealnya sempat bagus namun realistic R bocor, lalu memantau filter yang benar-benar mengurangi SL/cost drag sebelum rule live diubah.",
+    links: [
+      { href: "/signal-quality-lab", label: "MID_SHORT 1h Research" },
+      { href: "/signal-quality-lab?timeframe=1h&stage=MID_SHORT&position_lock=false", label: "MID_SHORT 1h Filtered" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-35",
     title: "V2 Research Focus UI",
     status: "LIVE",

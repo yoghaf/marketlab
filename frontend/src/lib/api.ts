@@ -1408,6 +1408,42 @@ export type SignalQualityProfitLossResearch = {
   guardrails: string[];
 };
 
+export type SignalQualityMidShortRefinementRow = OneHourWalkForwardPerf & {
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  source_count: number;
+  missing_data_count: number;
+  missing_data_pct?: string | number | null;
+  sample_retention_pct?: string | number | null;
+  verdict: string;
+  mitigation_read: string;
+  risk_notes: string[];
+};
+
+export type SignalQualityMidShortRefinement = {
+  scope: string;
+  stage: string;
+  timeframe: string;
+  direction: string;
+  method: string;
+  baseline: OneHourWalkForwardPerf;
+  summary: {
+    source_count: number;
+    promising_count: number;
+    damage_reduction_count: number;
+    rejected_count: number;
+    readiness: string;
+  };
+  top_filters: SignalQualityMidShortRefinementRow[];
+  promising_filters: SignalQualityMidShortRefinementRow[];
+  rejected_filters: SignalQualityMidShortRefinementRow[];
+  mitigation_plan: string[];
+  guardrails: string[];
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;
@@ -1832,6 +1868,7 @@ export type SignalQualityLabResponse = {
   by_volume_rank: SignalQualityVolumeRankBucket[];
   evidence_fields: SignalQualityEvidenceField[];
   profit_loss_research?: SignalQualityProfitLossResearch;
+  mid_short_1h_refinement?: SignalQualityMidShortRefinement;
   top_symbols: SignalQualityBucket[];
   weak_symbols: SignalQualityBucket[];
   best_signals: SignalPerformanceItem[];

@@ -18,6 +18,8 @@ import {
   SignalQualityBucket,
   SignalQualityEvidenceField,
   SignalQualityLabResponse,
+  SignalQualityMidShortRefinement,
+  SignalQualityMidShortRefinementRow,
   SignalQualityProfitLossLane,
   SignalQualityProfitLossResearch,
   SignalQualityRealisticDragRow,
@@ -135,6 +137,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
               </label>
             </FilterBar>
           </SectionCard>
+
+          <MidShortRefinementPanel data={data?.mid_short_1h_refinement || null} />
 
           <V2ProfitLossResearchPanel data={data?.profit_loss_research || null} />
 
@@ -310,6 +314,131 @@ function CollapsiblePanel({
         {children}
       </div>
     </details>
+  );
+}
+
+function MidShortRefinementPanel({ data }: { data: SignalQualityMidShortRefinement | null }) {
+  if (!data) {
+    return (
+      <SectionCard title="Main Research: MID_SHORT 1h Refinement" description="Belum ada payload refinement dari API.">
+        <EmptyState title="No MID_SHORT 1h research data" detail="Refresh setelah backend Quality Lab mengirim mid_short_1h_refinement." />
+      </SectionCard>
+    );
+  }
+
+  const baseline = data.baseline;
+  const bestRows = data.promising_filters.length ? data.promising_filters : data.top_filters.slice(0, 6);
+
+  return (
+    <SectionCard
+      title="Main Research: MID_SHORT 1h Refinement"
+      description="Fokus aktif: mencari filter read-only yang bisa mengurangi SL dan realistic R bocor pada MID_SHORT 1h. Ini belum mengubah rule live."
+    >
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Insight label="Readiness" value={labelFor(data.summary.readiness)} />
+        <Insight label="Source" value={`${data.summary.source_count} signal`} />
+        <Insight label="Baseline ideal" value={`${fmtSigned(baseline.total_r_closed)}R`} />
+        <Insight label="Baseline realistic" value={`${fmtSigned(baseline.realistic_total_r_closed)}R`} />
+        <Insight label="TP / SL" value={`${baseline.tp_count ?? 0} / ${baseline.sl_count ?? 0}`} />
+        <Insight label="SL share" value={baseline.sl_share_pct == null ? "-" : `${fmtNumber(baseline.sl_share_pct)}%`} />
+      </div>
+
+      <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-[1fr_2fr]">
+        <div className="space-y-3">
+          <div className="rounded border border-line bg-field/50 p-3 text-sm">
+            <div className="font-bold text-ink">Rencana mitigasi sekarang</div>
+            <ul className="mt-3 list-disc space-y-2 pl-5 text-slate-700">
+              {data.mitigation_plan.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded border border-line bg-field/50 p-3 text-sm">
+            <div className="font-bold text-ink">Guardrail</div>
+            <ul className="mt-3 list-disc space-y-2 pl-5 text-slate-700">
+              {data.guardrails.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-bold text-ink">Filter paling layak dipantau</div>
+              <div className="text-sm text-slate-600">Urutan berdasarkan realistic R delta, SL share delta, sample, dan concentration.</div>
+            </div>
+            <StatusBadge value={data.summary.readiness} />
+          </div>
+          <MidShortRefinementTable rows={bestRows} />
+        </div>
+      </div>
+
+      <CollapsiblePanel
+        title="Rejected / weak filters"
+        description="Filter yang saat ini memperburuk baseline atau belum punya edge jelas. Ini penting supaya kita tidak promosi asumsi yang salah."
+      >
+        <MidShortRefinementTable rows={data.rejected_filters.slice(0, 12)} />
+      </CollapsiblePanel>
+    </SectionCard>
+  );
+}
+
+function MidShortRefinementTable({ rows }: { rows: SignalQualityMidShortRefinementRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Filter</th>
+            <th>Verdict</th>
+            <th>Sample</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg Delta</th>
+            <th>SL Delta</th>
+            <th>Max DD</th>
+            <th>Top symbol</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>
+                <div>{row.sample_count} / {row.source_count}</div>
+                <div className="text-xs text-slate-500">keep {fmtNumber(row.sample_retention_pct)}%, miss {fmtNumber(row.missing_data_pct)}%</div>
+              </td>
+              <td>{row.tp_count ?? 0} / {row.sl_count ?? 0}</td>
+              <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td>{fmtSigned(row.sl_share_delta_vs_baseline)}%</td>
+              <td>{fmtSigned(row.max_realistic_drawdown_r)}R</td>
+              <td>{row.top_symbol} ({fmtNumber(row.top_symbol_share_pct)}%)</td>
+              <td className="max-w-md text-sm text-slate-600">
+                <div>{row.mitigation_read}</div>
+                {row.risk_notes?.length ? (
+                  <div className="mt-1 text-xs text-stale">{row.risk_notes.join(" ")}</div>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={10}>
+                <EmptyState title="No refinement rows" detail="Belum ada filter MID_SHORT 1h sesuai sample minimum." />
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

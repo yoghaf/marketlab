@@ -268,6 +268,7 @@ class SignalCandidatePerformanceService:
             "by_volume_rank": _volume_rank_rows(evaluated, min_sample=min_sample),
             "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
             "profit_loss_research": _v2_profit_loss_research(evaluated, min_sample=min_sample, limit=limit),
+            "mid_short_1h_refinement": _v2_mid_short_1h_refinement(evaluated, min_sample=min_sample, limit=limit),
             "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
             "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
             "best_signals": best,
@@ -3199,6 +3200,346 @@ def _v2_profit_loss_research_read(
     if driver_rows:
         return "DRIVERS_FOUND_BUT_REALISTIC_NEGATIVE"
     return "NO_CLEAR_TP_DRIVER_YET"
+
+
+def _v2_mid_short_1h_refinement(items: list[dict[str, Any]], *, min_sample: int, limit: int) -> dict[str, Any]:
+    lane_items = [
+        item
+        for item in items
+        if item.get("stage") == "MID_SHORT" and item.get("timeframe") == "1h"
+    ]
+    baseline = _walk_forward_perf(lane_items)
+    rows: list[dict[str, Any]] = []
+    for spec in _v2_mid_short_1h_refinement_specs():
+        selected, missing = _apply_filter_spec(lane_items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(lane_items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(lane_items)) * Decimal("100")) if lane_items else None,
+            "sample_retention_pct": (Decimal(len(selected)) / Decimal(len(lane_items)) * Decimal("100")) if lane_items else None,
+            **perf,
+        }
+        row["verdict"] = _v2_refinement_verdict(row, min_sample=min_sample)
+        row["mitigation_read"] = _v2_refinement_mitigation_read(row)
+        row["risk_notes"] = _v2_refinement_risk_notes(row, min_sample=min_sample)
+        rows.append(row)
+
+    rows = _sort_v2_refinement_rows(rows)
+    promising = [row for row in rows if row["verdict"] in {"REFINEMENT_PROMISING", "REFINEMENT_REDUCES_DAMAGE"}]
+    rejected = [row for row in rows if row["verdict"] == "REFINEMENT_REJECT"]
+    return {
+        "scope": "v2_mid_short_1h_refinement_read_only",
+        "stage": "MID_SHORT",
+        "timeframe": "1h",
+        "direction": "SHORT",
+        "method": "Evaluate read-only mitigation filters for V2 MID_SHORT 1h using realistic R, SL share, sample retention, concentration, and drawdown.",
+        "baseline": baseline,
+        "summary": {
+            "source_count": len(lane_items),
+            "promising_count": len([row for row in promising if row["verdict"] == "REFINEMENT_PROMISING"]),
+            "damage_reduction_count": len([row for row in promising if row["verdict"] == "REFINEMENT_REDUCES_DAMAGE"]),
+            "rejected_count": len(rejected),
+            "readiness": _v2_mid_short_refinement_readiness(baseline, promising, min_sample=min_sample),
+        },
+        "top_filters": rows[:limit],
+        "promising_filters": promising[:limit],
+        "rejected_filters": rejected[:limit],
+        "mitigation_plan": _v2_mid_short_mitigation_plan(baseline, promising, min_sample=min_sample),
+        "guardrails": [
+            "Read-only refinement study; no Signal Factory rule changed.",
+            "No scanner output, TP/SL formula, or execution behavior changed.",
+            "Filters must be forward-observed before any promotion to production rule.",
+        ],
+    }
+
+
+def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "EXCLUDE_FILL_BAD",
+            "Exclude bad fill quality",
+            "realistic_fill_quality != FILL_BAD",
+            "cost_gate",
+            (),
+            lambda item: str(item.get("realistic_fill_quality") or "") != "FILL_BAD",
+        ),
+        FilterStudySpec(
+            "FILL_GOOD_ONLY",
+            "Fill good only",
+            "realistic_fill_quality == FILL_GOOD",
+            "cost_gate",
+            (),
+            lambda item: str(item.get("realistic_fill_quality") or "") == "FILL_GOOD",
+        ),
+        FilterStudySpec(
+            "COST_R_LE_0_20",
+            "Cost R <= 0.20",
+            "realistic_cost_r_estimate <= 0.20",
+            "cost_gate",
+            (),
+            lambda item: _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.20"),
+        ),
+        FilterStudySpec(
+            "COST_R_LE_0_35",
+            "Cost R <= 0.35",
+            "realistic_cost_r_estimate <= 0.35",
+            "cost_gate",
+            (),
+            lambda item: _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.35"),
+        ),
+        FilterStudySpec(
+            "FUTURES_SPREAD_LE_0_03",
+            "Futures spread <= 0.03%",
+            "futures_spread_pct <= 0.03",
+            "cost_gate",
+            ("futures_spread_pct",),
+            lambda item: (_evidence_value(item, "futures_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "VOLUME_LE_1_50",
+            "Volume not overextended",
+            "volume_ratio_vs_lookback <= 1.50",
+            "late_momentum_gate",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "RANGE_ATR_LE_1_25",
+            "Range not overextended",
+            "range_ratio_vs_atr <= 1.25",
+            "late_momentum_gate",
+            ("range_ratio_vs_atr",),
+            lambda item: (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "PRICE_ATR_LE_1_25",
+            "Price/ATR not stretched",
+            "price_atr_multiple <= 1.25",
+            "late_momentum_gate",
+            ("price_atr_multiple",),
+            lambda item: (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "PRICE_RETURN_ABS_LE_0_50",
+            "Price move not too large",
+            "abs(price_return) <= 0.50",
+            "late_momentum_gate",
+            ("price_return",),
+            lambda item: abs(_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0.50"),
+        ),
+        FilterStudySpec(
+            "PRICE_RETURN_LE_0",
+            "Short after non-positive return",
+            "price_return <= 0",
+            "direction_gate",
+            ("price_return",),
+            lambda item: (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_65",
+            "Funding percentile >= 65",
+            "funding_percentile_30d >= 65",
+            "positioning_gate",
+            ("funding_percentile_30d",),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("65"),
+        ),
+        FilterStudySpec(
+            "GLOBAL_LS_GE_1_20",
+            "Global L/S >= 1.20",
+            "global_long_short_ratio >= 1.20",
+            "positioning_gate",
+            ("global_long_short_ratio",),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "OI_Z_GE_2",
+            "OI z-score >= 2",
+            "oi_zscore >= 2",
+            "open_interest_gate",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("2"),
+        ),
+        FilterStudySpec(
+            "FILL_GOOD_AND_VOLUME_LE_1_50",
+            "Fill good + volume controlled",
+            "realistic_fill_quality == FILL_GOOD AND volume_ratio_vs_lookback <= 1.50",
+            "combo_cost_late",
+            ("volume_ratio_vs_lookback",),
+            lambda item: str(item.get("realistic_fill_quality") or "") == "FILL_GOOD"
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "FILL_GOOD_AND_RANGE_ATR_LE_1_25",
+            "Fill good + range controlled",
+            "realistic_fill_quality == FILL_GOOD AND range_ratio_vs_atr <= 1.25",
+            "combo_cost_late",
+            ("range_ratio_vs_atr",),
+            lambda item: str(item.get("realistic_fill_quality") or "") == "FILL_GOOD"
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "NO_LATE_MOMENTUM",
+            "No late momentum",
+            "volume_ratio_vs_lookback <= 1.50 AND range_ratio_vs_atr <= 1.25 AND price_atr_multiple <= 1.25",
+            "late_momentum_gate",
+            ("volume_ratio_vs_lookback", "range_ratio_vs_atr", "price_atr_multiple"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25")
+            and (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "COST_AND_NO_LATE_MOMENTUM",
+            "Cost good + no late momentum",
+            "realistic_fill_quality == FILL_GOOD AND volume <= 1.50 AND range/ATR <= 1.25 AND price/ATR <= 1.25",
+            "combo_cost_late",
+            ("volume_ratio_vs_lookback", "range_ratio_vs_atr", "price_atr_multiple"),
+            lambda item: str(item.get("realistic_fill_quality") or "") == "FILL_GOOD"
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25")
+            and (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "POSITIONING_AND_NO_LATE",
+            "Positioning support + no late momentum",
+            "global_long_short_ratio >= 1.20 AND volume <= 1.50 AND range/ATR <= 1.25",
+            "combo_positioning_late",
+            ("global_long_short_ratio", "volume_ratio_vs_lookback", "range_ratio_vs_atr"),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+    ]
+
+
+def _v2_refinement_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("closed_count") or 0) < min_sample:
+        return "REFINEMENT_SAMPLE_TOO_SMALL"
+    realistic_total = Decimal(row.get("realistic_total_r_closed") or 0)
+    avg_delta = row.get("realistic_avg_r_delta_vs_baseline")
+    total_delta = row.get("realistic_total_r_delta_vs_baseline")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    concentration = row.get("top_symbol_share_pct")
+    concentration_ok = concentration is None or Decimal(concentration) <= Decimal("35")
+    if (
+        realistic_total > 0
+        and avg_delta is not None
+        and Decimal(avg_delta) > 0
+        and (sl_delta is None or Decimal(sl_delta) <= 0)
+        and concentration_ok
+    ):
+        return "REFINEMENT_PROMISING"
+    if (
+        (avg_delta is not None and Decimal(avg_delta) > 0)
+        or (total_delta is not None and Decimal(total_delta) > 0)
+        or (sl_delta is not None and Decimal(sl_delta) < 0)
+    ):
+        return "REFINEMENT_REDUCES_DAMAGE"
+    if (
+        avg_delta is not None
+        and Decimal(avg_delta) < 0
+        and total_delta is not None
+        and Decimal(total_delta) < 0
+    ):
+        return "REFINEMENT_REJECT"
+    return "REFINEMENT_NO_CLEAR_EDGE"
+
+
+def _v2_refinement_mitigation_read(row: dict[str, Any]) -> str:
+    verdict = row.get("verdict")
+    family = row.get("family")
+    if verdict == "REFINEMENT_PROMISING":
+        return f"{family} layak dipantau sebagai filter riset karena realistic R membaik."
+    if verdict == "REFINEMENT_REDUCES_DAMAGE":
+        return f"{family} mengurangi sebagian kerusakan, tapi belum cukup bersih."
+    if verdict == "REFINEMENT_REJECT":
+        return f"{family} memperburuk baseline MID_SHORT 1h saat ini."
+    if verdict == "REFINEMENT_SAMPLE_TOO_SMALL":
+        return "Sample belum cukup untuk dibaca."
+    return "Belum ada edge realistis yang jelas."
+
+
+def _v2_refinement_risk_notes(row: dict[str, Any], *, min_sample: int) -> list[str]:
+    notes: list[str] = []
+    if int(row.get("closed_count") or 0) < min_sample:
+        notes.append(f"Closed sample < {min_sample}.")
+    if Decimal(row.get("realistic_total_r_closed") or 0) <= 0:
+        notes.append("Realistic R belum positif.")
+    sl_delta = row.get("sl_share_delta_vs_baseline")
+    if sl_delta is not None and Decimal(sl_delta) > 0:
+        notes.append("SL share naik vs baseline.")
+    concentration = row.get("top_symbol_share_pct")
+    if concentration is not None and Decimal(concentration) > Decimal("35"):
+        notes.append("Terlalu terkonsentrasi di satu symbol.")
+    missing = row.get("missing_data_pct")
+    if missing is not None and Decimal(missing) > Decimal("25"):
+        notes.append("Evidence missing tinggi.")
+    return notes
+
+
+def _sort_v2_refinement_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    verdict_rank = {
+        "REFINEMENT_PROMISING": 4,
+        "REFINEMENT_REDUCES_DAMAGE": 3,
+        "REFINEMENT_NO_CLEAR_EDGE": 2,
+        "REFINEMENT_SAMPLE_TOO_SMALL": 1,
+        "REFINEMENT_REJECT": 0,
+    }
+    return sorted(
+        rows,
+        key=lambda row: (
+            verdict_rank.get(str(row.get("verdict")), -1),
+            Decimal(row.get("realistic_avg_r_delta_vs_baseline") or Decimal("-999")),
+            Decimal(row.get("realistic_total_r_closed") or 0),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+
+
+def _v2_mid_short_refinement_readiness(
+    baseline: dict[str, Any],
+    promising: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> str:
+    if int(baseline.get("closed_count") or 0) < min_sample:
+        return "MID_SHORT_1H_WAIT_MORE_SAMPLE"
+    if any(row.get("verdict") == "REFINEMENT_PROMISING" for row in promising):
+        return "MID_SHORT_1H_HAS_PROMISING_FILTER"
+    if promising:
+        return "MID_SHORT_1H_DAMAGE_REDUCTION_ONLY"
+    if Decimal(baseline.get("realistic_total_r_closed") or 0) > 0:
+        return "MID_SHORT_1H_BASELINE_REALISTIC_POSITIVE"
+    return "MID_SHORT_1H_NEEDS_REFINEMENT"
+
+
+def _v2_mid_short_mitigation_plan(
+    baseline: dict[str, Any],
+    promising: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> list[str]:
+    if int(baseline.get("closed_count") or 0) < min_sample:
+        return ["Tunggu closed sample MID_SHORT 1h bertambah sebelum promosi filter apa pun."]
+    plan = [
+        "Prioritaskan MID_SHORT 1h sebagai lane riset utama; jangan promosi 15m saat realistic R masih bocor.",
+        "Uji cost gate lebih dulu karena ideal R MID_SHORT 1h positif tetapi realistic R negatif.",
+        "Uji late-momentum gate untuk menghindari entry yang sudah terlalu ramai: volume, range/ATR, dan price/ATR terlalu besar.",
+    ]
+    if promising:
+        best = promising[0]
+        plan.append(f"Pantau filter teratas: {best.get('label')} ({best.get('verdict')}); belum mengubah rule live.")
+    else:
+        plan.append("Belum ada filter yang cukup bersih; tetap read-only sampai ada damage reduction yang stabil.")
+    return plan
 
 
 def _rank_value(item: dict[str, Any]) -> int | None:
