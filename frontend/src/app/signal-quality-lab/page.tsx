@@ -55,11 +55,9 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
 
   let data: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
-  let calibrationLab: SignalCalibrationLabResponse | null = null;
   let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
-  let calibrationError: string | null = null;
   let marketRegimeError: string | null = null;
   try {
     data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 20 });
@@ -78,19 +76,6 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
     filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 20 });
   } catch (err) {
     filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
-  }
-  if (showArchive) {
-    const calibrationQuery = new URLSearchParams({
-      include_watch_only: String(includeWatchOnly),
-      position_lock: String(positionLock),
-      min_sample: String(minSample),
-      limit: String(limit)
-    });
-    try {
-      calibrationLab = await fetchJson<SignalCalibrationLabResponse>(`/api/signal-candidates/calibration-lab?${calibrationQuery.toString()}`, { revalidateSeconds: 30 });
-    } catch (err) {
-      calibrationError = err instanceof Error ? err.message : "Signal Calibration Lab API failed";
-    }
   }
   try {
     marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 30 });
@@ -165,16 +150,13 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           </CollapsiblePanel>
 
           {showArchive ? (
-            <CollapsiblePanel
-              title="Archived Calibration / V3"
-              description="Arsip riset V3/V4 lama. Tidak aktif sebagai fokus utama sekarang; dipertahankan hanya untuk pembanding historis."
-            >
-              {calibrationError ? (
-                <div className="p-4 text-sm text-stale">{calibrationError}</div>
-              ) : (
-                <CalibrationLab data={calibrationLab} />
-              )}
-            </CollapsiblePanel>
+            <SectionCard title="Archived V3/V4 studies" description="Archive ini tidak auto-load endpoint berat. Buka halaman spesifik hanya kalau perlu membandingkan history lama.">
+              <div className="grid gap-3 p-4 md:grid-cols-3">
+                <ArchiveLink href="/v3-forward-log" title="V3 Forward Archive" detail="Shadow forward log, failure analysis, dan 1h+ V3 audit lama." />
+                <ArchiveLink href="/signal-1h-review" title="1h Review Archive" detail="Filter study, walk-forward, dan V4 shadow monitor yang dibekukan." />
+                <ArchiveLink href="/strategy-optimization-lab" title="Optimization Archive" detail="Eksperimen optimization/read-only yang tidak mengubah rule live." />
+              </div>
+            </SectionCard>
           ) : (
             <SectionCard title="Archived V3/V4 studies" description="Disembunyikan dari default supaya fokus web kembali ke V2 Profit/Loss Research. Buka hanya kalau perlu membandingkan history lama.">
               <div className="flex flex-wrap gap-2 p-4 text-sm">
@@ -527,6 +509,15 @@ function RealisticDragTable({ rows }: { rows: SignalQualityRealisticDragRow[] })
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ArchiveLink({ href, title, detail }: { href: string; title: string; detail: string }) {
+  return (
+    <Link className="rounded border border-line bg-field/50 p-4 text-sm hover:bg-white" href={href}>
+      <div className="font-bold text-ink">{title}</div>
+      <p className="mt-2 text-slate-600">{detail}</p>
+    </Link>
   );
 }
 
