@@ -1125,6 +1125,67 @@ def test_mid_short_1h_shadow_forward_log_splits_quality_gate_statuses() -> None:
         assert payload["shadow_filter"]["filter_id"] == "MID_SHORT_1H_FILL_GOOD_RANGE_OK"
 
 
+def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("sl-then-tp", "SLTPUSDT", base_time, [("111", "99", "109"), ("105", "84", "86")]),
+            ("near-then-sl", "NEARUSDT", base_time + timedelta(minutes=15), [("111", "87", "108")]),
+            ("tp-direct", "TPUSDT", base_time + timedelta(minutes=30), [("101", "84", "86")]),
+        ]
+        for signal_id, symbol, signal_time, candles in rows:
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={"futures_spread_pct": "0.01", "range_ratio_vs_atr": "1.00"},
+                )
+            )
+            for index, (high, low, close) in enumerate(candles):
+                open_time = signal_time + timedelta(minutes=15 * index)
+                db.add(
+                    _candle(
+                        symbol,
+                        open_time,
+                        open_time + timedelta(minutes=15),
+                        high=high,
+                        low=low,
+                        close=close,
+                    )
+                )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_failure_anatomy(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["source_count"] == 3
+        assert payload["summary"]["sl_then_would_tp_count"] == 1
+        assert payload["summary"]["tp_near_then_sl_count"] == 1
+        path_rows = {row["bucket"]: row for row in payload["outcome_path_rows"]}
+        assert path_rows["SL_THEN_WOULD_TP"]["sl_count"] == 1
+        assert path_rows["TP_NEAR_THEN_SL"]["sl_count"] == 1
+        assert path_rows["TP_DIRECT"]["tp_count"] == 1
+        sl_items = {item["symbol"]: item for item in payload["latest_sl_signals"]}
+        assert sl_items["SLTPUSDT"]["after_sl_would_hit_tp"] is True
+        assert sl_items["NEARUSDT"]["tp_near_before_sl"] is True
+        assert payload["improvement_candidates"]
+
+
 def _signal(
     signal_id: str,
     symbol: str,

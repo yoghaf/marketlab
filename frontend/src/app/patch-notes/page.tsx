@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-12",
+    version: "LAB-40",
+    title: "MID_SHORT 1h Failure Anatomy",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan audit besar untuk membedah kenapa MID_SHORT 1h SHADOW_PASS masih banyak SL.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-failure-anatomy membaca Signal Forward Log dan futures candles untuk mengklasifikasi path TP/SL.",
+      "Path anatomy membedakan SL_DIRECT, SL_THEN_WOULD_TP, TP_NEAR_THEN_SL, WRONG_DIRECTION_DRIFT, CHOPPY_BOTH_ZONE, TP_DIRECT, dan TP_GRIND.",
+      "Halaman /mid-short-failure-anatomy menampilkan direction correctness 15m/30m/1h/2h/4h, MFE/MAE, regime BTC/ETH, session WIB, symbol concentration, evidence TP vs SL, dan candidate second filters.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa tahu apakah SL MID_SHORT 1h berasal dari salah arah, stop terlalu cepat, TP terlalu jauh, regime BTC/ETH melawan, atau evidence conflict sebelum membuat optimasi berikutnya.",
+    links: [
+      { href: "/mid-short-failure-anatomy", label: "MID_SHORT Failure Anatomy" },
+      { href: "/shadow-forward-log", label: "MID_SHORT Shadow Log" },
+      { href: "/signal-quality-lab?stage=MID_SHORT&timeframe=1h", label: "Quality Lab MID_SHORT 1h" }
+    ]
+  },
+  {
+    date: "2026-07-12",
     version: "LAB-39",
     title: "MID_SHORT 1h Shadow Forward Log",
     status: "LIVE",

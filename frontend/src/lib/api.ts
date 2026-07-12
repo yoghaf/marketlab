@@ -1541,6 +1541,100 @@ export type MidShortShadowForwardLogResponse = {
   };
 };
 
+export type MidShortFailureBucketRow = OneHourWalkForwardPerf & {
+  dimension: string;
+  bucket: string;
+  label: string;
+  sample_count: number;
+  sl_share_pct?: string | number | null;
+  read: string;
+  horizon?: string;
+};
+
+export type MidShortFailureImprovementCandidate = OneHourWalkForwardPerf & {
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  source_count: number;
+  missing_data_count: number;
+  missing_data_pct?: string | number | null;
+  sample_retention_pct?: string | number | null;
+  read: string;
+};
+
+export type MidShortFailureAnatomyResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  shadow_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    source_count: number;
+    closed_count: number;
+    tp_count: number;
+    sl_count: number;
+    both_hit_count: number;
+    open_count: number;
+    sl_then_would_tp_count: number;
+    tp_near_then_sl_count: number;
+    sl_direct_count: number;
+    wrong_direction_1h_count: number;
+    correct_direction_1h_count: number;
+    read: string;
+  };
+  baseline: OneHourWalkForwardPerf;
+  mfe_mae_summary: Record<string, {
+    sample_count: number;
+    median_mfe_r?: string | number | null;
+    median_mae_r?: string | number | null;
+    median_mfe_before_first_hit_r?: string | number | null;
+    median_mae_before_first_hit_r?: string | number | null;
+    mfe_ge_0_5_count: number;
+    mfe_ge_1_0_count: number;
+    mae_le_minus_1_count: number;
+  }>;
+  outcome_path_rows: MidShortFailureBucketRow[];
+  direction_rows: MidShortFailureBucketRow[];
+  regime_rows: MidShortFailureBucketRow[];
+  session_rows: MidShortFailureBucketRow[];
+  symbol_rows: MidShortFailureBucketRow[];
+  evidence_tp_vs_sl: SignalQualityEvidenceField[];
+  improvement_candidates: MidShortFailureImprovementCandidate[];
+  latest_sl_signals: SignalPerformanceItem[];
+  latest_tp_signals: SignalPerformanceItem[];
+  latest_open_signals: SignalPerformanceItem[];
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;

@@ -413,6 +413,133 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_failure_anatomy(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        shadow_status: str = "SHADOW_PASS",
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        signals = self._load_signals(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage="MID_SHORT",
+            timeframe="1h",
+            symbol=None,
+            signal_id=None,
+        )
+        min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        source_symbols = {row.symbol for row in signals}
+        candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
+        candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
+        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_start = latest_base_time or candle_start
+        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start)
+        candles = _merge_candle_maps(base_candles, tail_candles)
+        latest_candle_time = max(
+            (candle.close_time for rows in candles.values() for candle in rows),
+            default=None,
+        )
+        evaluated, skipped = self._evaluate(
+            signals,
+            candles,
+            position_lock=position_lock,
+            global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
+        )
+        self._apply_universe_context(evaluated, source_symbols)
+
+        normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
+        if normalized_shadow_status != "ALL":
+            evaluated = [
+                item
+                for item in evaluated
+                if str(item.get("quality_shadow_status") or "").upper() == normalized_shadow_status
+            ]
+        annotated = _annotate_mid_short_failure_anatomy(evaluated, candles)
+        baseline = _walk_forward_perf(annotated)
+        closed = [item for item in annotated if item.get("result_status") in COMPLETED_OUTCOMES]
+        tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
+        sl_items = [item for item in closed if item.get("result_status") == "SL_HIT"]
+        both_items = [item for item in closed if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"]
+        improvement_candidates = _mid_short_failure_improvement_candidates(
+            annotated,
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_failure_anatomy",
+            "study_scope": "read_only_mid_short_1h_failure_anatomy",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "shadow_filter": {
+                "filter_id": MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID,
+                "label": MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL,
+                "expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
+                "status_meaning": "Default scope is SHADOW_PASS, meaning logged V2 MID_SHORT 1h signals that matched the read-only quality gate.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "source_count": len(annotated),
+                "closed_count": len(closed),
+                "tp_count": len(tp_items),
+                "sl_count": len(sl_items),
+                "both_hit_count": len(both_items),
+                "open_count": sum(1 for item in annotated if item.get("result_status") == "OPEN"),
+                "sl_then_would_tp_count": sum(1 for item in sl_items if item.get("after_sl_would_hit_tp")),
+                "tp_near_then_sl_count": sum(1 for item in sl_items if item.get("tp_near_before_sl")),
+                "sl_direct_count": sum(1 for item in sl_items if item.get("path_type") == "SL_DIRECT"),
+                "wrong_direction_1h_count": sum(1 for item in annotated if item.get("direction_1h") == "WRONG_DIRECTION"),
+                "correct_direction_1h_count": sum(1 for item in annotated if item.get("direction_1h") == "CORRECT_DIRECTION"),
+                "read": _mid_short_failure_summary_read(annotated, min_sample=min_sample),
+            },
+            "baseline": baseline,
+            "mfe_mae_summary": _mid_short_mfe_mae_summary(annotated),
+            "outcome_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
+            "direction_rows": _direction_correctness_rows(annotated, baseline=baseline, min_sample=min_sample),
+            "regime_rows": _mid_short_regime_rows(annotated, baseline=baseline, min_sample=min_sample),
+            "session_rows": _anatomy_bucket_rows(annotated, key="wib_session", min_sample=min_sample, baseline=baseline),
+            "symbol_rows": _anatomy_bucket_rows(annotated, key="symbol", min_sample=1, baseline=baseline, limit=limit),
+            "evidence_tp_vs_sl": _evidence_field_rows(closed, min_sample=max(3, min_sample // 2)),
+            "improvement_candidates": improvement_candidates,
+            "latest_sl_signals": _sorted_signal_rows(sl_items, limit=limit),
+            "latest_tp_signals": _sorted_signal_rows(tp_items, limit=limit),
+            "latest_open_signals": _sorted_signal_rows(
+                [item for item in annotated if item.get("result_status") == "OPEN"],
+                limit=limit,
+            ),
+            "guardrails": [
+                "Failure anatomy only reads logged V2 MID_SHORT 1h signals and local futures candles.",
+                "Path labels explain why TP/SL happened; they do not change Signal Factory rules.",
+                "Improvement candidates are research-only filters, not live scanner rules.",
+                "No TP/SL formula, execution, order, leverage, or position sizing is created.",
+            ],
+        }
+
     def forward_integrity(
         self,
         *,
@@ -3586,6 +3713,571 @@ def _quality_shadow_forward_read(
     if pass_realistic > 0:
         return "SHADOW_PASS_POSITIVE_MONITOR_MORE"
     return "SHADOW_PASS_NOT_CLEAN_YET"
+
+
+def _annotate_mid_short_failure_anatomy(
+    items: list[dict[str, Any]],
+    candles: dict[str, list[PerfCandle]],
+) -> list[dict[str, Any]]:
+    btc_candles = candles.get("BTCUSDT", [])
+    eth_candles = candles.get("ETHUSDT", [])
+    annotated: list[dict[str, Any]] = []
+    for item in items:
+        path = _mid_short_path_anatomy(item, candles.get(str(item.get("symbol") or ""), []))
+        regime = _mid_short_regime_context(item, btc_candles=btc_candles, eth_candles=eth_candles)
+        enriched = {
+            **item,
+            **path,
+            **regime,
+            "wib_session": _wib_session(_parse_dt(item.get("signal_timestamp"))),
+        }
+        annotated.append(enriched)
+    return annotated
+
+
+def _mid_short_path_anatomy(item: dict[str, Any], candles: list[PerfCandle]) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    stop = _decimal_or_none_any(item.get("stop_loss"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    if entry is None or stop is None or target is None or risk is None or risk <= 0 or signal_time is None:
+        return _empty_path_anatomy("MISSING_PRICE_CONTEXT")
+
+    ordered = sorted(candles, key=lambda candle: candle.open_time)
+    open_times = [candle.open_time for candle in ordered]
+    future = ordered[bisect_left(open_times, signal_time):]
+    if not future:
+        return _empty_path_anatomy("NO_FORWARD_CANDLE")
+
+    first_hit_status = None
+    first_hit_time = None
+    first_hit_index = None
+    mfe_before_first_hit = Decimal("0")
+    mae_before_first_hit = Decimal("0")
+    mfe = Decimal("0")
+    mae = Decimal("0")
+    direction = str(item.get("direction") or "")
+    for index, candle in enumerate(future, start=1):
+        if direction == "SHORT":
+            candle_mfe = (entry - candle.low) / risk
+            candle_mae = (entry - candle.high) / risk
+            tp_hit = candle.low <= target
+            sl_hit = candle.high >= stop
+        else:
+            candle_mfe = (candle.high - entry) / risk
+            candle_mae = (candle.low - entry) / risk
+            tp_hit = candle.high >= target
+            sl_hit = candle.low <= stop
+        mfe = max(mfe, candle_mfe)
+        mae = min(mae, candle_mae)
+        if tp_hit or sl_hit:
+            mfe_before_first_hit = mfe
+            mae_before_first_hit = mae
+            first_hit_time = candle.close_time
+            first_hit_index = index
+            if tp_hit and sl_hit:
+                first_hit_status = "BOTH_HIT_SAME_CANDLE"
+            elif tp_hit:
+                first_hit_status = "TP_HIT"
+            else:
+                first_hit_status = "SL_HIT"
+            break
+
+    after_sl_would_hit_tp = False
+    after_sl_tp_time = None
+    if first_hit_status == "SL_HIT" and first_hit_index is not None:
+        for candle in future[first_hit_index:]:
+            if direction == "SHORT" and candle.low <= target:
+                after_sl_would_hit_tp = True
+                after_sl_tp_time = candle.close_time
+                break
+            if direction == "LONG" and candle.high >= target:
+                after_sl_would_hit_tp = True
+                after_sl_tp_time = candle.close_time
+                break
+
+    horizon_returns = _horizon_returns(item, future)
+    direction_labels = {
+        f"direction_{label}": _direction_label(direction, value)
+        for label, value in horizon_returns.items()
+    }
+    result_status = str(item.get("result_status") or "")
+    tp_near_before_sl = result_status == "SL_HIT" and mfe_before_first_hit >= Decimal("0.75")
+    path_type = _mid_short_path_type(
+        result_status=result_status,
+        first_hit_status=first_hit_status,
+        first_hit_index=first_hit_index,
+        mfe_before_first_hit=mfe_before_first_hit,
+        mae_before_first_hit=mae_before_first_hit,
+        after_sl_would_hit_tp=after_sl_would_hit_tp,
+        direction_1h=direction_labels.get("direction_1h"),
+        unrealized_r=_decimal_or_none_any(item.get("unrealized_r")),
+    )
+    return {
+        "path_type": path_type,
+        "first_hit_status": first_hit_status,
+        "first_hit_time_utc": first_hit_time,
+        "first_hit_time_wib": _wib_string(first_hit_time),
+        "first_hit_candle_index": first_hit_index,
+        "mfe_before_first_hit_r": mfe_before_first_hit,
+        "mae_before_first_hit_r": mae_before_first_hit,
+        "tp_near_before_sl": tp_near_before_sl,
+        "after_sl_would_hit_tp": after_sl_would_hit_tp,
+        "after_sl_tp_time_utc": after_sl_tp_time,
+        "after_sl_tp_time_wib": _wib_string(after_sl_tp_time),
+        **{f"return_{label}_pct": value for label, value in horizon_returns.items()},
+        **direction_labels,
+    }
+
+
+def _empty_path_anatomy(reason: str) -> dict[str, Any]:
+    return {
+        "path_type": reason,
+        "first_hit_status": None,
+        "first_hit_time_utc": None,
+        "first_hit_time_wib": None,
+        "first_hit_candle_index": None,
+        "mfe_before_first_hit_r": None,
+        "mae_before_first_hit_r": None,
+        "tp_near_before_sl": False,
+        "after_sl_would_hit_tp": False,
+        "after_sl_tp_time_utc": None,
+        "after_sl_tp_time_wib": None,
+        "return_15m_pct": None,
+        "return_30m_pct": None,
+        "return_1h_pct": None,
+        "return_2h_pct": None,
+        "return_4h_pct": None,
+        "direction_15m": "MISSING_FORWARD_DATA",
+        "direction_30m": "MISSING_FORWARD_DATA",
+        "direction_1h": "MISSING_FORWARD_DATA",
+        "direction_2h": "MISSING_FORWARD_DATA",
+        "direction_4h": "MISSING_FORWARD_DATA",
+    }
+
+
+def _mid_short_path_type(
+    *,
+    result_status: str,
+    first_hit_status: str | None,
+    first_hit_index: int | None,
+    mfe_before_first_hit: Decimal,
+    mae_before_first_hit: Decimal,
+    after_sl_would_hit_tp: bool,
+    direction_1h: str | None,
+    unrealized_r: Decimal | None,
+) -> str:
+    if result_status == "BOTH_HIT_SAME_CANDLE" or first_hit_status == "BOTH_HIT_SAME_CANDLE":
+        return "CHOPPY_BOTH_ZONE"
+    if result_status == "TP_HIT":
+        if mae_before_first_hit <= Decimal("-0.75"):
+            return "DEEP_ADVERSE_THEN_TP"
+        if first_hit_index is not None and first_hit_index <= 2:
+            return "TP_DIRECT"
+        return "TP_GRIND"
+    if result_status == "SL_HIT":
+        if after_sl_would_hit_tp:
+            return "SL_THEN_WOULD_TP"
+        if mfe_before_first_hit >= Decimal("0.75"):
+            return "TP_NEAR_THEN_SL"
+        if first_hit_index is not None and first_hit_index <= 2 and mae_before_first_hit <= Decimal("-1"):
+            return "SL_DIRECT"
+        if direction_1h == "WRONG_DIRECTION":
+            return "WRONG_DIRECTION_DRIFT"
+        return "CHOPPY_OR_LATE_SL"
+    if result_status == "OPEN":
+        if unrealized_r is not None and unrealized_r >= Decimal("0.5"):
+            return "OPEN_FAVORABLE"
+        if unrealized_r is not None and unrealized_r <= Decimal("-0.5"):
+            return "OPEN_ADVERSE"
+        return "OPEN_NO_CLEAR_MOVE"
+    if result_status == "WAITING_DATA":
+        return "WAITING_FORWARD_DATA"
+    if result_status == "STALE_FORWARD_DATA":
+        return "STALE_FORWARD_DATA"
+    return result_status or "UNKNOWN_PATH"
+
+
+def _horizon_returns(item: dict[str, Any], future: list[PerfCandle]) -> dict[str, Decimal | None]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    horizons = {"15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240}
+    if entry is None or entry <= 0 or signal_time is None:
+        return {label: None for label in horizons}
+    output: dict[str, Decimal | None] = {}
+    for label, minutes in horizons.items():
+        target_time = signal_time + timedelta(minutes=minutes)
+        candle = next((row for row in future if row.close_time >= target_time), None)
+        output[label] = ((candle.close - entry) / entry * Decimal("100")) if candle else None
+    return output
+
+
+def _direction_label(direction: str, return_pct: Decimal | None) -> str:
+    if return_pct is None:
+        return "MISSING_FORWARD_DATA"
+    if abs(return_pct) < Decimal("0.05"):
+        return "FLAT"
+    if direction == "SHORT":
+        return "CORRECT_DIRECTION" if return_pct < 0 else "WRONG_DIRECTION"
+    if direction == "LONG":
+        return "CORRECT_DIRECTION" if return_pct > 0 else "WRONG_DIRECTION"
+    return "NON_DIRECTIONAL"
+
+
+def _mid_short_regime_context(
+    item: dict[str, Any],
+    *,
+    btc_candles: list[PerfCandle],
+    eth_candles: list[PerfCandle],
+) -> dict[str, Any]:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    btc_1h = _prior_return_pct(btc_candles, signal_time, minutes=60)
+    btc_4h = _prior_return_pct(btc_candles, signal_time, minutes=240)
+    eth_1h = _prior_return_pct(eth_candles, signal_time, minutes=60)
+    eth_4h = _prior_return_pct(eth_candles, signal_time, minutes=240)
+    return {
+        "btc_1h_return_pct": btc_1h,
+        "btc_4h_return_pct": btc_4h,
+        "eth_1h_return_pct": eth_1h,
+        "eth_4h_return_pct": eth_4h,
+        "btc_1h_regime": _regime_label(btc_1h),
+        "btc_4h_regime": _regime_label(btc_4h),
+        "eth_1h_regime": _regime_label(eth_1h),
+        "eth_4h_regime": _regime_label(eth_4h),
+    }
+
+
+def _prior_return_pct(candles: list[PerfCandle], signal_time: datetime | None, *, minutes: int) -> Decimal | None:
+    if not candles or signal_time is None:
+        return None
+    ordered = sorted(candles, key=lambda candle: candle.close_time)
+    current = None
+    previous = None
+    previous_cutoff = signal_time - timedelta(minutes=minutes)
+    for candle in ordered:
+        if candle.close_time <= signal_time:
+            current = candle
+        if candle.close_time <= previous_cutoff:
+            previous = candle
+        if candle.close_time > signal_time:
+            break
+    if current is None or previous is None or previous.close <= 0:
+        return None
+    return (current.close - previous.close) / previous.close * Decimal("100")
+
+
+def _regime_label(return_pct: Decimal | None) -> str:
+    if return_pct is None:
+        return "REGIME_UNKNOWN"
+    if return_pct >= Decimal("0.50"):
+        return "BULLISH_REGIME"
+    if return_pct <= Decimal("-0.50"):
+        return "BEARISH_REGIME"
+    return "CHOPPY_REGIME"
+
+
+def _wib_session(signal_time: datetime | None) -> str:
+    if signal_time is None:
+        return "SESSION_UNKNOWN"
+    hour = (_naive(signal_time) + timedelta(hours=7)).hour
+    if 7 <= hour < 14:
+        return "ASIA_DAY"
+    if 14 <= hour < 20:
+        return "EUROPE_OVERLAP"
+    if 20 <= hour or hour < 4:
+        return "US_SESSION"
+    return "QUIET_PRE_ASIA"
+
+
+def _mid_short_failure_summary_read(items: list[dict[str, Any]], *, min_sample: int) -> str:
+    closed = [item for item in items if item.get("result_status") in COMPLETED_OUTCOMES]
+    if len(closed) < min_sample:
+        return "WAIT_MORE_CLOSED_SAMPLE"
+    sl_items = [item for item in closed if item.get("result_status") == "SL_HIT"]
+    if not sl_items:
+        return "NO_SL_IN_SCOPE"
+    sl_then_tp = sum(1 for item in sl_items if item.get("after_sl_would_hit_tp"))
+    near_tp = sum(1 for item in sl_items if item.get("tp_near_before_sl"))
+    wrong_1h = sum(1 for item in sl_items if item.get("direction_1h") == "WRONG_DIRECTION")
+    if wrong_1h >= max(sl_then_tp, near_tp):
+        return "SL_MAINLY_DIRECTION_PROBLEM"
+    if sl_then_tp > near_tp:
+        return "SL_MAINLY_TIMING_OR_STOP_PLACEMENT"
+    if near_tp > 0:
+        return "SL_OFTEN_AFTER_PARTIAL_FAVORABLE_MOVE"
+    return "SL_MIXED_CAUSES"
+
+
+def _mid_short_mfe_mae_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    groups = {
+        "TP_HIT": [item for item in items if item.get("result_status") == "TP_HIT"],
+        "SL_HIT": [item for item in items if item.get("result_status") == "SL_HIT"],
+        "OPEN": [item for item in items if item.get("result_status") == "OPEN"],
+    }
+    output: dict[str, Any] = {}
+    for status, group in groups.items():
+        mfe_values = [_decimal_or_none_any(item.get("mfe_r")) for item in group]
+        mae_values = [_decimal_or_none_any(item.get("mae_r")) for item in group]
+        before_mfe_values = [_decimal_or_none_any(item.get("mfe_before_first_hit_r")) for item in group]
+        before_mae_values = [_decimal_or_none_any(item.get("mae_before_first_hit_r")) for item in group]
+        mfe_clean = [value for value in mfe_values if value is not None]
+        mae_clean = [value for value in mae_values if value is not None]
+        before_mfe_clean = [value for value in before_mfe_values if value is not None]
+        before_mae_clean = [value for value in before_mae_values if value is not None]
+        output[status] = {
+            "sample_count": len(group),
+            "median_mfe_r": _median_decimal(mfe_clean),
+            "median_mae_r": _median_decimal(mae_clean),
+            "median_mfe_before_first_hit_r": _median_decimal(before_mfe_clean),
+            "median_mae_before_first_hit_r": _median_decimal(before_mae_clean),
+            "mfe_ge_0_5_count": sum(1 for value in mfe_clean if value >= Decimal("0.5")),
+            "mfe_ge_1_0_count": sum(1 for value in mfe_clean if value >= Decimal("1.0")),
+            "mae_le_minus_1_count": sum(1 for value in mae_clean if value <= Decimal("-1.0")),
+        }
+    return output
+
+
+def _anatomy_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    min_sample: int,
+    baseline: dict[str, Any],
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[str(item.get(key) or "UNKNOWN")].append(item)
+    rows: list[dict[str, Any]] = []
+    for bucket, bucket_items in groups.items():
+        perf = _walk_forward_perf(bucket_items, baseline=baseline)
+        rows.append(
+            {
+                "dimension": key,
+                "bucket": bucket,
+                "label": bucket,
+                "sample_count": len(bucket_items),
+                "tp_count": int(perf.get("tp_count") or 0),
+                "sl_count": int(perf.get("sl_count") or 0),
+                "open_count": int(perf.get("open_count") or 0),
+                "sl_share_pct": perf.get("sl_share_pct"),
+                "read": _anatomy_bucket_read(bucket, perf, min_sample=min_sample),
+                **perf,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            Decimal(row.get("realistic_total_r_closed") or 0),
+            int(row.get("sample_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit] if limit is not None else rows
+
+
+def _anatomy_bucket_read(bucket: str, perf: dict[str, Any], *, min_sample: int) -> str:
+    closed = int(perf.get("closed_count") or 0)
+    if closed < min_sample:
+        return "WAIT_MORE_SAMPLE"
+    realistic_total = Decimal(perf.get("realistic_total_r_closed") or 0)
+    sl_share = perf.get("sl_share_pct")
+    if realistic_total > 0 and (sl_share is None or Decimal(sl_share) <= Decimal("50")):
+        return "HEALTHIER_BUCKET"
+    if realistic_total < 0 and sl_share is not None and Decimal(sl_share) > Decimal("55"):
+        return "LOSS_HEAVY_BUCKET"
+    if bucket in {"SL_THEN_WOULD_TP", "TP_NEAR_THEN_SL"}:
+        return "TIMING_OR_EXIT_PROBLEM"
+    if bucket == "WRONG_DIRECTION_DRIFT":
+        return "DIRECTION_PROBLEM"
+    return "MIXED_BUCKET"
+
+
+def _direction_correctness_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for horizon in ("15m", "30m", "1h", "2h", "4h"):
+        key = f"direction_{horizon}"
+        for row in _anatomy_bucket_rows(items, key=key, min_sample=min_sample, baseline=baseline):
+            row["horizon"] = horizon
+            rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row.get("horizon"),
+            Decimal(row.get("realistic_total_r_closed") or 0),
+        )
+    )
+    return rows
+
+
+def _mid_short_regime_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for key in ("btc_1h_regime", "btc_4h_regime", "eth_1h_regime", "eth_4h_regime"):
+        rows.extend(_anatomy_bucket_rows(items, key=key, min_sample=min_sample, baseline=baseline))
+    rows.sort(
+        key=lambda row: (
+            row.get("dimension"),
+            Decimal(row.get("realistic_total_r_closed") or 0),
+        )
+    )
+    return rows
+
+
+def _mid_short_failure_improvement_candidates(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    specs: list[FilterStudySpec] = [
+        FilterStudySpec(
+            "NO_BTC_1H_BULL",
+            "Exclude BTC 1h bullish regime",
+            "btc_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "NO_ETH_1H_BULL",
+            "Exclude ETH 1h bullish regime",
+            "eth_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "NO_BTC_ETH_1H_BULL",
+            "Exclude BTC/ETH 1h bullish regime",
+            "btc_1h_regime != BULLISH_REGIME AND eth_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "TAKER_SELL_GE_52",
+            "Taker sell >= 52%",
+            "kline_taker_sell_ratio >= 0.52",
+            "taker",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+        FilterStudySpec(
+            "TAKER_BUY_LE_50",
+            "Taker buy <= 50%",
+            "kline_taker_buy_ratio <= 0.50",
+            "taker",
+            ("kline_taker_buy_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_buy_ratio") or Decimal("999")) <= Decimal("0.50"),
+        ),
+        FilterStudySpec(
+            "OI_Z_GE_1",
+            "OI z-score >= 1",
+            "oi_zscore >= 1",
+            "open_interest",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("1"),
+        ),
+        FilterStudySpec(
+            "PRICE_RETURN_LE_0",
+            "Signal candle already weak",
+            "price_return <= 0",
+            "direction",
+            ("price_return",),
+            lambda item: (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "RANGE_ATR_LE_1_0",
+            "Range/ATR <= 1.0",
+            "range_ratio_vs_atr <= 1.0",
+            "extension",
+            ("range_ratio_vs_atr",),
+            lambda item: (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.0"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_65",
+            "Funding percentile >= 65",
+            "funding_percentile_30d >= 65",
+            "positioning",
+            ("funding_percentile_30d",),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("65"),
+        ),
+        FilterStudySpec(
+            "REGIME_AND_TAKER",
+            "No BTC/ETH bull + taker sell >= 52%",
+            "no BTC/ETH 1h bull AND kline_taker_sell_ratio >= 0.52",
+            "combo",
+            ("kline_taker_sell_ratio",),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME"
+            and (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+        FilterStudySpec(
+            "REGIME_RANGE_TAKER",
+            "No BTC/ETH bull + range <= 1.0 + taker sell >= 52%",
+            "no BTC/ETH 1h bull AND range_ratio_vs_atr <= 1.0 AND kline_taker_sell_ratio >= 0.52",
+            "combo",
+            ("range_ratio_vs_atr", "kline_taker_sell_ratio"),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME"
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.0")
+            and (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+    ]
+    rows: list[dict[str, Any]] = []
+    for spec in specs:
+        selected, missing = _apply_filter_spec(items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(items)) * Decimal("100")) if items else None,
+            "sample_retention_pct": _retention(len(selected), len(items)),
+            "read": _mid_short_candidate_filter_read(perf, min_sample=min_sample),
+            **perf,
+        }
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row["read"] in {"FILTER_CANDIDATE_MONITOR", "REDUCES_DAMAGE_MONITOR"},
+            _decimal_or_zero(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("realistic_total_r_delta_vs_baseline")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _mid_short_candidate_filter_read(perf: dict[str, Any], *, min_sample: int) -> str:
+    if int(perf.get("closed_count") or 0) < min_sample:
+        return "WAIT_MORE_SAMPLE"
+    realistic_total = Decimal(perf.get("realistic_total_r_closed") or 0)
+    avg_delta = _decimal_or_none_any(perf.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(perf.get("sl_share_delta_vs_baseline"))
+    if realistic_total > 0 and avg_delta is not None and avg_delta > 0 and (sl_delta is None or sl_delta <= 0):
+        return "FILTER_CANDIDATE_MONITOR"
+    if avg_delta is not None and avg_delta > 0:
+        return "REDUCES_DAMAGE_MONITOR"
+    if avg_delta is not None and avg_delta < 0:
+        return "WORSE_THAN_SHADOW_PASS"
+    return "NO_CLEAR_SEPARATION"
 
 
 def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:
