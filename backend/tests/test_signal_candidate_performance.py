@@ -1442,6 +1442,76 @@ def test_mid_short_1h_volume_safe_shadow_splits_pass_and_fail() -> None:
         assert payload["latest_fail_signals"][0]["symbol"] == "FAILUSDT"
 
 
+def test_mid_short_1h_filter_combination_study_ranks_volume_combo() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            (
+                "pass",
+                "PASSUSDT",
+                base_time,
+                {"volume_ratio_vs_lookback": "1.10", "range_ratio_vs_atr": "1.00"},
+                [("101", "84", "86"), ("99", "85", "88"), ("98", "84", "87"), ("97", "83", "86")],
+            ),
+            (
+                "fail",
+                "FAILUSDT",
+                base_time + timedelta(hours=2),
+                {"volume_ratio_vs_lookback": "1.90", "range_ratio_vs_atr": "1.00"},
+                [("111", "99", "106"), ("108", "101", "106"), ("109", "102", "107"), ("110", "103", "108")],
+            ),
+        ]
+        for signal_id, symbol, signal_time, evidence, candles in rows:
+            evidence = {
+                **evidence,
+                "futures_spread_pct": "0.01",
+                "kline_taker_sell_ratio": "0.56",
+                "kline_taker_buy_ratio": "0.44",
+                "price_atr_multiple": "1.00",
+            }
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence=evidence,
+                )
+            )
+            for index, (high, low, close) in enumerate(candles):
+                open_time = signal_time + timedelta(minutes=15 * index)
+                db.add(_candle(symbol, open_time, open_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_filter_combination_study(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["scope_count"] == 2
+        rows_by_filter = {row["filter_id"]: row for row in payload["combination_rows"]}
+        volume = rows_by_filter["VOLUME_LE_1_50"]
+        assert volume["sample_count"] == 1
+        assert volume["missing_data_count"] == 0
+        assert volume["tp_count"] == 1
+        assert volume["wrong_direction_1h_count"] == 0
+        assert rows_by_filter["VOLUME_OI_Z_GE_1"]["missing_data_count"] == 2
+        assert payload["top_filter_pass_signals"][0]["symbol"] == "PASSUSDT"
+        assert payload["top_filter_fail_signals"][0]["symbol"] == "FAILUSDT"
+        assert payload["summary"]["read"] in {"HAS_V2_1_SHADOW_CANDIDATE", "HAS_COMBO_DAMAGE_REDUCTION"}
+
+
 def _signal(
     signal_id: str,
     symbol: str,

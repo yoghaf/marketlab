@@ -18,6 +18,7 @@ const researchLinks = [
   { href: "/mid-short-taker-sell-deep-dive", label: "MID_SHORT Taker Deep Dive" },
   { href: "/mid-short-wrong-direction-deep-dive", label: "MID_SHORT Wrong Direction" },
   { href: "/mid-short-volume-safe-shadow", label: "MID_SHORT Volume Safe" },
+  { href: "/mid-short-filter-combination-study", label: "MID_SHORT Combo Study" },
   { href: "/signal-1h-review", label: "1h Review" },
   { href: "/strategy-optimization-lab", label: "Strategy Optimization Lab" },
   { href: "/signal-factory", label: "Signal Factory Raw" },

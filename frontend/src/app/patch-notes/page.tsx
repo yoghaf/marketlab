@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-13",
+    version: "LAB-45",
+    title: "MID_SHORT 1h Filter Combination Study",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan studi kombinasi filter read-only untuk mencari kandidat V2.1 Shadow dari MID_SHORT 1h.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-filter-combination-study membaca scope MID_SHORT 1h SHADOW_PASS + Taker Sell >= 52% lalu menguji kombinasi volume, regime, range/ATR, price/ATR, cost, spread, OI, funding, dan positioning.",
+      "Halaman /mid-short-filter-combination-study menampilkan baseline, ranking kombinasi, top candidate, risk notes, pass/fail taxonomy, dan sample signal terbaru.",
+      "Quality Lab, Volume Safe, dan menu Research / Advanced sekarang punya link langsung ke Combo Study.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Kita punya tempat khusus untuk melihat apakah kombinasi filter bisa menjadi kandidat V2.1 Shadow sebelum rule apa pun dipromosikan.",
+    links: [
+      { href: "/mid-short-filter-combination-study", label: "MID_SHORT Combo Study" },
+      { href: "/mid-short-volume-safe-shadow", label: "MID_SHORT Volume Safe" },
+      { href: "/mid-short-wrong-direction-deep-dive", label: "MID_SHORT Wrong Direction" }
+    ]
+  },
+  {
+    date: "2026-07-13",
     version: "LAB-44",
     title: "MID_SHORT 1h Volume Safe Shadow",
     status: "LIVE",

@@ -928,6 +928,136 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_filter_combination_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            shadow_status="SHADOW_PASS",
+        )
+        taker_scope = [
+            _annotate_mid_short_wrong_direction(item)
+            for item in _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        ]
+        baseline = _walk_forward_perf(taker_scope)
+        baseline_direction = _mid_short_direction_summary(taker_scope)
+        baseline_path = _mid_short_path_count_summary(taker_scope)
+        rows = _mid_short_filter_combination_rows(
+            taker_scope,
+            baseline=baseline,
+            baseline_direction=baseline_direction,
+            baseline_path=baseline_path,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        candidate_rows = [
+            row
+            for row in rows
+            if row.get("read") in {"COMBO_SHADOW_CANDIDATE", "COMBO_REDUCES_DAMAGE"}
+        ]
+        top_candidate = candidate_rows[0] if candidate_rows else (rows[0] if rows else None)
+        top_items: list[dict[str, Any]] = []
+        top_fail_items: list[dict[str, Any]] = []
+        top_missing_items: list[dict[str, Any]] = []
+        if top_candidate is not None:
+            spec = _filter_spec_by_id(_mid_short_filter_combination_specs(), str(top_candidate.get("filter_id")))
+            top_items, top_fail_items, top_missing_items = _split_filter_spec(taker_scope, spec)
+
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_filter_combination_study",
+            "study_scope": "read_only_mid_short_1h_v2_1_filter_combination_study",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS AND kline_taker_sell_ratio >= 0.52",
+                "status_meaning": "Combination Study starts from the current strongest MID_SHORT 1h research scope and asks which extra filters reduce SL/wrong-direction.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "scope_count": len(taker_scope),
+                "closed_count": int(baseline.get("closed_count") or 0),
+                "tp_count": int(baseline.get("tp_count") or 0),
+                "sl_count": int(baseline.get("sl_count") or 0),
+                "wrong_direction_1h_count": int(baseline_direction.get("wrong_direction_1h_count") or 0),
+                "correct_direction_1h_count": int(baseline_direction.get("correct_direction_1h_count") or 0),
+                "baseline": baseline,
+                "baseline_direction": baseline_direction,
+                "combo_count": len(rows),
+                "shadow_candidate_count": sum(1 for row in rows if row.get("read") == "COMBO_SHADOW_CANDIDATE"),
+                "damage_reduction_count": sum(1 for row in rows if row.get("read") == "COMBO_REDUCES_DAMAGE"),
+                "reject_count": sum(1 for row in rows if row.get("read") == "COMBO_REJECT"),
+                "top_filter_id": top_candidate.get("filter_id") if top_candidate else None,
+                "top_filter_label": top_candidate.get("label") if top_candidate else None,
+                "read": _mid_short_filter_combination_summary_read(rows, min_sample=min_sample),
+            },
+            "combination_rows": rows,
+            "candidate_rows": candidate_rows[:limit],
+            "baseline_path_rows": _anatomy_bucket_rows(
+                taker_scope,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=baseline,
+                limit=limit,
+            ),
+            "top_filter": top_candidate,
+            "top_filter_pass": _walk_forward_perf(top_items, baseline=baseline),
+            "top_filter_fail": _walk_forward_perf(top_fail_items, baseline=baseline),
+            "top_filter_missing": _walk_forward_perf(top_missing_items, baseline=baseline),
+            "top_filter_pass_direction": _mid_short_direction_summary(top_items, baseline=baseline_direction),
+            "top_filter_fail_direction": _mid_short_direction_summary(top_fail_items, baseline=baseline_direction),
+            "top_filter_pass_taxonomy": _anatomy_bucket_rows(
+                top_items,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=_walk_forward_perf(top_items),
+                limit=limit,
+            ),
+            "top_filter_fail_taxonomy": _anatomy_bucket_rows(
+                top_fail_items,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=_walk_forward_perf(top_fail_items),
+                limit=limit,
+            ),
+            "top_filter_pass_signals": _sorted_signal_rows(top_items, limit=limit),
+            "top_filter_fail_signals": _sorted_signal_rows(top_fail_items, limit=limit),
+            "top_filter_missing_signals": _sorted_signal_rows(top_missing_items, limit=limit),
+            "guardrails": [
+                "Filter Combination Study is read-only and only compares existing logged V2 MID_SHORT 1h signals.",
+                "Every row starts from MID_SHORT 1h SHADOW_PASS + taker sell >= 52%; combinations only add extra evidence gates.",
+                "COMBO_SHADOW_CANDIDATE means worth monitoring as V2.1 shadow; it is not a live rule promotion.",
+                "Signal Factory rules, scanner behavior, TP/SL formula, outcome logic, threshold, and execution stay unchanged.",
+            ],
+        }
+
     def _mid_short_1h_anatomy_dataset(
         self,
         *,
@@ -5592,6 +5722,289 @@ def _mid_short_volume_safe_read(
     if (pass_avg_delta is not None and pass_avg_delta > 0) or (wrong_delta is not None and wrong_delta < 0):
         return "VOLUME_SAFE_REDUCES_DAMAGE"
     return "VOLUME_SAFE_NO_CLEAR_EDGE"
+
+
+def _mid_short_filter_combination_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "VOLUME_LE_1_50",
+            "Volume <= 1.50x",
+            "volume_ratio_vs_lookback <= 1.50",
+            "late_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "VOLUME_NO_BTC_ETH_BULL",
+            "Volume <= 1.50x + no BTC/ETH bull",
+            "volume_ratio_vs_lookback <= 1.50 AND btc/eth not bullish",
+            "combo_regime_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "VOLUME_RANGE_LE_1_25",
+            "Volume <= 1.50x + range/ATR <= 1.25",
+            "volume_ratio_vs_lookback <= 1.50 AND range_ratio_vs_atr <= 1.25",
+            "combo_late_momentum",
+            ("volume_ratio_vs_lookback", "range_ratio_vs_atr"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "VOLUME_PRICE_ATR_LE_1_25",
+            "Volume <= 1.50x + price/ATR <= 1.25",
+            "volume_ratio_vs_lookback <= 1.50 AND price_atr_multiple <= 1.25",
+            "combo_late_momentum",
+            ("volume_ratio_vs_lookback", "price_atr_multiple"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "VOLUME_NO_LATE_MOMENTUM",
+            "Volume <= 1.50x + range <= 1.25 + price/ATR <= 1.25",
+            "volume <= 1.50 AND range_ratio_vs_atr <= 1.25 AND price_atr_multiple <= 1.25",
+            "combo_late_momentum",
+            ("volume_ratio_vs_lookback", "range_ratio_vs_atr", "price_atr_multiple"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25")
+            and (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "VOLUME_FILL_GOOD",
+            "Volume <= 1.50x + fill good",
+            "volume_ratio_vs_lookback <= 1.50 AND realistic_fill_quality == FILL_GOOD",
+            "combo_cost_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and str(item.get("realistic_fill_quality") or "") == "FILL_GOOD",
+        ),
+        FilterStudySpec(
+            "VOLUME_COST_R_LE_0_20",
+            "Volume <= 1.50x + cost R <= 0.20",
+            "volume_ratio_vs_lookback <= 1.50 AND realistic_cost_r_estimate <= 0.20",
+            "combo_cost_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.20"),
+        ),
+        FilterStudySpec(
+            "VOLUME_SPREAD_LE_0_03",
+            "Volume <= 1.50x + futures spread <= 0.03%",
+            "volume_ratio_vs_lookback <= 1.50 AND futures_spread_pct <= 0.03",
+            "combo_cost_momentum",
+            ("volume_ratio_vs_lookback", "futures_spread_pct"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "futures_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "VOLUME_OI_Z_GE_1",
+            "Volume <= 1.50x + OI z-score >= 1",
+            "volume_ratio_vs_lookback <= 1.50 AND oi_zscore >= 1",
+            "combo_oi_momentum",
+            ("volume_ratio_vs_lookback", "oi_zscore"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("1"),
+        ),
+        FilterStudySpec(
+            "VOLUME_OI_CHANGE_GE_0",
+            "Volume <= 1.50x + OI not unwinding",
+            "volume_ratio_vs_lookback <= 1.50 AND oi_change_pct >= 0",
+            "combo_oi_momentum",
+            ("volume_ratio_vs_lookback", "oi_change_pct"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "oi_change_pct") or Decimal("-999")) >= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "VOLUME_FUNDING_GE_65",
+            "Volume <= 1.50x + funding percentile >= 65",
+            "volume_ratio_vs_lookback <= 1.50 AND funding_percentile_30d >= 65",
+            "combo_positioning_momentum",
+            ("volume_ratio_vs_lookback", "funding_percentile_30d"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("65"),
+        ),
+        FilterStudySpec(
+            "VOLUME_GLOBAL_LS_GE_1_20",
+            "Volume <= 1.50x + global L/S >= 1.20",
+            "volume_ratio_vs_lookback <= 1.50 AND global_long_short_ratio >= 1.20",
+            "combo_positioning_momentum",
+            ("volume_ratio_vs_lookback", "global_long_short_ratio"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "VOLUME_TOP_POSITION_GE_1_20",
+            "Volume <= 1.50x + top position >= 1.20",
+            "volume_ratio_vs_lookback <= 1.50 AND top_trader_position_ratio >= 1.20",
+            "combo_positioning_momentum",
+            ("volume_ratio_vs_lookback", "top_trader_position_ratio"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "top_trader_position_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "VOLUME_POSITIONING",
+            "Volume <= 1.50x + crowded positioning",
+            "volume <= 1.50 AND global L/S >= 1.20 AND top position >= 1.20",
+            "combo_positioning_momentum",
+            ("volume_ratio_vs_lookback", "global_long_short_ratio", "top_trader_position_ratio"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20")
+            and (_evidence_value(item, "top_trader_position_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "VOLUME_NO_BULL_COST_RANGE",
+            "Volume <= 1.50x + no BTC/ETH bull + cost <= 0.20 + range <= 1.25",
+            "volume <= 1.50 AND btc/eth not bullish AND cost <= 0.20 AND range <= 1.25",
+            "combo_full_quality",
+            ("volume_ratio_vs_lookback", "range_ratio_vs_atr"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME"
+            and _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.20")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+    ]
+
+
+def _mid_short_filter_combination_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    baseline_direction: dict[str, Any],
+    baseline_path: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for spec in _mid_short_filter_combination_specs():
+        selected, missing = _apply_filter_spec(items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        direction_summary = _mid_short_direction_summary(selected, baseline=baseline_direction)
+        path_summary = _mid_short_path_count_summary(selected, baseline=baseline_path)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(items)) * Decimal("100")) if items else None,
+            "sample_retention_pct": _retention(len(selected), len(items)),
+            **direction_summary,
+            **path_summary,
+            **perf,
+        }
+        row["read"] = _mid_short_filter_combination_read(row, min_sample=min_sample)
+        row["shadow_recommendation"] = _mid_short_filter_combination_recommendation(row)
+        row["risk_notes"] = _mid_short_filter_combination_risk_notes(row, min_sample=min_sample)
+        rows.append(row)
+
+    read_rank = {
+        "COMBO_SHADOW_CANDIDATE": 4,
+        "COMBO_REDUCES_DAMAGE": 3,
+        "COMBO_NO_CLEAR_EDGE": 2,
+        "COMBO_WAIT_MORE_SAMPLE": 1,
+        "COMBO_REJECT": 0,
+    }
+    rows.sort(
+        key=lambda row: (
+            read_rank.get(str(row.get("read")), -1),
+            _decimal_or_zero(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("wrong_direction_1h_share_pct_delta_vs_baseline")) * Decimal("-1"),
+            _decimal_or_zero(row.get("sl_share_delta_vs_baseline")) * Decimal("-1"),
+            _decimal_or_zero(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _mid_short_filter_combination_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("closed_count") or 0) < min_sample:
+        return "COMBO_WAIT_MORE_SAMPLE"
+    realistic_total = _decimal_or_zero(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(row.get("sl_share_delta_vs_baseline"))
+    wrong_delta = _decimal_or_none_any(row.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    drawdown_delta = _decimal_or_none_any(row.get("max_drawdown_delta_vs_baseline"))
+    top_share = _decimal_or_none_any(row.get("top_symbol_share_pct"))
+    concentration_ok = top_share is None or top_share <= Decimal("35")
+    if (
+        realistic_total > 0
+        and avg_delta is not None
+        and avg_delta >= Decimal("0.04")
+        and (sl_delta is None or sl_delta <= Decimal("0"))
+        and (wrong_delta is None or wrong_delta <= Decimal("0"))
+        and (drawdown_delta is None or drawdown_delta >= Decimal("0"))
+        and concentration_ok
+    ):
+        return "COMBO_SHADOW_CANDIDATE"
+    if (
+        (avg_delta is not None and avg_delta > 0)
+        or (sl_delta is not None and sl_delta < 0)
+        or (wrong_delta is not None and wrong_delta < 0)
+        or (drawdown_delta is not None and drawdown_delta > 0)
+    ):
+        return "COMBO_REDUCES_DAMAGE"
+    if avg_delta is not None and avg_delta < 0 and sl_delta is not None and sl_delta > 0:
+        return "COMBO_REJECT"
+    return "COMBO_NO_CLEAR_EDGE"
+
+
+def _mid_short_filter_combination_recommendation(row: dict[str, Any]) -> str:
+    read = row.get("read")
+    if read == "COMBO_SHADOW_CANDIDATE":
+        return "Kandidat V2.1 shadow monitor; belum promosi live."
+    if read == "COMBO_REDUCES_DAMAGE":
+        return "Pantau sebagai damage-reduction; butuh sample lebih bersih."
+    if read == "COMBO_WAIT_MORE_SAMPLE":
+        return "Sample belum cukup untuk dibaca."
+    if read == "COMBO_REJECT":
+        return "Jangan dipakai; kombinasi memperburuk baseline."
+    return "Belum ada separation yang jelas."
+
+
+def _mid_short_filter_combination_risk_notes(row: dict[str, Any], *, min_sample: int) -> list[str]:
+    notes: list[str] = []
+    if int(row.get("closed_count") or 0) < min_sample:
+        notes.append(f"Closed sample < {min_sample}.")
+    if _decimal_or_zero(row.get("realistic_total_r_closed")) <= 0:
+        notes.append("Realistic R belum positif.")
+    sl_delta = _decimal_or_none_any(row.get("sl_share_delta_vs_baseline"))
+    if sl_delta is not None and sl_delta > 0:
+        notes.append("SL share naik vs baseline.")
+    wrong_delta = _decimal_or_none_any(row.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    if wrong_delta is not None and wrong_delta > 0:
+        notes.append("Wrong-direction 1h naik vs baseline.")
+    top_share = _decimal_or_none_any(row.get("top_symbol_share_pct"))
+    if top_share is not None and top_share > Decimal("35"):
+        notes.append("Terlalu terkonsentrasi di satu symbol.")
+    missing_pct = _decimal_or_none_any(row.get("missing_data_pct"))
+    if missing_pct is not None and missing_pct > Decimal("25"):
+        notes.append("Evidence missing tinggi.")
+    if not notes:
+        notes.append("Belum ada risk note fatal di metric ini.")
+    return notes
+
+
+def _mid_short_filter_combination_summary_read(rows: list[dict[str, Any]], *, min_sample: int) -> str:
+    if not rows:
+        return "NO_COMBO_FILTER_ROWS"
+    ready_rows = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    if not ready_rows:
+        return "COMBO_WAIT_MORE_SAMPLE"
+    if any(row.get("read") == "COMBO_SHADOW_CANDIDATE" for row in ready_rows):
+        return "HAS_V2_1_SHADOW_CANDIDATE"
+    if any(row.get("read") == "COMBO_REDUCES_DAMAGE" for row in ready_rows):
+        return "HAS_COMBO_DAMAGE_REDUCTION"
+    return "NO_CLEAN_COMBO_FILTER_YET"
 
 
 def _mid_short_wrong_direction_filter_read(
