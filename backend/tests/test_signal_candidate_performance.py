@@ -1238,6 +1238,61 @@ def test_mid_short_1h_second_filter_shadow_compares_against_shadow_pass_baseline
         assert payload["top_filter_items"]
 
 
+def test_mid_short_1h_taker_sell_deep_dive_finds_stronger_taker_filter() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("tp-1", "TP1USDT", base_time, "0.56", "101", "84", "86"),
+            ("tp-2", "TP2USDT", base_time + timedelta(minutes=15), "0.57", "101", "84", "86"),
+            ("sl", "SLUSDT", base_time + timedelta(minutes=30), "0.53", "111", "98", "109"),
+        ]
+        for signal_id, symbol, signal_time, taker_sell, high, low, close in rows:
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={
+                        "futures_spread_pct": "0.01",
+                        "range_ratio_vs_atr": "1.00",
+                        "kline_taker_sell_ratio": taker_sell,
+                        "kline_taker_buy_ratio": str(Decimal("1") - Decimal(taker_sell)),
+                    },
+                )
+            )
+            db.add(_candle(symbol, signal_time, signal_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_taker_sell_deep_dive(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["scope_count"] == 3
+        assert payload["summary"]["tp_count"] == 2
+        assert payload["summary"]["sl_count"] == 1
+        rows_by_id = {row["filter_id"]: row for row in payload["filter_rows"]}
+        stronger_taker = rows_by_id["TAKER_SELL_GE_55"]
+        assert stronger_taker["sample_count"] == 2
+        assert stronger_taker["tp_count"] == 2
+        assert stronger_taker["sl_count"] == 0
+        assert stronger_taker["read"] == "TAKER_DEEP_FILTER_PROMISING"
+        assert payload["summary"]["promising_count"] >= 1
+        assert payload["top_filter_items"]
+
+
 def _signal(
     signal_id: str,
     symbol: str,

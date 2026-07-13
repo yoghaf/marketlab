@@ -1710,6 +1710,73 @@ export type MidShortSecondFilterShadowResponse = {
   };
 };
 
+export type MidShortTakerSellDeepDiveResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    base_filter_id: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  base_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    source_shadow_pass_count: number;
+    scope_count: number;
+    closed_count: number;
+    tp_count: number;
+    sl_count: number;
+    open_count: number;
+    sl_then_would_tp_count: number;
+    tp_near_then_sl_count: number;
+    wrong_direction_1h_count: number;
+    correct_direction_1h_count: number;
+    baseline: OneHourWalkForwardPerf;
+    filter_count: number;
+    promising_count: number;
+    damage_reduction_count: number;
+    top_filter_id?: string | null;
+    top_filter_label?: string | null;
+    read: string;
+  };
+  filter_rows: MidShortSecondFilterRow[];
+  outcome_path_rows: MidShortFailureBucketRow[];
+  direction_rows: MidShortFailureBucketRow[];
+  regime_rows: MidShortFailureBucketRow[];
+  session_rows: MidShortFailureBucketRow[];
+  symbol_rows: MidShortFailureBucketRow[];
+  evidence_tp_vs_sl: SignalQualityEvidenceField[];
+  top_filter_items: SignalPerformanceItem[];
+  latest_sl_signals: SignalPerformanceItem[];
+  latest_tp_signals: SignalPerformanceItem[];
+  latest_open_signals: SignalPerformanceItem[];
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;

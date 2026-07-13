@@ -149,6 +149,11 @@ const styles: Record<string, string> = {
   SECOND_FILTER_NO_CLEAR_EDGE: "border-warmup text-warmup bg-amber-50",
   SECOND_FILTER_WORSE: "border-stale text-stale bg-red-50",
   WAIT_MORE_SAMPLE: "border-missing text-missing bg-gray-50",
+  TAKER_DEEP_FILTER_PROMISING: "border-ready text-ready bg-emerald-50",
+  TAKER_DEEP_FILTER_REDUCES_DAMAGE: "border-blue-700 text-blue-700 bg-blue-50",
+  TAKER_DEEP_NO_CLEAR_EDGE: "border-warmup text-warmup bg-amber-50",
+  TAKER_DEEP_FILTER_WORSE: "border-stale text-stale bg-red-50",
+  TAKER_DEEP_WAIT_MORE_SAMPLE: "border-missing text-missing bg-gray-50",
   SPREAD_UNKNOWN: "border-warmup text-warmup bg-amber-50",
   INFO: "border-blue-700 text-blue-700 bg-blue-50",
   UNAVAILABLE: "border-missing text-missing bg-gray-50"

@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-13",
+    version: "LAB-42",
+    title: "MID_SHORT 1h Taker Sell Deep Dive",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan riset khusus untuk membedah MID_SHORT 1h yang sudah lolos Taker Sell >= 52%.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-taker-sell-deep-dive membaca subset MID_SHORT 1h SHADOW_PASS dengan kline_taker_sell_ratio >= 0.52.",
+      "Halaman /mid-short-taker-sell-deep-dive menampilkan TP/SL, realistic R, path loss, evidence TP-vs-SL, regime BTC/ETH, symbol concentration, dan sample TP/SL terbaru.",
+      "Filter granular baru diuji read-only: taker sell 55/58/60, range/ATR, price/ATR, volume, spread/cost, OI, funding, positioning, regime, dan kombinasi.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa menjawab kenapa filter taker sell dominan masih punya banyak SL dan filter tambahan mana yang layak dipantau sebelum dipromosikan menjadi shadow rule berikutnya.",
+    links: [
+      { href: "/mid-short-taker-sell-deep-dive", label: "MID_SHORT Taker Deep Dive" },
+      { href: "/mid-short-second-filter-shadow", label: "MID_SHORT Second Filter" },
+      { href: "/mid-short-failure-anatomy", label: "MID_SHORT Failure Anatomy" }
+    ]
+  },
+  {
+    date: "2026-07-13",
     version: "LAB-41",
     title: "MID_SHORT 1h Second Filter Shadow",
     status: "LIVE",

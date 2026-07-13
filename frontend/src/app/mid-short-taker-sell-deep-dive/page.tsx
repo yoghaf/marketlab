@@ -7,8 +7,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   MidShortFailureBucketRow,
   MidShortSecondFilterRow,
-  MidShortSecondFilterShadowResponse,
+  MidShortTakerSellDeepDiveResponse,
   SignalPerformanceItem,
+  SignalQualityEvidenceField,
   fetchJson,
   fmtNumber,
   fmtPrice,
@@ -20,29 +21,27 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export const dynamic = "force-dynamic";
 
-export default async function MidShortSecondFilterShadowPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function MidShortTakerSellDeepDivePage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
-  const shadowStatus = firstParam(params.shadow_status) || "SHADOW_PASS";
   const minSample = normalizeNumber(firstParam(params.min_sample), 20, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 50, 10, 150);
   const query = new URLSearchParams({
     include_watch_only: String(includeWatchOnly),
     position_lock: String(positionLock),
-    shadow_status: shadowStatus,
     min_sample: String(minSample),
     limit: String(limit)
   });
 
-  let data: MidShortSecondFilterShadowResponse | null = null;
+  let data: MidShortTakerSellDeepDiveResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchJson<MidShortSecondFilterShadowResponse>(
-      `/api/signal-candidates/mid-short-1h-second-filter-shadow?${query.toString()}`
+    data = await fetchJson<MidShortTakerSellDeepDiveResponse>(
+      `/api/signal-candidates/mid-short-1h-taker-sell-deep-dive?${query.toString()}`
     );
   } catch (err) {
-    error = err instanceof Error ? err.message : "Second Filter Shadow API failed";
+    error = err instanceof Error ? err.message : "Taker Sell Deep Dive API failed";
   }
 
   const summary = data?.summary;
@@ -51,18 +50,17 @@ export default async function MidShortSecondFilterShadowPage({ searchParams }: {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="MID_SHORT 1h Second Filter Shadow"
+        title="MID_SHORT 1h Taker Sell Deep Dive"
         badge="READ-ONLY RESEARCH"
-        subtitle="Riset lanjutan setelah Failure Anatomy: uji filter tambahan di dalam scope MID_SHORT 1h SHADOW_PASS untuk melihat mana yang mengurangi SL, salah arah, dan timing stop. Ini belum mengubah rule live."
+        subtitle="Fokus hanya ke MID_SHORT 1h yang sudah lolos Taker Sell >= 52%. Tujuannya menjawab kenapa SL masih banyak dan filter tambahan apa yang bisa menaikkan kualitas TP/SL."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-second-filter-shadow">Open Second Filter</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-failure-anatomy">Open Failure Anatomy</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-taker-sell-deep-dive">Open Taker Sell Deep Dive</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/shadow-forward-log">Open Shadow Log</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?stage=MID_SHORT&timeframe=1h">Open Quality Lab</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance?stage=MID_SHORT&timeframe=1h">Open Signal History</Link>
       </div>
 
       {error ? (
@@ -70,25 +68,16 @@ export default async function MidShortSecondFilterShadowPage({ searchParams }: {
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="Scope sample" value={summary?.source_count ?? 0} helper={`${baseline?.closed_count ?? 0} baseline closed`} />
-            <MetricCard label="Baseline realistic" value={`${fmtSigned(baseline?.realistic_total_r_closed)}R`} helper={`${baseline?.tp_count ?? 0} TP / ${baseline?.sl_count ?? 0} SL`} tone={Number(baseline?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="Filter tested" value={summary?.filter_count ?? 0} helper={`${summary?.monitor_count ?? 0} monitor`} />
-            <MetricCard label="Reduce damage" value={summary?.damage_reduction_count ?? 0} helper="Avg R, SL share, atau wrong direction membaik" tone="warn" />
-            <MetricCard label="Top filter" value={summary?.top_filter_label || "-"} helper={summary?.top_filter_id || "-"} />
-            <MetricCard label="Latest candle" value={fmtTime(data?.latest_evaluation_candle_time)} helper={data?.cache?.hit ? "cache hit" : "fresh read"} />
+            <MetricCard label="Taker scope" value={summary?.scope_count ?? 0} helper={`from ${summary?.source_shadow_pass_count ?? 0} SHADOW_PASS`} />
+            <MetricCard label="TP / SL" value={`${summary?.tp_count ?? 0} / ${summary?.sl_count ?? 0}`} helper={`${summary?.open_count ?? 0} open`} />
+            <MetricCard label="Realistic R" value={`${fmtSigned(baseline?.realistic_total_r_closed)}R`} helper={`${fmtSigned(baseline?.realistic_avg_r_closed)}R avg`} tone={Number(baseline?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="SL then TP" value={summary?.sl_then_would_tp_count ?? 0} helper="Stop dulu, lalu target" tone="warn" />
+            <MetricCard label="Near TP then SL" value={summary?.tp_near_then_sl_count ?? 0} helper="MFE >= +0.75R lalu stop" tone="warn" />
+            <MetricCard label="Top filter" value={summary?.top_filter_label || "-"} helper={summary?.read || "-"} />
           </section>
 
-          <SectionCard title="Second filter controls" description="Filter ini hanya mengubah audit halaman. Signal Factory, scanner, TP/SL, dan execution tidak berubah.">
-            <form className="grid gap-3 p-4 text-sm md:grid-cols-5">
-              <label className="grid gap-1">
-                <span className="font-semibold text-slate-600">Shadow status</span>
-                <select className="rounded border border-line px-3 py-2" name="shadow_status" defaultValue={shadowStatus}>
-                  <option value="SHADOW_PASS">SHADOW_PASS</option>
-                  <option value="SHADOW_FAIL">SHADOW_FAIL</option>
-                  <option value="SHADOW_UNAVAILABLE">SHADOW_UNAVAILABLE</option>
-                  <option value="ALL">ALL</option>
-                </select>
-              </label>
+          <SectionCard title="Deep dive controls" description="Ini hanya mengubah audit halaman. Tidak mengubah rule Signal Factory, scanner, TP/SL, atau execution.">
+            <form className="grid gap-3 p-4 text-sm md:grid-cols-4">
               <label className="grid gap-1">
                 <span className="font-semibold text-slate-600">Min sample</span>
                 <input className="rounded border border-line px-3 py-2" min={1} max={100} name="min_sample" type="number" defaultValue={minSample} />
@@ -114,29 +103,56 @@ export default async function MidShortSecondFilterShadowPage({ searchParams }: {
             </form>
           </SectionCard>
 
-          <SectionCard title="Filter comparison vs baseline" description="Yang dicari bukan cuma Total R naik, tapi SL share turun, wrong-direction turun, dan timing stop lebih bersih. Semua read-only.">
+          <SectionCard title="Candidate filters inside Taker Sell >= 52%" description="Ranking filter tambahan. Yang dicari: realistic R naik, SL share turun, wrong-direction turun, dan drawdown tidak memburuk.">
             <FilterTable rows={data?.filter_rows || []} />
           </SectionCard>
 
-          <section className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
-            <SectionCard title="Baseline failure paths" description="Baseline path dari semua MID_SHORT 1h dalam shadow scope sebelum filter tambahan.">
-              <PathTable rows={data?.baseline_path_rows || []} />
+          <section className="grid gap-4 xl:grid-cols-2">
+            <SectionCard title="Why SL still happens" description="Path TP/SL khusus subset Taker Sell >= 52%.">
+              <BucketTable rows={data?.outcome_path_rows || []} />
             </SectionCard>
-            <SectionCard title="Latest rows from top filter" description="Signal terbaru yang lolos filter ranking teratas; klik Open untuk detail signal.">
+            <SectionCard title="MFE/MAE evidence split" description="Median evidence TP dibanding SL untuk subset ini.">
+              <EvidenceTable rows={(data?.evidence_tp_vs_sl || []).slice(0, 14)} />
+            </SectionCard>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-2">
+            <SectionCard title="Direction check" description="Untuk SHORT, correct direction berarti return harga negatif setelah signal.">
+              <BucketTable rows={data?.direction_rows || []} showDimension />
+            </SectionCard>
+            <SectionCard title="BTC/ETH regime split" description="Cek apakah loss terkonsentrasi ketika BTC/ETH melawan.">
+              <BucketTable rows={data?.regime_rows || []} showDimension />
+            </SectionCard>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-2">
+            <SectionCard title="Latest SL samples" description="Sample loss terbaru di subset taker sell; buka detail untuk angka lengkap.">
+              <SignalTable items={data?.latest_sl_signals || []} />
+            </SectionCard>
+            <SectionCard title="Latest TP samples" description="Pembanding signal yang target duluan.">
+              <SignalTable items={data?.latest_tp_signals || []} />
+            </SectionCard>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
+            <SectionCard title="Symbol concentration" description="Cek apakah hasil terlalu bergantung ke token tertentu.">
+              <BucketTable rows={(data?.symbol_rows || []).slice(0, 30)} />
+            </SectionCard>
+            <SectionCard title="Latest rows from top filter" description="Signal terbaru yang lolos filter paling atas.">
               <SignalTable items={data?.top_filter_items || []} />
             </SectionCard>
           </section>
 
-          <SectionCard title="Current shadow scope" description="Filter utama yang sedang dibedah sebelum second filter.">
+          <SectionCard title="Base filter scope" description="Subset yang sedang diteliti.">
             <div className="grid gap-3 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
-              <Info label="Shadow filter" value={data?.shadow_filter.label || "-"} />
-              <Info label="Expression" value={data?.shadow_filter.expression || "-"} />
-              <Info label="Status meaning" value={data?.shadow_filter.status_meaning || "-"} />
-              <Info label="Study scope" value={data?.study_scope || "-"} />
+              <Info label="Base filter" value={data?.base_filter.label || "-"} />
+              <Info label="Expression" value={data?.base_filter.expression || "-"} />
+              <Info label="Meaning" value={data?.base_filter.status_meaning || "-"} />
+              <Info label="Latest candle" value={fmtTime(data?.latest_evaluation_candle_time)} />
             </div>
           </SectionCard>
 
-          <SectionCard title="Guardrails" description="Batasan interpretasi halaman ini.">
+          <SectionCard title="Guardrails" description="Batasan interpretasi riset ini.">
             <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
               {(data?.guardrails || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
             </ul>
@@ -160,10 +176,11 @@ function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
             <th>Retain</th>
             <th>Realistic R</th>
             <th>Avg delta</th>
-            <th>SL share delta</th>
+            <th>SL delta</th>
             <th>Wrong-dir delta</th>
             <th>SL then TP delta</th>
-            <th>Near TP then SL delta</th>
+            <th>Drawdown delta</th>
+            <th>Top symbol</th>
             <th>Read</th>
           </tr>
         </thead>
@@ -184,13 +201,14 @@ function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
               <td>{fmtPctDelta(row.sl_share_delta_vs_baseline)}</td>
               <td>{fmtPctDelta(row.wrong_direction_1h_share_pct_delta_vs_baseline)}</td>
               <td>{fmtPctDelta(row.sl_then_would_tp_share_pct_delta_vs_baseline)}</td>
-              <td>{fmtPctDelta(row.tp_near_then_sl_share_pct_delta_vs_baseline)}</td>
+              <td>{fmtSigned(row.max_drawdown_delta_vs_baseline)}R</td>
+              <td>{row.top_symbol} ({fmtPct(row.top_symbol_share_pct)})</td>
               <td><StatusBadge value={row.read} /></td>
             </tr>
           ))}
           {!rows.length && (
             <tr>
-              <td colSpan={12} className="py-8 text-center text-sm text-slate-500">No second-filter rows</td>
+              <td colSpan={13} className="py-8 text-center text-sm text-slate-500">No deep filter rows</td>
             </tr>
           )}
         </tbody>
@@ -199,34 +217,83 @@ function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
   );
 }
 
-function PathTable({ rows }: { rows: MidShortFailureBucketRow[] }) {
+function BucketTable({ rows, showDimension = false }: { rows: MidShortFailureBucketRow[]; showDimension?: boolean }) {
   return (
     <div className="table-wrap">
       <table className="ops-table">
         <thead>
           <tr>
-            <th>Path</th>
+            {showDimension ? <th>Dimension</th> : null}
+            <th>Bucket</th>
             <th>Sample</th>
             <th>TP / SL / Open</th>
             <th>SL share</th>
             <th>Realistic R</th>
+            <th>Avg R</th>
             <th>Read</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.bucket}>
+            <tr key={`${row.dimension}-${row.horizon || ""}-${row.bucket}`}>
+              {showDimension ? <td>{row.horizon || labelFor(row.dimension)}</td> : null}
               <td><StatusBadge value={row.bucket} /></td>
               <td>{row.sample_count}</td>
               <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
               <td>{fmtPct(row.sl_share_pct)}</td>
               <td>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R</td>
               <td className="max-w-md text-slate-600">{row.read}</td>
             </tr>
           ))}
           {!rows.length && (
             <tr>
-              <td colSpan={6} className="py-8 text-center text-sm text-slate-500">No path rows</td>
+              <td colSpan={showDimension ? 8 : 7} className="py-8 text-center text-sm text-slate-500">No rows</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Evidence</th>
+            <th>Flag</th>
+            <th>Available</th>
+            <th>TP / SL</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>Delta</th>
+            <th>TP Q1/Q3</th>
+            <th>SL Q1/Q3</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td><StatusBadge value={row.quality_flag} /></td>
+              <td>{row.available_count} / miss {row.missing_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>{fmtNumber(row.tp_median)}</td>
+              <td>{fmtNumber(row.sl_median)}</td>
+              <td>{fmtSigned(row.delta_tp_minus_sl)}</td>
+              <td>{fmtNumber(row.tp_q1)} / {fmtNumber(row.tp_q3)}</td>
+              <td>{fmtNumber(row.sl_q1)} / {fmtNumber(row.sl_q3)}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={9} className="py-8 text-center text-sm text-slate-500">No evidence rows</td>
             </tr>
           )}
         </tbody>
@@ -268,7 +335,7 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
           ))}
           {!items.length && (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-sm text-slate-500">No top-filter signals</td>
+              <td colSpan={7} className="py-8 text-center text-sm text-slate-500">No signal rows</td>
             </tr>
           )}
         </tbody>

@@ -581,6 +581,105 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_taker_sell_deep_dive(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            shadow_status="SHADOW_PASS",
+        )
+        taker_scope = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        baseline = _walk_forward_perf(taker_scope)
+        filter_rows = _mid_short_taker_sell_deep_filter_rows(
+            taker_scope,
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        top_filter = filter_rows[0] if filter_rows else None
+        top_items = _apply_named_taker_sell_deep_filter(taker_scope, str(top_filter.get("filter_id"))) if top_filter else []
+        closed = [item for item in taker_scope if item.get("result_status") in COMPLETED_OUTCOMES]
+        sl_items = [item for item in closed if item.get("result_status") == "SL_HIT"]
+        tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_taker_sell_deep_dive",
+            "study_scope": "read_only_mid_short_1h_taker_sell_ge_52_deep_dive",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "Taker sell >= 52%",
+                "expression": "kline_taker_sell_ratio >= 0.52 inside MID_SHORT 1h SHADOW_PASS",
+                "status_meaning": "Deep dive only studies signals that already pass the strongest second-filter candidate.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "source_shadow_pass_count": len(annotated),
+                "scope_count": len(taker_scope),
+                "closed_count": len(closed),
+                "tp_count": len(tp_items),
+                "sl_count": len(sl_items),
+                "open_count": sum(1 for item in taker_scope if item.get("result_status") == "OPEN"),
+                "sl_then_would_tp_count": sum(1 for item in sl_items if item.get("after_sl_would_hit_tp")),
+                "tp_near_then_sl_count": sum(1 for item in sl_items if item.get("tp_near_before_sl")),
+                "wrong_direction_1h_count": sum(1 for item in taker_scope if item.get("direction_1h") == "WRONG_DIRECTION"),
+                "correct_direction_1h_count": sum(1 for item in taker_scope if item.get("direction_1h") == "CORRECT_DIRECTION"),
+                "baseline": baseline,
+                "filter_count": len(filter_rows),
+                "promising_count": sum(1 for row in filter_rows if row.get("read") == "TAKER_DEEP_FILTER_PROMISING"),
+                "damage_reduction_count": sum(1 for row in filter_rows if row.get("read") == "TAKER_DEEP_FILTER_REDUCES_DAMAGE"),
+                "top_filter_id": top_filter.get("filter_id") if top_filter else None,
+                "top_filter_label": top_filter.get("label") if top_filter else None,
+                "read": _mid_short_taker_sell_deep_summary_read(filter_rows, min_sample=min_sample),
+            },
+            "filter_rows": filter_rows,
+            "outcome_path_rows": _anatomy_bucket_rows(taker_scope, key="path_type", min_sample=min_sample, baseline=baseline),
+            "direction_rows": _direction_correctness_rows(taker_scope, baseline=baseline, min_sample=min_sample),
+            "regime_rows": _mid_short_regime_rows(taker_scope, baseline=baseline, min_sample=min_sample),
+            "session_rows": _anatomy_bucket_rows(taker_scope, key="wib_session", min_sample=min_sample, baseline=baseline),
+            "symbol_rows": _anatomy_bucket_rows(taker_scope, key="symbol", min_sample=1, baseline=baseline, limit=limit),
+            "evidence_tp_vs_sl": _evidence_field_rows(closed, min_sample=max(3, min_sample // 2)),
+            "top_filter_items": _sorted_signal_rows(top_items, limit=limit),
+            "latest_sl_signals": _sorted_signal_rows(sl_items, limit=limit),
+            "latest_tp_signals": _sorted_signal_rows(tp_items, limit=limit),
+            "latest_open_signals": _sorted_signal_rows(
+                [item for item in taker_scope if item.get("result_status") == "OPEN"],
+                limit=limit,
+            ),
+            "guardrails": [
+                "Taker Sell Deep Dive only reads logged V2 MID_SHORT 1h SHADOW_PASS signals with kline_taker_sell_ratio >= 0.52.",
+                "Candidate filters are research-only and do not change Signal Factory rules or scanner behavior.",
+                "TP/SL formula, outcome logic, execution, leverage, order placement, and position sizing stay unchanged.",
+                "Promising filters must be forward-observed before any rule promotion discussion.",
+            ],
+        }
+
     def _mid_short_1h_anatomy_dataset(
         self,
         *,
@@ -4553,6 +4652,295 @@ def _mid_short_second_filter_summary_read(rows: list[dict[str, Any]], *, min_sam
     if any(row.get("read") == "SECOND_FILTER_REDUCES_DAMAGE" for row in ready_rows):
         return "HAS_DAMAGE_REDUCTION_CANDIDATE"
     return "NO_CLEAN_SECOND_FILTER_YET"
+
+
+def _mid_short_taker_sell_deep_filter_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "TAKER_SELL_GE_55",
+            "Taker sell >= 55%",
+            "kline_taker_sell_ratio >= 0.55",
+            "taker_strength",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55"),
+        ),
+        FilterStudySpec(
+            "TAKER_SELL_GE_58",
+            "Taker sell >= 58%",
+            "kline_taker_sell_ratio >= 0.58",
+            "taker_strength",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.58"),
+        ),
+        FilterStudySpec(
+            "TAKER_SELL_GE_60",
+            "Taker sell >= 60%",
+            "kline_taker_sell_ratio >= 0.60",
+            "taker_strength",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.60"),
+        ),
+        FilterStudySpec(
+            "RANGE_ATR_LE_1_25",
+            "Range/ATR <= 1.25",
+            "range_ratio_vs_atr <= 1.25",
+            "late_momentum",
+            ("range_ratio_vs_atr",),
+            lambda item: (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "RANGE_ATR_LE_1_00",
+            "Range/ATR <= 1.00",
+            "range_ratio_vs_atr <= 1.00",
+            "late_momentum",
+            ("range_ratio_vs_atr",),
+            lambda item: (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.00"),
+        ),
+        FilterStudySpec(
+            "PRICE_ATR_LE_1_25",
+            "Price/ATR <= 1.25",
+            "price_atr_multiple <= 1.25",
+            "late_momentum",
+            ("price_atr_multiple",),
+            lambda item: (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "VOLUME_LE_1_50",
+            "Volume <= 1.50x lookback",
+            "volume_ratio_vs_lookback <= 1.50",
+            "late_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "FUTURES_SPREAD_LE_0_03",
+            "Futures spread <= 0.03%",
+            "futures_spread_pct <= 0.03",
+            "cost_gate",
+            ("futures_spread_pct",),
+            lambda item: (_evidence_value(item, "futures_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "FILL_GOOD_ONLY",
+            "Fill good only",
+            "realistic_fill_quality == FILL_GOOD",
+            "cost_gate",
+            (),
+            lambda item: str(item.get("realistic_fill_quality") or "") == "FILL_GOOD",
+        ),
+        FilterStudySpec(
+            "COST_R_LE_0_20",
+            "Cost R <= 0.20",
+            "realistic_cost_r_estimate <= 0.20",
+            "cost_gate",
+            (),
+            lambda item: _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.20"),
+        ),
+        FilterStudySpec(
+            "PRICE_RETURN_LE_0",
+            "Signal candle red/weak",
+            "price_return <= 0",
+            "direction_gate",
+            ("price_return",),
+            lambda item: (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "OI_Z_GE_1",
+            "OI z-score >= 1",
+            "oi_zscore >= 1",
+            "open_interest",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("1"),
+        ),
+        FilterStudySpec(
+            "OI_Z_GE_2",
+            "OI z-score >= 2",
+            "oi_zscore >= 2",
+            "open_interest",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("2"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_65",
+            "Funding percentile >= 65",
+            "funding_percentile_30d >= 65",
+            "positioning",
+            ("funding_percentile_30d",),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("65"),
+        ),
+        FilterStudySpec(
+            "GLOBAL_LS_GE_1_20",
+            "Global long/short >= 1.20",
+            "global_long_short_ratio >= 1.20",
+            "positioning",
+            ("global_long_short_ratio",),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "TOP_POSITION_GE_1_20",
+            "Top trader position >= 1.20",
+            "top_trader_position_ratio >= 1.20",
+            "positioning",
+            ("top_trader_position_ratio",),
+            lambda item: (_evidence_value(item, "top_trader_position_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "NO_BTC_ETH_1H_BULL",
+            "Exclude BTC/ETH 1h bullish regime",
+            "btc_1h_regime != BULLISH_REGIME AND eth_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "TAKER55_AND_RANGE_LE_1_25",
+            "Taker sell >=55% + range/ATR <=1.25",
+            "kline_taker_sell_ratio >= 0.55 AND range_ratio_vs_atr <= 1.25",
+            "combo_taker_late",
+            ("kline_taker_sell_ratio", "range_ratio_vs_atr"),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "TAKER55_AND_FILL_GOOD",
+            "Taker sell >=55% + fill good",
+            "kline_taker_sell_ratio >= 0.55 AND realistic_fill_quality == FILL_GOOD",
+            "combo_taker_cost",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55")
+            and str(item.get("realistic_fill_quality") or "") == "FILL_GOOD",
+        ),
+        FilterStudySpec(
+            "TAKER55_RANGE_COST",
+            "Taker sell >=55% + range <=1.25 + cost R <=0.20",
+            "kline_taker_sell_ratio >= 0.55 AND range_ratio_vs_atr <= 1.25 AND realistic_cost_r_estimate <= 0.20",
+            "combo_taker_late_cost",
+            ("kline_taker_sell_ratio", "range_ratio_vs_atr"),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55")
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.25")
+            and _decimal_or_none(item.get("realistic_cost_r_estimate")) is not None
+            and (_decimal_or_none(item.get("realistic_cost_r_estimate")) or Decimal("999")) <= Decimal("0.20"),
+        ),
+        FilterStudySpec(
+            "TAKER55_NO_BTC_ETH_BULL",
+            "Taker sell >=55% + no BTC/ETH 1h bull",
+            "kline_taker_sell_ratio >= 0.55 AND btc/eth not bullish",
+            "combo_taker_regime",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55")
+            and item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "TAKER55_POSITIONING",
+            "Taker sell >=55% + crowded longs",
+            "kline_taker_sell_ratio >= 0.55 AND global_long_short_ratio >= 1.20",
+            "combo_taker_positioning",
+            ("kline_taker_sell_ratio", "global_long_short_ratio"),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.55")
+            and (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+    ]
+
+
+def _mid_short_taker_sell_deep_filter_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    baseline_path = _mid_short_path_count_summary(items)
+    for spec in _mid_short_taker_sell_deep_filter_specs():
+        selected, missing = _apply_filter_spec(items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        path_summary = _mid_short_path_count_summary(selected, baseline=baseline_path)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(items)) * Decimal("100")) if items else None,
+            "sample_retention_pct": _retention(len(selected), len(items)),
+            "read": _mid_short_taker_sell_deep_filter_read(perf, path_summary, min_sample=min_sample),
+            **path_summary,
+            **perf,
+        }
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row["read"] == "TAKER_DEEP_FILTER_PROMISING",
+            row["read"] == "TAKER_DEEP_FILTER_REDUCES_DAMAGE",
+            _decimal_or_zero(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("realistic_total_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("sl_share_delta_vs_baseline")) * Decimal("-1"),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _apply_named_taker_sell_deep_filter(items: list[dict[str, Any]], filter_id: str) -> list[dict[str, Any]]:
+    spec = next((row for row in _mid_short_taker_sell_deep_filter_specs() if row.filter_id == filter_id), None)
+    if spec is None:
+        return []
+    selected, _missing = _apply_filter_spec(items, spec)
+    return selected
+
+
+def _mid_short_taker_sell_deep_filter_read(
+    perf: dict[str, Any],
+    path_summary: dict[str, Any],
+    *,
+    min_sample: int,
+) -> str:
+    if int(perf.get("closed_count") or 0) < min_sample:
+        return "TAKER_DEEP_WAIT_MORE_SAMPLE"
+    realistic_total = _decimal_or_zero(perf.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(perf.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(perf.get("sl_share_delta_vs_baseline"))
+    wrong_delta = _decimal_or_none_any(path_summary.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    timing_delta = _decimal_or_none_any(path_summary.get("sl_then_would_tp_share_pct_delta_vs_baseline"))
+    drawdown_delta = _decimal_or_none_any(perf.get("max_drawdown_delta_vs_baseline"))
+    if (
+        realistic_total > 0
+        and avg_delta is not None
+        and avg_delta > 0
+        and (sl_delta is None or sl_delta <= 0)
+        and (wrong_delta is None or wrong_delta <= 0)
+        and (drawdown_delta is None or drawdown_delta >= 0)
+    ):
+        return "TAKER_DEEP_FILTER_PROMISING"
+    if (
+        (avg_delta is not None and avg_delta > 0)
+        or (sl_delta is not None and sl_delta < 0)
+        or (wrong_delta is not None and wrong_delta < 0)
+        or (timing_delta is not None and timing_delta < 0)
+    ):
+        return "TAKER_DEEP_FILTER_REDUCES_DAMAGE"
+    if avg_delta is not None and avg_delta < 0 and (sl_delta is not None and sl_delta > 0):
+        return "TAKER_DEEP_FILTER_WORSE"
+    return "TAKER_DEEP_NO_CLEAR_EDGE"
+
+
+def _mid_short_taker_sell_deep_summary_read(rows: list[dict[str, Any]], *, min_sample: int) -> str:
+    if not rows:
+        return "NO_TAKER_DEEP_FILTER_ROWS"
+    ready_rows = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    if not ready_rows:
+        return "TAKER_DEEP_WAIT_MORE_SAMPLE"
+    if any(row.get("read") == "TAKER_DEEP_FILTER_PROMISING" for row in ready_rows):
+        return "HAS_TAKER_DEEP_PROMISING_FILTER"
+    if any(row.get("read") == "TAKER_DEEP_FILTER_REDUCES_DAMAGE" for row in ready_rows):
+        return "HAS_TAKER_DEEP_DAMAGE_REDUCTION"
+    return "NO_TAKER_DEEP_CLEAN_FILTER_YET"
 
 
 def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:

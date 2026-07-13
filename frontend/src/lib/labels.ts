@@ -159,6 +159,11 @@ const labels: Record<string, string> = {
   SECOND_FILTER_NO_CLEAR_EDGE: "Belum ada edge jelas",
   SECOND_FILTER_WORSE: "Lebih buruk",
   WAIT_MORE_SAMPLE: "Tunggu sample",
+  TAKER_DEEP_FILTER_PROMISING: "Taker filter menarik",
+  TAKER_DEEP_FILTER_REDUCES_DAMAGE: "Taker filter kurangi damage",
+  TAKER_DEEP_NO_CLEAR_EDGE: "Belum ada edge jelas",
+  TAKER_DEEP_FILTER_WORSE: "Lebih buruk",
+  TAKER_DEEP_WAIT_MORE_SAMPLE: "Tunggu sample",
   SPREAD_UNKNOWN: "Spread belum diketahui",
   INFO: "Info",
   UNAVAILABLE: "Belum tersedia"
