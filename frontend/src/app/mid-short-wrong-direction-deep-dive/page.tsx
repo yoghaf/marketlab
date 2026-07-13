@@ -6,10 +6,10 @@ import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   MidShortFailureBucketRow,
-  MidShortSecondFilterRow,
-  MidShortTakerSellDeepDiveResponse,
+  MidShortWrongDirectionDeepDiveResponse,
+  MidShortWrongDirectionEvidenceRow,
+  MidShortWrongDirectionFilterRow,
   SignalPerformanceItem,
-  SignalQualityEvidenceField,
   fetchJson,
   fmtNumber,
   fmtPrice,
@@ -21,7 +21,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export const dynamic = "force-dynamic";
 
-export default async function MidShortTakerSellDeepDivePage({ searchParams }: { searchParams: SearchParams }) {
+export default async function MidShortWrongDirectionDeepDivePage({ searchParams }: { searchParams: SearchParams }) {
   const params = await searchParams;
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
@@ -34,33 +34,34 @@ export default async function MidShortTakerSellDeepDivePage({ searchParams }: { 
     limit: String(limit)
   });
 
-  let data: MidShortTakerSellDeepDiveResponse | null = null;
+  let data: MidShortWrongDirectionDeepDiveResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchJson<MidShortTakerSellDeepDiveResponse>(
-      `/api/signal-candidates/mid-short-1h-taker-sell-deep-dive?${query.toString()}`
+    data = await fetchJson<MidShortWrongDirectionDeepDiveResponse>(
+      `/api/signal-candidates/mid-short-1h-wrong-direction-deep-dive?${query.toString()}`
     );
   } catch (err) {
-    error = err instanceof Error ? err.message : "Taker Sell Deep Dive API failed";
+    error = err instanceof Error ? err.message : "Wrong Direction Deep Dive API failed";
   }
 
   const summary = data?.summary;
   const baseline = summary?.baseline;
+  const wrongPerf = summary?.wrong_direction_perf;
+  const correctPerf = summary?.correct_direction_perf;
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="MID_SHORT 1h Taker Sell Deep Dive"
+        title="MID_SHORT 1h Wrong Direction Deep Dive"
         badge="READ-ONLY RESEARCH"
-        subtitle="Fokus hanya ke MID_SHORT 1h yang sudah lolos Taker Sell >= 52%. Tujuannya menjawab kenapa SL masih banyak dan filter tambahan apa yang bisa menaikkan kualitas TP/SL."
+        subtitle="Membedah kenapa MID_SHORT 1h + Taker Sell >= 52% masih salah arah. Fokusnya mencari tanda sebelum signal yang membedakan short yang benar turun vs yang malah naik."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-taker-sell-deep-dive">Open Taker Deep Dive</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-second-filter-shadow">Open Second Filter</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-failure-anatomy">Open Failure Anatomy</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-wrong-direction-deep-dive">Open Wrong Direction</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/shadow-forward-log">Open Shadow Log</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?stage=MID_SHORT&timeframe=1h">Open Quality Lab</Link>
       </div>
 
@@ -69,15 +70,15 @@ export default async function MidShortTakerSellDeepDivePage({ searchParams }: { 
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="Taker scope" value={summary?.scope_count ?? 0} helper={`from ${summary?.source_shadow_pass_count ?? 0} SHADOW_PASS`} />
-            <MetricCard label="TP / SL" value={`${summary?.tp_count ?? 0} / ${summary?.sl_count ?? 0}`} helper={`${summary?.open_count ?? 0} open`} />
-            <MetricCard label="Realistic R" value={`${fmtSigned(baseline?.realistic_total_r_closed)}R`} helper={`${fmtSigned(baseline?.realistic_avg_r_closed)}R avg`} tone={Number(baseline?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
-            <MetricCard label="SL then TP" value={summary?.sl_then_would_tp_count ?? 0} helper="Stop dulu, lalu target" tone="warn" />
-            <MetricCard label="Near TP then SL" value={summary?.tp_near_then_sl_count ?? 0} helper="MFE >= +0.75R lalu stop" tone="warn" />
-            <MetricCard label="Top filter" value={summary?.top_filter_label || "-"} helper={summary?.read || "-"} />
+            <MetricCard label="Scope" value={summary?.scope_count ?? 0} helper={`from ${summary?.source_shadow_pass_count ?? 0} SHADOW_PASS`} />
+            <MetricCard label="Wrong 1h" value={`${summary?.wrong_direction_1h_count ?? 0}`} helper={fmtPct(summary?.wrong_direction_1h_share_pct)} tone="bad" />
+            <MetricCard label="Correct 1h" value={`${summary?.correct_direction_1h_count ?? 0}`} helper={fmtPct(summary?.correct_direction_1h_share_pct)} tone="good" />
+            <MetricCard label="Baseline R" value={`${fmtSigned(baseline?.realistic_total_r_closed)}R`} helper={`${summary?.tp_count ?? 0} TP / ${summary?.sl_count ?? 0} SL`} tone={Number(baseline?.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="Wrong bucket R" value={`${fmtSigned(wrongPerf?.realistic_total_r_closed)}R`} helper={`${wrongPerf?.sample_count ?? 0} sample`} tone="bad" />
+            <MetricCard label="Top anti-filter" value={summary?.top_filter_label || "-"} helper={summary?.read || "-"} />
           </section>
 
-          <SectionCard title="Deep dive controls" description="Ini hanya mengubah audit halaman. Tidak mengubah rule Signal Factory, scanner, TP/SL, atau execution.">
+          <SectionCard title="Controls" description="Filter ini hanya untuk audit halaman. Tidak mengubah rule Signal Factory, scanner, TP/SL, atau execution.">
             <form className="grid gap-3 p-4 text-sm md:grid-cols-4">
               <label className="grid gap-1">
                 <span className="font-semibold text-slate-600">Min sample</span>
@@ -104,57 +105,53 @@ export default async function MidShortTakerSellDeepDivePage({ searchParams }: { 
             </form>
           </SectionCard>
 
-          <SectionCard title="Candidate filters inside Taker Sell >= 52%" description="Ranking filter tambahan. Yang dicari: realistic R naik, SL share turun, wrong-direction turun, dan drawdown tidak memburuk.">
-            <FilterTable rows={data?.filter_rows || []} />
+          <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <SectionCard title="Wrong-direction taxonomy" description="Klasifikasi alasan awal kenapa short bergerak naik setelah signal.">
+              <BucketTable rows={data?.wrong_direction_taxonomy_rows || []} />
+            </SectionCard>
+            <SectionCard title="Followthrough flags" description="Baca apakah short langsung followthrough, langsung reversal, atau tertarik BTC/ETH.">
+              <BucketTable rows={data?.followthrough_rows || []} showDimension />
+            </SectionCard>
+          </section>
+
+          <SectionCard title="Anti wrong-direction filters" description="Ranking filter sebelum signal yang berpotensi mengurangi kasus salah arah. Ini tetap research-only.">
+            <FilterTable rows={data?.anti_wrong_direction_filter_rows || []} />
+          </SectionCard>
+
+          <SectionCard title="Correct vs wrong evidence" description="Median evidence actual dari signal yang 1h-nya benar turun dibanding yang salah arah naik.">
+            <EvidenceDirectionTable rows={data?.evidence_correct_vs_wrong || []} />
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Why SL still happens" description="Path TP/SL khusus subset Taker Sell >= 52%.">
-              <BucketTable rows={data?.outcome_path_rows || []} />
-            </SectionCard>
-            <SectionCard title="MFE/MAE evidence split" description="Median evidence TP dibanding SL untuk subset ini.">
-              <EvidenceTable rows={(data?.evidence_tp_vs_sl || []).slice(0, 14)} />
-            </SectionCard>
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Direction check" description="Untuk SHORT, correct direction berarti return harga negatif setelah signal.">
-              <BucketTable rows={data?.direction_rows || []} showDimension />
-            </SectionCard>
-            <SectionCard title="BTC/ETH regime split" description="Cek apakah loss terkonsentrasi ketika BTC/ETH melawan.">
+            <SectionCard title="BTC/ETH regime split" description="Cek apakah wrong direction terkonsentrasi saat BTC/ETH 1h bullish.">
               <BucketTable rows={data?.regime_rows || []} showDimension />
             </SectionCard>
+            <SectionCard title="Wrong-direction symbols" description="Token yang paling sering masuk bucket salah arah di scope ini.">
+              <BucketTable rows={data?.symbol_wrong_rows || []} />
+            </SectionCard>
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Latest SL samples" description="Sample loss terbaru di subset taker sell; buka detail untuk angka lengkap.">
-              <SignalTable items={data?.latest_sl_signals || []} />
+            <SectionCard title="Latest wrong-direction samples" description="Signal terbaru yang 1h setelah entry bergerak melawan short.">
+              <SignalTable items={data?.latest_wrong_direction_signals || []} />
             </SectionCard>
-            <SectionCard title="Latest TP samples" description="Pembanding signal yang target duluan.">
-              <SignalTable items={data?.latest_tp_signals || []} />
-            </SectionCard>
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
-            <SectionCard title="Symbol concentration" description="Cek apakah hasil terlalu bergantung ke token tertentu.">
-              <BucketTable rows={(data?.symbol_rows || []).slice(0, 30)} />
-            </SectionCard>
-            <SectionCard title="Latest rows from top filter" description="Signal terbaru yang lolos filter paling atas.">
-              <SignalTable items={data?.top_filter_items || []} />
+            <SectionCard title="Latest correct-direction samples" description="Pembanding signal yang 1h setelah entry benar turun.">
+              <SignalTable items={data?.latest_correct_direction_signals || []} />
             </SectionCard>
           </section>
 
-          <SectionCard title="Base filter scope" description="Subset yang sedang diteliti.">
+          <SectionCard title="Rows from top anti-filter" description="Signal terbaru yang lolos filter paling atas.">
+            <SignalTable items={data?.top_filter_items || []} />
+          </SectionCard>
+
+          <SectionCard title="Base scope and guardrails" description="Batas interpretasi riset ini.">
             <div className="grid gap-3 p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               <Info label="Base filter" value={data?.base_filter.label || "-"} />
               <Info label="Expression" value={data?.base_filter.expression || "-"} />
-              <Info label="Meaning" value={data?.base_filter.status_meaning || "-"} />
               <Info label="Latest candle" value={fmtTime(data?.latest_evaluation_candle_time)} />
+              <Info label="Correct bucket R" value={`${fmtSigned(correctPerf?.realistic_total_r_closed)}R`} />
             </div>
-          </SectionCard>
-
-          <SectionCard title="Guardrails" description="Batasan interpretasi riset ini.">
-            <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
+            <ul className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
               {(data?.guardrails || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
             </ul>
           </SectionCard>
@@ -164,7 +161,7 @@ export default async function MidShortTakerSellDeepDivePage({ searchParams }: { 
   );
 }
 
-function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
+function FilterTable({ rows }: { rows: MidShortWrongDirectionFilterRow[] }) {
   return (
     <div className="table-wrap">
       <table className="ops-table">
@@ -174,13 +171,12 @@ function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
             <th>Family</th>
             <th>Sample</th>
             <th>TP / SL / Open</th>
-            <th>Retain</th>
+            <th>Wrong 1h</th>
+            <th>Wrong delta</th>
             <th>Realistic R</th>
             <th>Avg delta</th>
             <th>SL delta</th>
-            <th>Wrong-dir delta</th>
-            <th>SL then TP delta</th>
-            <th>Drawdown delta</th>
+            <th>Retain</th>
             <th>Top symbol</th>
             <th>Read</th>
           </tr>
@@ -196,20 +192,19 @@ function FilterTable({ rows }: { rows: MidShortSecondFilterRow[] }) {
               <td>{labelFor(row.family)}</td>
               <td>{row.sample_count}</td>
               <td>{row.tp_count} / {row.sl_count} / {row.open_count}</td>
-              <td>{fmtPct(row.sample_retention_pct)}</td>
+              <td>{row.wrong_direction_1h_count} ({fmtPct(row.wrong_direction_1h_share_pct)})</td>
+              <td>{fmtPctDelta(row.wrong_direction_1h_share_pct_delta_vs_baseline)}</td>
               <td className={Number(row.realistic_total_r_closed || 0) >= 0 ? "font-semibold text-ready" : "font-semibold text-stale"}>{fmtSigned(row.realistic_total_r_closed)}R</td>
               <td>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
               <td>{fmtPctDelta(row.sl_share_delta_vs_baseline)}</td>
-              <td>{fmtPctDelta(row.wrong_direction_1h_share_pct_delta_vs_baseline)}</td>
-              <td>{fmtPctDelta(row.sl_then_would_tp_share_pct_delta_vs_baseline)}</td>
-              <td>{fmtSigned(row.max_drawdown_delta_vs_baseline)}R</td>
+              <td>{fmtPct(row.sample_retention_pct)}</td>
               <td>{row.top_symbol} ({fmtPct(row.top_symbol_share_pct)})</td>
               <td><StatusBadge value={row.read} /></td>
             </tr>
           ))}
           {!rows.length && (
             <tr>
-              <td colSpan={13} className="py-8 text-center text-sm text-slate-500">No deep filter rows</td>
+              <td colSpan={12} className="py-8 text-center text-sm text-slate-500">No anti-filter rows</td>
             </tr>
           )}
         </tbody>
@@ -258,7 +253,7 @@ function BucketTable({ rows, showDimension = false }: { rows: MidShortFailureBuc
   );
 }
 
-function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
+function EvidenceDirectionTable({ rows }: { rows: MidShortWrongDirectionEvidenceRow[] }) {
   return (
     <div className="table-wrap">
       <table className="ops-table">
@@ -267,12 +262,12 @@ function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
             <th>Evidence</th>
             <th>Flag</th>
             <th>Available</th>
-            <th>TP / SL</th>
-            <th>TP median</th>
-            <th>SL median</th>
+            <th>Correct / Wrong</th>
+            <th>Correct median</th>
+            <th>Wrong median</th>
             <th>Delta</th>
-            <th>TP Q1/Q3</th>
-            <th>SL Q1/Q3</th>
+            <th>Correct Q1/Q3</th>
+            <th>Wrong Q1/Q3</th>
           </tr>
         </thead>
         <tbody>
@@ -283,13 +278,13 @@ function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
                 <div className="text-xs text-slate-500">{row.field}</div>
               </td>
               <td><StatusBadge value={row.quality_flag} /></td>
-              <td>{row.available_count} / miss {row.missing_count}</td>
-              <td>{row.tp_count} / {row.sl_count}</td>
-              <td>{fmtNumber(row.tp_median)}</td>
-              <td>{fmtNumber(row.sl_median)}</td>
-              <td>{fmtSigned(row.delta_tp_minus_sl)}</td>
-              <td>{fmtNumber(row.tp_q1)} / {fmtNumber(row.tp_q3)}</td>
-              <td>{fmtNumber(row.sl_q1)} / {fmtNumber(row.sl_q3)}</td>
+              <td>{row.available_count} / miss {row.missing_count} ({fmtPct(row.available_pct)})</td>
+              <td>{row.correct_count} / {row.wrong_count}</td>
+              <td>{fmtNumber(row.correct_median)}</td>
+              <td>{fmtNumber(row.wrong_median)}</td>
+              <td>{fmtSigned(row.delta_correct_minus_wrong)}</td>
+              <td>{fmtNumber(row.correct_q1)} / {fmtNumber(row.correct_q3)}</td>
+              <td>{fmtNumber(row.wrong_q1)} / {fmtNumber(row.wrong_q3)}</td>
             </tr>
           ))}
           {!rows.length && (
@@ -312,31 +307,37 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
             <th>Time WIB</th>
             <th>Symbol</th>
             <th>Status</th>
-            <th>Realistic R</th>
-            <th>MFE / MAE</th>
+            <th>Direction 1h</th>
+            <th>Wrong type</th>
             <th>Entry / SL / TP</th>
+            <th>R</th>
+            <th>Return 15m / 1h</th>
             <th>Detail</th>
           </tr>
         </thead>
         <tbody>
-          {items.slice(0, 25).map((item) => (
+          {items.map((item) => (
             <tr key={item.signal_id}>
-              <td>{item.signal_time_wib || fmtTime(item.signal_timestamp)}</td>
-              <td className="font-semibold text-blue-700">{item.symbol}</td>
+              <td>{fmtTime(item.signal_timestamp)}</td>
+              <td className="font-semibold">{item.symbol}</td>
               <td><StatusBadge value={item.result_status} /></td>
-              <td>{fmtSigned(item.realistic_realized_r ?? item.realistic_unrealized_r)}R</td>
-              <td>{fmtSigned(item.mfe_r)} / {fmtSigned(item.mae_r)}</td>
-              <td className="text-xs">
+              <td><StatusBadge value={item.direction_1h} /></td>
+              <td><StatusBadge value={item.wrong_direction_type} /></td>
+              <td>
                 <div>Entry {fmtPrice(item.entry)}</div>
                 <div>SL {fmtPrice(item.stop_loss)}</div>
                 <div>TP {fmtPrice(item.take_profit)}</div>
               </td>
-              <td><Link className="font-semibold text-blue-700 hover:underline" href={`/signals/${item.signal_id}`}>Open</Link></td>
+              <td>{fmtSigned(item.realistic_realized_r ?? item.realized_r ?? item.realistic_unrealized_r ?? item.unrealized_r)}R</td>
+              <td>{fmtSigned(item.return_15m_pct)}% / {fmtSigned(item.return_1h_pct)}%</td>
+              <td>
+                <Link className="text-blue-700 hover:underline" href={`/signals/${item.symbol}?signal_id=${encodeURIComponent(item.signal_id)}`}>Open</Link>
+              </td>
             </tr>
           ))}
           {!items.length && (
             <tr>
-              <td colSpan={7} className="py-8 text-center text-sm text-slate-500">No signal rows</td>
+              <td colSpan={9} className="py-8 text-center text-sm text-slate-500">No signal rows</td>
             </tr>
           )}
         </tbody>
@@ -347,9 +348,9 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-line bg-field/50 p-3">
+    <div className="rounded border border-line bg-field/40 p-3">
       <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold text-ink">{value}</div>
+      <div className="mt-1 font-semibold">{value}</div>
     </div>
   );
 }
@@ -359,25 +360,27 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 }
 
 function normalizeNumber(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(value ?? fallback);
+  const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.trunc(parsed), min), max);
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
 }
 
 function fmtSigned(value?: string | number | null): string {
   if (value === null || value === undefined || value === "") return "-";
-  const num = Number(value);
+  const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
   if (Math.abs(num) < 0.005) return "0";
-  return `${num > 0 ? "+" : ""}${fmtNumber(num)}`;
+  return `${num > 0 ? "+" : ""}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}`;
 }
 
 function fmtPct(value?: string | number | null): string {
   if (value === null || value === undefined || value === "") return "-";
-  return `${fmtNumber(value)}%`;
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(num)}%`;
 }
 
 function fmtPctDelta(value?: string | number | null): string {
   if (value === null || value === undefined || value === "") return "-";
-  return `${fmtSigned(value)}%`;
+  return `${fmtSigned(value)}pp`;
 }

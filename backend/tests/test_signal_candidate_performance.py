@@ -1293,6 +1293,99 @@ def test_mid_short_1h_taker_sell_deep_dive_finds_stronger_taker_filter() -> None
         assert payload["top_filter_items"]
 
 
+def test_mid_short_1h_wrong_direction_deep_dive_splits_correct_and_wrong_paths() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            (
+                "correct",
+                "GOODUSDT",
+                base_time,
+                {
+                    "price_return": "-0.30",
+                    "close_position_in_range": "0.25",
+                    "volume_ratio_vs_lookback": "1.10",
+                    "range_ratio_vs_atr": "0.90",
+                    "price_atr_multiple": "1.00",
+                    "kline_taker_sell_ratio": "0.56",
+                    "kline_taker_buy_ratio": "0.44",
+                    "oi_zscore": "1.4",
+                    "futures_spread_pct": "0.01",
+                },
+                [("101", "84", "86"), ("99", "85", "88"), ("98", "84", "87"), ("97", "83", "86")],
+            ),
+            (
+                "wrong",
+                "BADUSDT",
+                base_time + timedelta(hours=2),
+                {
+                    "price_return": "0.45",
+                    "close_position_in_range": "0.90",
+                    "volume_ratio_vs_lookback": "1.80",
+                    "range_ratio_vs_atr": "1.20",
+                    "price_atr_multiple": "1.10",
+                    "kline_taker_sell_ratio": "0.54",
+                    "kline_taker_buy_ratio": "0.46",
+                    "oi_zscore": "0.2",
+                    "futures_spread_pct": "0.01",
+                },
+                [("111", "99", "106"), ("108", "101", "106"), ("109", "102", "107"), ("110", "103", "108")],
+            ),
+        ]
+        for signal_id, symbol, signal_time, evidence, candles in rows:
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence=evidence,
+                )
+            )
+            for index, (high, low, close) in enumerate(candles):
+                open_time = signal_time + timedelta(minutes=15 * index)
+                db.add(
+                    _candle(
+                        symbol,
+                        open_time,
+                        open_time + timedelta(minutes=15),
+                        high=high,
+                        low=low,
+                        close=close,
+                    )
+                )
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_wrong_direction_deep_dive(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["scope_count"] == 2
+        assert payload["summary"]["correct_direction_1h_count"] == 1
+        assert payload["summary"]["wrong_direction_1h_count"] == 1
+        taxonomy = {row["bucket"]: row for row in payload["wrong_direction_taxonomy_rows"]}
+        assert taxonomy["IMMEDIATE_REVERSAL"]["sample_count"] == 1
+        filters = {row["filter_id"]: row for row in payload["anti_wrong_direction_filter_rows"]}
+        assert filters["PRICE_RETURN_LE_0"]["sample_count"] == 1
+        assert filters["PRICE_RETURN_LE_0"]["wrong_direction_1h_count"] == 0
+        evidence = {row["field"]: row for row in payload["evidence_correct_vs_wrong"]}
+        assert evidence["price_return"]["correct_median"] == Decimal("-0.30")
+        assert evidence["price_return"]["wrong_median"] == Decimal("0.45")
+        assert payload["latest_wrong_direction_signals"][0]["symbol"] == "BADUSDT"
+
+
 def _signal(
     signal_id: str,
     symbol: str,

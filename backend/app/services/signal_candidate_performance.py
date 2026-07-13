@@ -42,6 +42,7 @@ MID_SHORT_1H_QUALITY_RANGE_ATR_MAX = Decimal("1.25")
 
 EVIDENCE_FIELDS = [
     ("price_return", "Price return %"),
+    ("close_position_in_range", "Close position"),
     ("volume_ratio_vs_lookback", "Volume vs avg"),
     ("range_ratio_vs_atr", "Range / ATR"),
     ("atr_extension_normalized", "ATR extension"),
@@ -56,6 +57,11 @@ EVIDENCE_FIELDS = [
     ("global_long_short_ratio", "Global L/S ratio"),
     ("top_trader_position_ratio", "Top trader position"),
     ("top_trader_account_ratio", "Top trader account"),
+    ("one_hour_return_pct", "Logged 1h return %"),
+    ("spot_futures_volume_ratio", "Spot / futures volume"),
+    ("body_pct", "Body %"),
+    ("upper_wick_pct", "Upper wick %"),
+    ("lower_wick_pct", "Lower wick %"),
     ("core_score", "Core score"),
     ("evidence_score", "Evidence score"),
     ("evidence_data_completeness", "Evidence completeness"),
@@ -677,6 +683,131 @@ class SignalCandidatePerformanceService:
                 "Candidate filters are research-only and do not change Signal Factory rules or scanner behavior.",
                 "TP/SL formula, outcome logic, execution, leverage, order placement, and position sizing stay unchanged.",
                 "Promising filters must be forward-observed before any rule promotion discussion.",
+            ],
+        }
+
+    def mid_short_1h_wrong_direction_deep_dive(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            shadow_status="SHADOW_PASS",
+        )
+        taker_scope = [
+            _annotate_mid_short_wrong_direction(item)
+            for item in _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        ]
+        baseline = _walk_forward_perf(taker_scope)
+        wrong_items = [item for item in taker_scope if item.get("direction_1h") == "WRONG_DIRECTION"]
+        correct_items = [item for item in taker_scope if item.get("direction_1h") == "CORRECT_DIRECTION"]
+        neutral_items = [
+            item
+            for item in taker_scope
+            if item.get("direction_1h") not in {"WRONG_DIRECTION", "CORRECT_DIRECTION"}
+        ]
+        filter_rows = _mid_short_wrong_direction_filter_rows(
+            taker_scope,
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        top_filter = filter_rows[0] if filter_rows else None
+        top_items = _apply_named_wrong_direction_filter(taker_scope, str(top_filter.get("filter_id"))) if top_filter else []
+        direction_baseline = _mid_short_direction_summary(taker_scope)
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_wrong_direction_deep_dive",
+            "study_scope": "read_only_mid_short_1h_taker_sell_wrong_direction_deep_dive",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS AND kline_taker_sell_ratio >= 0.52",
+                "status_meaning": "Wrong-direction deep dive starts from the current strongest research subset and asks why some shorts still moved upward.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "source_shadow_pass_count": len(annotated),
+                "scope_count": len(taker_scope),
+                "closed_count": int(baseline.get("closed_count") or 0),
+                "tp_count": int(baseline.get("tp_count") or 0),
+                "sl_count": int(baseline.get("sl_count") or 0),
+                "open_count": int(baseline.get("open_count") or 0),
+                "wrong_direction_1h_count": len(wrong_items),
+                "correct_direction_1h_count": len(correct_items),
+                "neutral_direction_1h_count": len(neutral_items),
+                "wrong_direction_1h_share_pct": direction_baseline.get("wrong_direction_1h_share_pct"),
+                "correct_direction_1h_share_pct": direction_baseline.get("correct_direction_1h_share_pct"),
+                "baseline": baseline,
+                "wrong_direction_perf": _walk_forward_perf(wrong_items),
+                "correct_direction_perf": _walk_forward_perf(correct_items),
+                "filter_count": len(filter_rows),
+                "promising_count": sum(1 for row in filter_rows if row.get("read") == "WRONG_DIR_FILTER_PROMISING"),
+                "damage_reduction_count": sum(1 for row in filter_rows if row.get("read") == "WRONG_DIR_FILTER_REDUCES_DAMAGE"),
+                "top_filter_id": top_filter.get("filter_id") if top_filter else None,
+                "top_filter_label": top_filter.get("label") if top_filter else None,
+                "read": _mid_short_wrong_direction_summary_read(filter_rows, min_sample=min_sample),
+            },
+            "wrong_direction_taxonomy_rows": _anatomy_bucket_rows(
+                wrong_items,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=_walk_forward_perf(wrong_items),
+                limit=limit,
+            ),
+            "followthrough_rows": _mid_short_wrong_direction_followthrough_rows(
+                taker_scope,
+                baseline=baseline,
+                min_sample=max(1, min_sample // 2),
+            ),
+            "evidence_correct_vs_wrong": _direction_evidence_field_rows(
+                correct_items,
+                wrong_items,
+                min_sample=max(3, min_sample // 2),
+            ),
+            "anti_wrong_direction_filter_rows": filter_rows,
+            "regime_rows": _mid_short_regime_rows(taker_scope, baseline=baseline, min_sample=min_sample),
+            "symbol_wrong_rows": _anatomy_bucket_rows(
+                wrong_items,
+                key="symbol",
+                min_sample=1,
+                baseline=_walk_forward_perf(wrong_items),
+                limit=limit,
+            ),
+            "top_filter_items": _sorted_signal_rows(top_items, limit=limit),
+            "latest_wrong_direction_signals": _sorted_signal_rows(wrong_items, limit=limit),
+            "latest_correct_direction_signals": _sorted_signal_rows(correct_items, limit=limit),
+            "guardrails": [
+                "Wrong Direction Deep Dive only reads logged V2 MID_SHORT 1h SHADOW_PASS signals with taker sell >= 52%.",
+                "Wrong direction means a SHORT signal had positive 1h forward return from the futures entry reference.",
+                "Candidate filters are diagnostic only and do not change Signal Factory rules, scanner behavior, TP/SL formula, or execution.",
+                "Future-return buckets explain historical path behavior and must not be used as live input.",
             ],
         }
 
@@ -4941,6 +5072,514 @@ def _mid_short_taker_sell_deep_summary_read(rows: list[dict[str, Any]], *, min_s
     if any(row.get("read") == "TAKER_DEEP_FILTER_REDUCES_DAMAGE" for row in ready_rows):
         return "HAS_TAKER_DEEP_DAMAGE_REDUCTION"
     return "NO_TAKER_DEEP_CLEAN_FILTER_YET"
+
+
+def _annotate_mid_short_wrong_direction(item: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(item)
+    wrong_type = _mid_short_wrong_direction_type(item)
+    enriched.update(
+        {
+            "wrong_direction_type": wrong_type,
+            "first_15m_return_bucket": _mid_short_first_return_bucket(item.get("return_15m_pct")),
+            "followthrough_quality": _mid_short_followthrough_quality(item),
+            "immediate_reversal_flag": _mid_short_immediate_reversal(item),
+            "no_sell_followthrough_flag": _mid_short_no_sell_followthrough(item),
+            "btc_eth_pull_up_flag": _mid_short_btc_eth_pull_up(item),
+            "sell_absorption_flag": _mid_short_sell_absorption(item),
+            "oi_conflict_flag": _mid_short_oi_conflict(item),
+            "volume_overextended_flag": _mid_short_volume_overextended(item),
+            "range_overextended_flag": _mid_short_range_overextended(item),
+            "spot_spread_bad_flag": _mid_short_spot_spread_bad(item),
+            "cost_bad_flag": _mid_short_cost_bad(item),
+        }
+    )
+    return enriched
+
+
+def _mid_short_wrong_direction_type(item: dict[str, Any]) -> str:
+    direction_1h = str(item.get("direction_1h") or "")
+    if direction_1h == "CORRECT_DIRECTION":
+        return "CORRECT_DIRECTION"
+    if direction_1h == "FLAT":
+        return "FLAT_1H"
+    if direction_1h == "MISSING_FORWARD_DATA":
+        return "MISSING_FORWARD_DATA"
+    if direction_1h != "WRONG_DIRECTION":
+        return "WRONG_DIRECTION_OTHER"
+    if _mid_short_immediate_reversal(item):
+        return "IMMEDIATE_REVERSAL"
+    if _mid_short_btc_eth_pull_up(item):
+        return "BTC_ETH_PULL_UP"
+    if _mid_short_sell_absorption(item):
+        return "SELL_ABSORPTION"
+    if bool(item.get("after_sl_would_hit_tp")) or str(item.get("direction_2h") or "") == "CORRECT_DIRECTION":
+        return "STOP_RUN_THEN_DROP"
+    if _mid_short_no_sell_followthrough(item):
+        return "NO_SELL_FOLLOWTHROUGH"
+    if str(item.get("direction_30m") or "") == "WRONG_DIRECTION":
+        return "GRIND_UP"
+    return "WRONG_DIRECTION_OTHER"
+
+
+def _mid_short_immediate_reversal(item: dict[str, Any]) -> bool:
+    return str(item.get("direction_15m") or "") == "WRONG_DIRECTION" and _decimal_or_zero(item.get("return_15m_pct")) >= Decimal("0.05")
+
+
+def _mid_short_no_sell_followthrough(item: dict[str, Any]) -> bool:
+    mfe = _decimal_or_none_any(item.get("mfe_before_first_hit_r"))
+    return (mfe is not None and mfe < Decimal("0.25")) or str(item.get("direction_15m") or "") in {"WRONG_DIRECTION", "FLAT"}
+
+
+def _mid_short_btc_eth_pull_up(item: dict[str, Any]) -> bool:
+    return item.get("btc_1h_regime") == "BULLISH_REGIME" or item.get("eth_1h_regime") == "BULLISH_REGIME"
+
+
+def _mid_short_sell_absorption(item: dict[str, Any]) -> bool:
+    taker_sell = _evidence_value(item, "kline_taker_sell_ratio")
+    price_return = _evidence_value(item, "price_return")
+    close_position = _evidence_value(item, "close_position_in_range")
+    return (
+        taker_sell is not None
+        and taker_sell >= Decimal("0.52")
+        and (
+            (price_return is not None and price_return > 0)
+            or (close_position is not None and close_position >= Decimal("0.65"))
+        )
+    )
+
+
+def _mid_short_oi_conflict(item: dict[str, Any]) -> bool:
+    oi_change = _evidence_value(item, "oi_change_pct")
+    oi_z = _evidence_value(item, "oi_zscore")
+    price_return = _evidence_value(item, "price_return")
+    return (
+        ((oi_change is not None and oi_change < 0) or (oi_z is not None and oi_z < Decimal("0.5")))
+        and price_return is not None
+        and price_return > 0
+    )
+
+
+def _mid_short_volume_overextended(item: dict[str, Any]) -> bool:
+    value = _evidence_value(item, "volume_ratio_vs_lookback")
+    return value is not None and value > Decimal("1.50")
+
+
+def _mid_short_range_overextended(item: dict[str, Any]) -> bool:
+    value = _evidence_value(item, "range_ratio_vs_atr")
+    return value is not None and value > Decimal("1.25")
+
+
+def _mid_short_spot_spread_bad(item: dict[str, Any]) -> bool:
+    value = _evidence_value(item, "spot_spread_pct")
+    return value is not None and value > Decimal("0.05")
+
+
+def _mid_short_cost_bad(item: dict[str, Any]) -> bool:
+    value = _decimal_or_none_any(item.get("realistic_cost_r_estimate"))
+    return value is not None and value > Decimal("0.20")
+
+
+def _mid_short_first_return_bucket(value: Any) -> str:
+    ret = _decimal_or_none_any(value)
+    if ret is None:
+        return "MISSING_FORWARD_DATA"
+    if ret >= Decimal("0.35"):
+        return "UP_STRONG"
+    if ret >= Decimal("0.05"):
+        return "UP"
+    if ret <= Decimal("-0.35"):
+        return "DOWN_STRONG"
+    if ret <= Decimal("-0.05"):
+        return "DOWN"
+    return "FLAT"
+
+
+def _mid_short_followthrough_quality(item: dict[str, Any]) -> str:
+    if str(item.get("direction_1h") or "") == "CORRECT_DIRECTION":
+        return "SHORT_FOLLOWTHROUGH_1H"
+    if str(item.get("direction_15m") or "") == "CORRECT_DIRECTION":
+        return "EARLY_DROP_THEN_REBOUND"
+    if _mid_short_immediate_reversal(item):
+        return "NO_FOLLOWTHROUGH_IMMEDIATE_REVERSAL"
+    if str(item.get("direction_1h") or "") == "WRONG_DIRECTION":
+        return "NO_SHORT_FOLLOWTHROUGH_1H"
+    return "FOLLOWTHROUGH_UNKNOWN"
+
+
+def _mid_short_wrong_direction_filter_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "PRICE_RETURN_LE_0",
+            "Signal candle red/weak",
+            "price_return <= 0",
+            "direction_gate",
+            ("price_return",),
+            lambda item: (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "CLOSE_POSITION_LE_0_45",
+            "Close not near candle high",
+            "close_position_in_range <= 0.45",
+            "candle_structure",
+            ("close_position_in_range",),
+            lambda item: (_evidence_value(item, "close_position_in_range") or Decimal("999")) <= Decimal("0.45"),
+        ),
+        FilterStudySpec(
+            "VOLUME_LE_1_50",
+            "Volume <= 1.50x lookback",
+            "volume_ratio_vs_lookback <= 1.50",
+            "late_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+        FilterStudySpec(
+            "RANGE_ATR_LE_1_00",
+            "Range/ATR <= 1.00",
+            "range_ratio_vs_atr <= 1.00",
+            "late_momentum",
+            ("range_ratio_vs_atr",),
+            lambda item: (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.00"),
+        ),
+        FilterStudySpec(
+            "PRICE_ATR_LE_1_25",
+            "Price/ATR <= 1.25",
+            "price_atr_multiple <= 1.25",
+            "late_momentum",
+            ("price_atr_multiple",),
+            lambda item: (_evidence_value(item, "price_atr_multiple") or Decimal("999")) <= Decimal("1.25"),
+        ),
+        FilterStudySpec(
+            "NO_BTC_ETH_1H_BULL",
+            "Exclude BTC/ETH 1h bullish regime",
+            "btc_1h_regime != BULLISH_REGIME AND eth_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "OI_Z_GE_1",
+            "OI z-score >= 1",
+            "oi_zscore >= 1",
+            "open_interest",
+            ("oi_zscore",),
+            lambda item: (_evidence_value(item, "oi_zscore") or Decimal("-999")) >= Decimal("1"),
+        ),
+        FilterStudySpec(
+            "OI_CHANGE_GE_0",
+            "OI not unwinding",
+            "oi_change_pct >= 0",
+            "open_interest",
+            ("oi_change_pct",),
+            lambda item: (_evidence_value(item, "oi_change_pct") or Decimal("-999")) >= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "FUNDING_GE_65",
+            "Funding percentile >= 65",
+            "funding_percentile_30d >= 65",
+            "positioning",
+            ("funding_percentile_30d",),
+            lambda item: (_evidence_value(item, "funding_percentile_30d") or Decimal("-999")) >= Decimal("65"),
+        ),
+        FilterStudySpec(
+            "GLOBAL_LS_GE_1_20",
+            "Global long/short >= 1.20",
+            "global_long_short_ratio >= 1.20",
+            "positioning",
+            ("global_long_short_ratio",),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "TOP_POSITION_GE_1_20",
+            "Top trader position >= 1.20",
+            "top_trader_position_ratio >= 1.20",
+            "positioning",
+            ("top_trader_position_ratio",),
+            lambda item: (_evidence_value(item, "top_trader_position_ratio") or Decimal("-999")) >= Decimal("1.20"),
+        ),
+        FilterStudySpec(
+            "FUTURES_SPREAD_LE_0_03",
+            "Futures spread <= 0.03%",
+            "futures_spread_pct <= 0.03",
+            "cost_gate",
+            ("futures_spread_pct",),
+            lambda item: (_evidence_value(item, "futures_spread_pct") or Decimal("999")) <= Decimal("0.03"),
+        ),
+        FilterStudySpec(
+            "VOLUME_AND_PRICE_WEAK",
+            "Volume <=1.50x + signal candle weak",
+            "volume_ratio_vs_lookback <= 1.50 AND price_return <= 0",
+            "combo_late_momentum",
+            ("volume_ratio_vs_lookback", "price_return"),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0"),
+        ),
+        FilterStudySpec(
+            "VOLUME_NO_BTC_ETH_BULL",
+            "Volume <=1.50x + no BTC/ETH bull",
+            "volume_ratio_vs_lookback <= 1.50 AND btc/eth not bullish",
+            "combo_regime_momentum",
+            ("volume_ratio_vs_lookback",),
+            lambda item: (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50")
+            and item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "WEAK_CANDLE_NO_BTC_ETH_BULL",
+            "Weak signal candle + no BTC/ETH bull",
+            "price_return <= 0 AND close_position <= 0.45 AND btc/eth not bullish",
+            "combo_structure_regime",
+            ("price_return", "close_position_in_range"),
+            lambda item: (_evidence_value(item, "price_return") or Decimal("999")) <= Decimal("0")
+            and (_evidence_value(item, "close_position_in_range") or Decimal("999")) <= Decimal("0.45")
+            and item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "POSITIONING_VOLUME",
+            "Crowded longs + volume <=1.50x",
+            "global_long_short_ratio >= 1.20 AND volume_ratio_vs_lookback <= 1.50",
+            "combo_positioning_momentum",
+            ("global_long_short_ratio", "volume_ratio_vs_lookback"),
+            lambda item: (_evidence_value(item, "global_long_short_ratio") or Decimal("-999")) >= Decimal("1.20")
+            and (_evidence_value(item, "volume_ratio_vs_lookback") or Decimal("999")) <= Decimal("1.50"),
+        ),
+    ]
+
+
+def _mid_short_wrong_direction_filter_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    direction_baseline = _mid_short_direction_summary(items)
+    for spec in _mid_short_wrong_direction_filter_specs():
+        selected, missing = _apply_filter_spec(items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        direction_summary = _mid_short_direction_summary(selected, baseline=direction_baseline)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(items)) * Decimal("100")) if items else None,
+            "sample_retention_pct": _retention(len(selected), len(items)),
+            "read": _mid_short_wrong_direction_filter_read(perf, direction_summary, min_sample=min_sample),
+            **direction_summary,
+            **perf,
+        }
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row["read"] == "WRONG_DIR_FILTER_PROMISING",
+            row["read"] == "WRONG_DIR_FILTER_REDUCES_DAMAGE",
+            _decimal_or_zero(row.get("wrong_direction_1h_share_pct_delta_vs_baseline")) * Decimal("-1"),
+            _decimal_or_zero(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("sl_share_delta_vs_baseline")) * Decimal("-1"),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _apply_named_wrong_direction_filter(items: list[dict[str, Any]], filter_id: str) -> list[dict[str, Any]]:
+    spec = next((row for row in _mid_short_wrong_direction_filter_specs() if row.filter_id == filter_id), None)
+    if spec is None:
+        return []
+    selected, _missing = _apply_filter_spec(items, spec)
+    return selected
+
+
+def _mid_short_wrong_direction_filter_read(
+    perf: dict[str, Any],
+    direction_summary: dict[str, Any],
+    *,
+    min_sample: int,
+) -> str:
+    if int(perf.get("closed_count") or 0) < min_sample:
+        return "WRONG_DIR_WAIT_MORE_SAMPLE"
+    realistic_total = _decimal_or_zero(perf.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(perf.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(perf.get("sl_share_delta_vs_baseline"))
+    wrong_delta = _decimal_or_none_any(direction_summary.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    drawdown_delta = _decimal_or_none_any(perf.get("max_drawdown_delta_vs_baseline"))
+    if (
+        realistic_total > 0
+        and avg_delta is not None
+        and avg_delta > 0
+        and wrong_delta is not None
+        and wrong_delta < 0
+        and (sl_delta is None or sl_delta <= 0)
+        and (drawdown_delta is None or drawdown_delta >= 0)
+    ):
+        return "WRONG_DIR_FILTER_PROMISING"
+    if (
+        (wrong_delta is not None and wrong_delta < 0)
+        or (avg_delta is not None and avg_delta > 0)
+        or (sl_delta is not None and sl_delta < 0)
+    ):
+        return "WRONG_DIR_FILTER_REDUCES_DAMAGE"
+    if avg_delta is not None and avg_delta < 0 and wrong_delta is not None and wrong_delta > 0:
+        return "WRONG_DIR_FILTER_WORSE"
+    return "WRONG_DIR_NO_CLEAR_EDGE"
+
+
+def _mid_short_wrong_direction_summary_read(rows: list[dict[str, Any]], *, min_sample: int) -> str:
+    if not rows:
+        return "NO_WRONG_DIRECTION_FILTER_ROWS"
+    ready_rows = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    if not ready_rows:
+        return "WRONG_DIR_WAIT_MORE_SAMPLE"
+    if any(row.get("read") == "WRONG_DIR_FILTER_PROMISING" for row in ready_rows):
+        return "HAS_WRONG_DIR_PROMISING_FILTER"
+    if any(row.get("read") == "WRONG_DIR_FILTER_REDUCES_DAMAGE" for row in ready_rows):
+        return "HAS_WRONG_DIR_DAMAGE_REDUCTION"
+    return "NO_WRONG_DIRECTION_CLEAN_FILTER_YET"
+
+
+def _mid_short_direction_summary(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    total = len(items)
+    wrong = sum(1 for item in items if item.get("direction_1h") == "WRONG_DIRECTION")
+    correct = sum(1 for item in items if item.get("direction_1h") == "CORRECT_DIRECTION")
+    flat = sum(1 for item in items if item.get("direction_1h") == "FLAT")
+    missing = sum(1 for item in items if item.get("direction_1h") == "MISSING_FORWARD_DATA")
+    row: dict[str, Any] = {
+        "wrong_direction_1h_count": wrong,
+        "correct_direction_1h_count": correct,
+        "flat_1h_count": flat,
+        "missing_direction_1h_count": missing,
+        "wrong_direction_1h_share_pct": (Decimal(wrong) / Decimal(total) * Decimal("100")) if total else None,
+        "correct_direction_1h_share_pct": (Decimal(correct) / Decimal(total) * Decimal("100")) if total else None,
+        "flat_1h_share_pct": (Decimal(flat) / Decimal(total) * Decimal("100")) if total else None,
+        "missing_direction_1h_share_pct": (Decimal(missing) / Decimal(total) * Decimal("100")) if total else None,
+    }
+    if baseline is not None:
+        row.update(
+            {
+                "wrong_direction_1h_share_pct_delta_vs_baseline": _decimal_delta(
+                    row.get("wrong_direction_1h_share_pct"),
+                    baseline.get("wrong_direction_1h_share_pct"),
+                ),
+                "correct_direction_1h_share_pct_delta_vs_baseline": _decimal_delta(
+                    row.get("correct_direction_1h_share_pct"),
+                    baseline.get("correct_direction_1h_share_pct"),
+                ),
+            }
+        )
+    return row
+
+
+def _mid_short_wrong_direction_followthrough_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for key in (
+        "first_15m_return_bucket",
+        "followthrough_quality",
+        "immediate_reversal_flag",
+        "no_sell_followthrough_flag",
+        "btc_eth_pull_up_flag",
+        "sell_absorption_flag",
+        "oi_conflict_flag",
+        "volume_overextended_flag",
+        "range_overextended_flag",
+        "spot_spread_bad_flag",
+        "cost_bad_flag",
+    ):
+        rows.extend(_anatomy_bucket_rows(items, key=key, min_sample=min_sample, baseline=baseline))
+    rows.sort(
+        key=lambda row: (
+            row.get("dimension"),
+            _decimal_or_zero(row.get("realistic_total_r_closed")),
+        )
+    )
+    return rows
+
+
+def _direction_evidence_field_rows(
+    correct_items: list[dict[str, Any]],
+    wrong_items: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    all_items = correct_items + wrong_items
+    for field, label in EVIDENCE_FIELDS:
+        correct_values = [
+            Decimal(value)
+            for item in correct_items
+            if (value := (item.get("evidence_snapshot") or {}).get(field)) is not None
+        ]
+        wrong_values = [
+            Decimal(value)
+            for item in wrong_items
+            if (value := (item.get("evidence_snapshot") or {}).get(field)) is not None
+        ]
+        available_count = len(correct_values) + len(wrong_values)
+        missing_count = len(all_items) - available_count
+        correct_median = _median_decimal(correct_values)
+        wrong_median = _median_decimal(wrong_values)
+        delta = _decimal_delta(correct_median, wrong_median)
+        rows.append(
+            {
+                "field": field,
+                "label": label,
+                "quality_flag": _direction_evidence_quality_flag(correct_values, wrong_values, min_sample=min_sample),
+                "available_count": available_count,
+                "missing_count": missing_count,
+                "available_pct": (Decimal(available_count) / Decimal(len(all_items)) * Decimal("100")) if all_items else None,
+                "correct_count": len(correct_values),
+                "wrong_count": len(wrong_values),
+                "correct_median": correct_median,
+                "wrong_median": wrong_median,
+                "correct_q1": _percentile_decimal(correct_values, Decimal("0.25")),
+                "correct_q3": _percentile_decimal(correct_values, Decimal("0.75")),
+                "wrong_q1": _percentile_decimal(wrong_values, Decimal("0.25")),
+                "wrong_q3": _percentile_decimal(wrong_values, Decimal("0.75")),
+                "delta_correct_minus_wrong": delta,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            row["quality_flag"] not in {"CORRECT_HIGHER", "WRONG_HIGHER"},
+            _decimal_or_zero(row.get("delta_correct_minus_wrong")).copy_abs(),
+            row["available_count"],
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _direction_evidence_quality_flag(
+    correct_values: list[Decimal],
+    wrong_values: list[Decimal],
+    *,
+    min_sample: int,
+) -> str:
+    if len(correct_values) < min_sample or len(wrong_values) < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    correct_median = _median_decimal(correct_values)
+    wrong_median = _median_decimal(wrong_values)
+    if correct_median is None or wrong_median is None:
+        return "NO_CLEAR_GAP"
+    delta = correct_median - wrong_median
+    if abs(delta) < Decimal("0.05"):
+        return "NO_CLEAR_GAP"
+    return "CORRECT_HIGHER" if delta > 0 else "WRONG_HIGHER"
 
 
 def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:

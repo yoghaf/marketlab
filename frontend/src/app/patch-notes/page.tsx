@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-13",
+    version: "LAB-43",
+    title: "MID_SHORT 1h Wrong Direction Deep Dive",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan riset khusus untuk membedah kenapa MID_SHORT 1h + Taker Sell >= 52% masih bisa salah arah.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-wrong-direction-deep-dive membaca subset MID_SHORT 1h SHADOW_PASS dengan kline_taker_sell_ratio >= 0.52.",
+      "Halaman /mid-short-wrong-direction-deep-dive memisahkan correct 1h vs wrong 1h, taxonomy wrong-direction, followthrough flags, evidence correct-vs-wrong, regime BTC/ETH, symbol concentration, dan sample signal terbaru.",
+      "Taxonomy baru menjelaskan immediate reversal, sell absorption, no sell followthrough, BTC/ETH pull-up, stop-run-then-drop, dan grind-up.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa meneliti tanda apa yang muncul sebelum short salah arah, sehingga optimasi berikutnya berdasarkan bukti data, bukan asumsi.",
+    links: [
+      { href: "/mid-short-wrong-direction-deep-dive", label: "MID_SHORT Wrong Direction" },
+      { href: "/mid-short-taker-sell-deep-dive", label: "MID_SHORT Taker Deep Dive" },
+      { href: "/mid-short-second-filter-shadow", label: "MID_SHORT Second Filter" }
+    ]
+  },
+  {
+    date: "2026-07-13",
     version: "LAB-42",
     title: "MID_SHORT 1h Taker Sell Deep Dive",
     status: "LIVE",
