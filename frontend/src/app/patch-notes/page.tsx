@@ -18,6 +18,26 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-13",
+    version: "LAB-41",
+    title: "MID_SHORT 1h Second Filter Shadow",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan halaman khusus untuk menguji filter lanjutan di dalam scope MID_SHORT 1h SHADOW_PASS tanpa mengubah rule live.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-second-filter-shadow membandingkan second filter terhadap baseline SHADOW_PASS.",
+      "Halaman /mid-short-second-filter-shadow menampilkan sample retention, realistic R, delta SL share, delta wrong-direction, SL-then-would-TP, dan TP-near-then-SL.",
+      "Quality Lab, Failure Anatomy, dan menu Research / Advanced sekarang punya link langsung ke Second Filter Shadow.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa melihat filter tambahan mana yang layak dipantau untuk mengurangi SL MID_SHORT 1h sebelum dipertimbangkan sebagai rule di fase berikutnya.",
+    links: [
+      { href: "/mid-short-second-filter-shadow", label: "MID_SHORT Second Filter" },
+      { href: "/mid-short-failure-anatomy", label: "MID_SHORT Failure Anatomy" },
+      { href: "/shadow-forward-log", label: "MID_SHORT Shadow Log" }
+    ]
+  },
+  {
     date: "2026-07-12",
     version: "LAB-40",
     title: "MID_SHORT 1h Failure Anatomy",

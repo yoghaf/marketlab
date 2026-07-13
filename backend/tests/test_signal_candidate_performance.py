@@ -1186,6 +1186,58 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
         assert payload["improvement_candidates"]
 
 
+def test_mid_short_1h_second_filter_shadow_compares_against_shadow_pass_baseline() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("tp", "TPUSDT", base_time, "0.60", "101", "84", "86"),
+            ("sl", "SLUSDT", base_time + timedelta(minutes=15), "0.40", "111", "98", "109"),
+        ]
+        for signal_id, symbol, signal_time, taker_sell, high, low, close in rows:
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={
+                        "futures_spread_pct": "0.01",
+                        "range_ratio_vs_atr": "1.00",
+                        "kline_taker_sell_ratio": taker_sell,
+                        "kline_taker_buy_ratio": str(Decimal("1") - Decimal(taker_sell)),
+                    },
+                )
+            )
+            db.add(_candle(symbol, signal_time, signal_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_second_filter_shadow(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["source_count"] == 2
+        rows_by_id = {row["filter_id"]: row for row in payload["filter_rows"]}
+        taker_sell = rows_by_id["TAKER_SELL_GE_52"]
+        assert taker_sell["sample_count"] == 1
+        assert taker_sell["tp_count"] == 1
+        assert taker_sell["sl_count"] == 0
+        assert taker_sell["read"] == "SECOND_FILTER_MONITOR"
+        assert payload["summary"]["monitor_count"] >= 1
+        assert payload["top_filter_items"]
+
+
 def _signal(
     signal_id: str,
     symbol: str,

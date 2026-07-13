@@ -1635,6 +1635,81 @@ export type MidShortFailureAnatomyResponse = {
   };
 };
 
+export type MidShortSecondFilterRow = OneHourWalkForwardPerf & {
+  filter_id: string;
+  label: string;
+  expression: string;
+  family: string;
+  required_fields: string[];
+  source_count: number;
+  missing_data_count: number;
+  missing_data_pct?: string | number | null;
+  sample_retention_pct?: string | number | null;
+  sl_then_would_tp_count: number;
+  tp_near_then_sl_count: number;
+  wrong_direction_1h_count: number;
+  correct_direction_1h_count: number;
+  sl_direct_count: number;
+  sl_then_would_tp_share_pct?: string | number | null;
+  tp_near_then_sl_share_pct?: string | number | null;
+  wrong_direction_1h_share_pct?: string | number | null;
+  correct_direction_1h_share_pct?: string | number | null;
+  sl_then_would_tp_share_pct_delta_vs_baseline?: string | number | null;
+  tp_near_then_sl_share_pct_delta_vs_baseline?: string | number | null;
+  wrong_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+  correct_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+  read: string;
+};
+
+export type MidShortSecondFilterShadowResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  shadow_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    source_count: number;
+    baseline: OneHourWalkForwardPerf;
+    filter_count: number;
+    monitor_count: number;
+    damage_reduction_count: number;
+    top_filter_id?: string | null;
+    top_filter_label?: string | null;
+    read: string;
+  };
+  filter_rows: MidShortSecondFilterRow[];
+  top_filter_items: SignalPerformanceItem[];
+  baseline_path_rows: MidShortFailureBucketRow[];
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;

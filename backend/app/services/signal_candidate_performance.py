@@ -423,46 +423,12 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        signals = self._load_signals(
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
-            stage="MID_SHORT",
-            timeframe="1h",
-            symbol=None,
-            signal_id=None,
-        )
-        min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
-        source_symbols = {row.symbol for row in signals}
-        candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
-        candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
-        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
-        latest_base_time = max(
-            (candle.close_time for rows in base_candles.values() for candle in rows),
-            default=None,
-        )
-        tail_start = latest_base_time or candle_start
-        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start)
-        candles = _merge_candle_maps(base_candles, tail_candles)
-        latest_candle_time = max(
-            (candle.close_time for rows in candles.values() for candle in rows),
-            default=None,
-        )
-        evaluated, skipped = self._evaluate(
-            signals,
-            candles,
             position_lock=position_lock,
-            global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
+            shadow_status=shadow_status,
         )
-        self._apply_universe_context(evaluated, source_symbols)
-
-        normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
-        if normalized_shadow_status != "ALL":
-            evaluated = [
-                item
-                for item in evaluated
-                if str(item.get("quality_shadow_status") or "").upper() == normalized_shadow_status
-            ]
-        annotated = _annotate_mid_short_failure_anatomy(evaluated, candles)
         baseline = _walk_forward_perf(annotated)
         closed = [item for item in annotated if item.get("result_status") in COMPLETED_OUTCOMES]
         tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
@@ -539,6 +505,129 @@ class SignalCandidatePerformanceService:
                 "No TP/SL formula, execution, order, leverage, or position sizing is created.",
             ],
         }
+
+    def mid_short_1h_second_filter_shadow(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        shadow_status: str = "SHADOW_PASS",
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            shadow_status=shadow_status,
+        )
+        baseline = _walk_forward_perf(annotated)
+        filter_rows = _mid_short_second_filter_shadow_rows(
+            annotated,
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        top_filter = filter_rows[0] if filter_rows else None
+        top_items = _apply_named_second_filter(annotated, str(top_filter.get("filter_id"))) if top_filter else []
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_second_filter_shadow",
+            "study_scope": "read_only_mid_short_1h_second_filter_shadow",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "shadow_filter": {
+                "filter_id": MID_SHORT_1H_QUALITY_SHADOW_FILTER_ID,
+                "label": MID_SHORT_1H_QUALITY_SHADOW_FILTER_LABEL,
+                "expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
+                "status_meaning": "Second filters are evaluated inside the selected quality shadow scope, usually SHADOW_PASS.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "source_count": len(annotated),
+                "baseline": baseline,
+                "filter_count": len(filter_rows),
+                "monitor_count": sum(1 for row in filter_rows if row.get("read") == "SECOND_FILTER_MONITOR"),
+                "damage_reduction_count": sum(1 for row in filter_rows if row.get("read") == "SECOND_FILTER_REDUCES_DAMAGE"),
+                "top_filter_id": top_filter.get("filter_id") if top_filter else None,
+                "top_filter_label": top_filter.get("label") if top_filter else None,
+                "read": _mid_short_second_filter_summary_read(filter_rows, min_sample=min_sample),
+            },
+            "filter_rows": filter_rows,
+            "top_filter_items": _sorted_signal_rows(top_items, limit=limit),
+            "baseline_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
+            "guardrails": [
+                "Second filter shadow only reads logged V2 MID_SHORT 1h signals and local futures candles.",
+                "SECOND_FILTER_MONITOR means research-only improvement candidate, not a live rule.",
+                "Signal Factory rules, scanner behavior, TP/SL formula, outcome logic, and execution stay unchanged.",
+                "Use this page to decide what should be forward-observed next, not to force promotion.",
+            ],
+        }
+
+    def _mid_short_1h_anatomy_dataset(
+        self,
+        *,
+        epoch: str,
+        include_watch_only: bool,
+        position_lock: bool,
+        shadow_status: str,
+    ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None, str]:
+        signals = self._load_signals(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage="MID_SHORT",
+            timeframe="1h",
+            symbol=None,
+            signal_id=None,
+        )
+        min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        source_symbols = {row.symbol for row in signals}
+        candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
+        candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
+        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_start = latest_base_time or candle_start
+        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start)
+        candles = _merge_candle_maps(base_candles, tail_candles)
+        latest_candle_time = max(
+            (candle.close_time for rows in candles.values() for candle in rows),
+            default=None,
+        )
+        evaluated, skipped = self._evaluate(
+            signals,
+            candles,
+            position_lock=position_lock,
+            global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
+        )
+        self._apply_universe_context(evaluated, source_symbols)
+        normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
+        if normalized_shadow_status != "ALL":
+            evaluated = [
+                item
+                for item in evaluated
+                if str(item.get("quality_shadow_status") or "").upper() == normalized_shadow_status
+            ]
+        return _annotate_mid_short_failure_anatomy(evaluated, candles), skipped, latest_candle_time, normalized_shadow_status
 
     def forward_integrity(
         self,
@@ -4278,6 +4367,192 @@ def _mid_short_candidate_filter_read(perf: dict[str, Any], *, min_sample: int) -
     if avg_delta is not None and avg_delta < 0:
         return "WORSE_THAN_SHADOW_PASS"
     return "NO_CLEAR_SEPARATION"
+
+
+def _mid_short_second_filter_specs() -> list[FilterStudySpec]:
+    return [
+        FilterStudySpec(
+            "TAKER_SELL_GE_52",
+            "Taker sell >= 52%",
+            "kline_taker_sell_ratio >= 0.52",
+            "taker",
+            ("kline_taker_sell_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+        FilterStudySpec(
+            "TAKER_BUY_LE_50",
+            "Taker buy <= 50%",
+            "kline_taker_buy_ratio <= 0.50",
+            "taker",
+            ("kline_taker_buy_ratio",),
+            lambda item: (_evidence_value(item, "kline_taker_buy_ratio") or Decimal("999")) <= Decimal("0.50"),
+        ),
+        FilterStudySpec(
+            "NO_BTC_ETH_1H_BULL",
+            "Exclude BTC/ETH 1h bullish regime",
+            "btc_1h_regime != BULLISH_REGIME AND eth_1h_regime != BULLISH_REGIME",
+            "regime",
+            (),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME",
+        ),
+        FilterStudySpec(
+            "REGIME_AND_TAKER",
+            "No BTC/ETH bull + taker sell >= 52%",
+            "btc/eth not bullish AND kline_taker_sell_ratio >= 0.52",
+            "combo",
+            ("kline_taker_sell_ratio",),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME"
+            and (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+        FilterStudySpec(
+            "REGIME_RANGE_TAKER",
+            "No BTC/ETH bull + range <= 1.0 + taker sell >= 52%",
+            "btc/eth not bullish AND range_ratio_vs_atr <= 1.0 AND kline_taker_sell_ratio >= 0.52",
+            "combo",
+            ("range_ratio_vs_atr", "kline_taker_sell_ratio"),
+            lambda item: item.get("btc_1h_regime") != "BULLISH_REGIME"
+            and item.get("eth_1h_regime") != "BULLISH_REGIME"
+            and (_evidence_value(item, "range_ratio_vs_atr") or Decimal("999")) <= Decimal("1.0")
+            and (_evidence_value(item, "kline_taker_sell_ratio") or Decimal("-999")) >= Decimal("0.52"),
+        ),
+    ]
+
+
+def _mid_short_second_filter_shadow_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    baseline_path = _mid_short_path_count_summary(items)
+    for spec in _mid_short_second_filter_specs():
+        selected, missing = _apply_filter_spec(items, spec)
+        perf = _walk_forward_perf(selected, baseline=baseline)
+        path_summary = _mid_short_path_count_summary(selected, baseline=baseline_path)
+        row = {
+            "filter_id": spec.filter_id,
+            "label": spec.label,
+            "expression": spec.expression,
+            "family": spec.family,
+            "required_fields": list(spec.required_fields),
+            "source_count": len(items),
+            "missing_data_count": missing,
+            "missing_data_pct": (Decimal(missing) / Decimal(len(items)) * Decimal("100")) if items else None,
+            "sample_retention_pct": _retention(len(selected), len(items)),
+            "read": _mid_short_second_filter_read(perf, path_summary, min_sample=min_sample),
+            **path_summary,
+            **perf,
+        }
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row["read"] == "SECOND_FILTER_MONITOR",
+            row["read"] == "SECOND_FILTER_REDUCES_DAMAGE",
+            _decimal_or_zero(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero(row.get("realistic_total_r_delta_vs_baseline")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _apply_named_second_filter(items: list[dict[str, Any]], filter_id: str) -> list[dict[str, Any]]:
+    spec = next((row for row in _mid_short_second_filter_specs() if row.filter_id == filter_id), None)
+    if spec is None:
+        return []
+    selected, _missing = _apply_filter_spec(items, spec)
+    return selected
+
+
+def _mid_short_path_count_summary(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    sample_count = len(items)
+    sl_count = len(sl_items)
+    summary = {
+        "sl_then_would_tp_count": sum(1 for item in sl_items if item.get("after_sl_would_hit_tp")),
+        "tp_near_then_sl_count": sum(1 for item in sl_items if item.get("tp_near_before_sl")),
+        "wrong_direction_1h_count": sum(1 for item in items if item.get("direction_1h") == "WRONG_DIRECTION"),
+        "correct_direction_1h_count": sum(1 for item in items if item.get("direction_1h") == "CORRECT_DIRECTION"),
+        "sl_direct_count": sum(1 for item in sl_items if item.get("path_type") == "SL_DIRECT"),
+    }
+    summary.update(
+        {
+            "sl_then_would_tp_share_pct": _pct(summary["sl_then_would_tp_count"], sl_count),
+            "tp_near_then_sl_share_pct": _pct(summary["tp_near_then_sl_count"], sl_count),
+            "wrong_direction_1h_share_pct": _pct(summary["wrong_direction_1h_count"], sample_count),
+            "correct_direction_1h_share_pct": _pct(summary["correct_direction_1h_count"], sample_count),
+        }
+    )
+    if baseline is not None:
+        for key in (
+            "sl_then_would_tp_share_pct",
+            "tp_near_then_sl_share_pct",
+            "wrong_direction_1h_share_pct",
+            "correct_direction_1h_share_pct",
+        ):
+            summary[f"{key}_delta_vs_baseline"] = _decimal_delta(summary.get(key), baseline.get(key))
+    return summary
+
+
+def _pct(count: int, total: int) -> Decimal | None:
+    if total <= 0:
+        return None
+    return Decimal(count) / Decimal(total) * Decimal("100")
+
+
+def _mid_short_second_filter_read(
+    perf: dict[str, Any],
+    path_summary: dict[str, Any],
+    *,
+    min_sample: int,
+) -> str:
+    if int(perf.get("closed_count") or 0) < min_sample:
+        return "WAIT_MORE_SAMPLE"
+    realistic_total = _decimal_or_zero(perf.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(perf.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(perf.get("sl_share_delta_vs_baseline"))
+    wrong_delta = _decimal_or_none_any(path_summary.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    timing_delta = _decimal_or_none_any(path_summary.get("sl_then_would_tp_share_pct_delta_vs_baseline"))
+    if (
+        realistic_total > 0
+        and avg_delta is not None
+        and avg_delta > 0
+        and (sl_delta is None or sl_delta <= 0)
+        and (wrong_delta is None or wrong_delta <= 0)
+    ):
+        return "SECOND_FILTER_MONITOR"
+    if (
+        (avg_delta is not None and avg_delta > 0)
+        or (sl_delta is not None and sl_delta < 0)
+        or (wrong_delta is not None and wrong_delta < 0)
+        or (timing_delta is not None and timing_delta < 0)
+    ):
+        return "SECOND_FILTER_REDUCES_DAMAGE"
+    if avg_delta is not None and avg_delta < 0 and (sl_delta is not None and sl_delta > 0):
+        return "SECOND_FILTER_WORSE"
+    return "SECOND_FILTER_NO_CLEAR_EDGE"
+
+
+def _mid_short_second_filter_summary_read(rows: list[dict[str, Any]], *, min_sample: int) -> str:
+    if not rows:
+        return "NO_SECOND_FILTER_ROWS"
+    ready_rows = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    if not ready_rows:
+        return "WAIT_MORE_SAMPLE"
+    if any(row.get("read") == "SECOND_FILTER_MONITOR" for row in ready_rows):
+        return "HAS_SECOND_FILTER_MONITOR_CANDIDATE"
+    if any(row.get("read") == "SECOND_FILTER_REDUCES_DAMAGE" for row in ready_rows):
+        return "HAS_DAMAGE_REDUCTION_CANDIDATE"
+    return "NO_CLEAN_SECOND_FILTER_YET"
 
 
 def _v2_mid_short_1h_refinement_specs() -> list[FilterStudySpec]:

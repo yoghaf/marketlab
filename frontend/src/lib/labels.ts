@@ -154,6 +154,11 @@ const labels: Record<string, string> = {
   FILL_ACCEPTABLE: "Fill realistis cukup",
   FILL_BAD: "Fill realistis buruk",
   FILL_UNKNOWN: "Fill belum jelas",
+  SECOND_FILTER_MONITOR: "Second filter pantau",
+  SECOND_FILTER_REDUCES_DAMAGE: "Mengurangi damage",
+  SECOND_FILTER_NO_CLEAR_EDGE: "Belum ada edge jelas",
+  SECOND_FILTER_WORSE: "Lebih buruk",
+  WAIT_MORE_SAMPLE: "Tunggu sample",
   SPREAD_UNKNOWN: "Spread belum diketahui",
   INFO: "Info",
   UNAVAILABLE: "Belum tersedia"
