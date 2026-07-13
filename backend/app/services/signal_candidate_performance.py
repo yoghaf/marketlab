@@ -811,6 +811,123 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_volume_safe_shadow(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            shadow_status="SHADOW_PASS",
+        )
+        taker_scope = [
+            _annotate_mid_short_wrong_direction(item)
+            for item in _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        ]
+        spec = _filter_spec_by_id(_mid_short_wrong_direction_filter_specs(), "VOLUME_LE_1_50")
+        pass_items, fail_items, missing_items = _split_filter_spec(taker_scope, spec)
+        baseline = _walk_forward_perf(taker_scope)
+        pass_perf = _walk_forward_perf(pass_items, baseline=baseline)
+        fail_perf = _walk_forward_perf(fail_items, baseline=baseline)
+        missing_perf = _walk_forward_perf(missing_items, baseline=baseline)
+        status_rows = _mid_short_volume_safe_status_rows(
+            pass_items=pass_items,
+            fail_items=fail_items,
+            missing_items=missing_items,
+            baseline=baseline,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "shadow_filter_id": "MID_SHORT_1H_TAKER_SELL_VOLUME_SAFE",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_volume_safe_shadow",
+            "study_scope": "read_only_mid_short_1h_taker_sell_volume_safe_shadow",
+            "source_table": "signal_forward_return_logs",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS AND kline_taker_sell_ratio >= 0.52",
+                "status_meaning": "This is the current research scope before the volume-safe shadow split.",
+            },
+            "shadow_filter": {
+                "filter_id": "MID_SHORT_1H_TAKER_SELL_VOLUME_SAFE",
+                "label": "Volume safe: volume <= 1.50x lookback",
+                "expression": "volume_ratio_vs_lookback <= 1.50 inside MID_SHORT 1h + taker sell >= 52%",
+                "status_meaning": "Signals passing this shadow filter are monitored as a candidate mitigation for wrong-direction shorts. This does not alter live scanner rules.",
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            "summary": {
+                "scope_count": len(taker_scope),
+                "pass_count": len(pass_items),
+                "fail_count": len(fail_items),
+                "missing_count": len(missing_items),
+                "pass_retention_pct": _retention(len(pass_items), len(taker_scope)),
+                "baseline": baseline,
+                "pass": pass_perf,
+                "fail": fail_perf,
+                "missing": missing_perf,
+                "pass_direction": _mid_short_direction_summary(pass_items, baseline=_mid_short_direction_summary(taker_scope)),
+                "fail_direction": _mid_short_direction_summary(fail_items, baseline=_mid_short_direction_summary(taker_scope)),
+                "read": _mid_short_volume_safe_read(
+                    pass_perf,
+                    fail_perf,
+                    _mid_short_direction_summary(pass_items, baseline=_mid_short_direction_summary(taker_scope)),
+                    min_sample=min_sample,
+                ),
+            },
+            "status_rows": status_rows,
+            "pass_taxonomy_rows": _anatomy_bucket_rows(
+                pass_items,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=pass_perf,
+                limit=limit,
+            ),
+            "fail_taxonomy_rows": _anatomy_bucket_rows(
+                fail_items,
+                key="wrong_direction_type",
+                min_sample=max(1, min_sample // 2),
+                baseline=fail_perf,
+                limit=limit,
+            ),
+            "pass_evidence_tp_vs_sl": _evidence_field_rows(
+                [item for item in pass_items if item.get("result_status") in COMPLETED_OUTCOMES],
+                min_sample=max(3, min_sample // 2),
+            ),
+            "latest_pass_signals": _sorted_signal_rows(pass_items, limit=limit),
+            "latest_fail_signals": _sorted_signal_rows(fail_items, limit=limit),
+            "latest_missing_signals": _sorted_signal_rows(missing_items, limit=limit),
+            "guardrails": [
+                "Volume Safe Shadow is read-only and only compares existing logged V2 MID_SHORT 1h signals.",
+                "PASS means volume_ratio_vs_lookback <= 1.50 inside the Taker Sell >= 52% research scope.",
+                "FAIL means the signal is not removed from production; it only failed this research split.",
+                "Signal Factory rules, scanner behavior, TP/SL formula, outcome logic, threshold, and execution stay unchanged.",
+            ],
+        }
+
     def _mid_short_1h_anatomy_dataset(
         self,
         *,
@@ -5395,6 +5512,86 @@ def _apply_named_wrong_direction_filter(items: list[dict[str, Any]], filter_id: 
         return []
     selected, _missing = _apply_filter_spec(items, spec)
     return selected
+
+
+def _filter_spec_by_id(specs: list[FilterStudySpec], filter_id: str) -> FilterStudySpec:
+    spec = next((row for row in specs if row.filter_id == filter_id), None)
+    if spec is None:
+        raise ValueError(f"Unknown filter spec: {filter_id}")
+    return spec
+
+
+def _split_filter_spec(
+    items: list[dict[str, Any]],
+    spec: FilterStudySpec,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    passed: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for item in items:
+        evidence = item.get("evidence_snapshot") or {}
+        if any(evidence.get(field) is None for field in spec.required_fields):
+            missing.append(item)
+            continue
+        if spec.predicate(item):
+            passed.append(item)
+        else:
+            failed.append(item)
+    return passed, failed, missing
+
+
+def _mid_short_volume_safe_status_rows(
+    *,
+    pass_items: list[dict[str, Any]],
+    fail_items: list[dict[str, Any]],
+    missing_items: list[dict[str, Any]],
+    baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows = []
+    for status, label, items in (
+        ("VOLUME_SAFE_PASS", "Volume <= 1.50x", pass_items),
+        ("VOLUME_SAFE_FAIL", "Volume > 1.50x", fail_items),
+        ("VOLUME_SAFE_MISSING", "Volume evidence missing", missing_items),
+    ):
+        perf = _walk_forward_perf(items, baseline=baseline)
+        rows.append(
+            {
+                "shadow_status": status,
+                "bucket": status,
+                "label": label,
+                "sample_retention_pct": _retention(len(items), int(baseline.get("sample_count") or 0)),
+                **_mid_short_direction_summary(items, baseline=_mid_short_direction_summary(pass_items + fail_items + missing_items)),
+                **perf,
+            }
+        )
+    return rows
+
+
+def _mid_short_volume_safe_read(
+    pass_perf: dict[str, Any],
+    fail_perf: dict[str, Any],
+    pass_direction: dict[str, Any],
+    *,
+    min_sample: int,
+) -> str:
+    if int(pass_perf.get("closed_count") or 0) < min_sample:
+        return "VOLUME_SAFE_WAIT_MORE_SAMPLE"
+    pass_total = _decimal_or_zero(pass_perf.get("realistic_total_r_closed"))
+    pass_avg_delta = _decimal_or_none_any(pass_perf.get("realistic_avg_r_delta_vs_baseline"))
+    fail_avg = _decimal_or_none_any(fail_perf.get("realistic_avg_r_closed"))
+    pass_avg = _decimal_or_none_any(pass_perf.get("realistic_avg_r_closed"))
+    wrong_delta = _decimal_or_none_any(pass_direction.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+    if (
+        pass_total > 0
+        and pass_avg_delta is not None
+        and pass_avg_delta > 0
+        and (wrong_delta is None or wrong_delta <= 0)
+        and (fail_avg is None or pass_avg is None or pass_avg > fail_avg)
+    ):
+        return "VOLUME_SAFE_SHADOW_MONITOR"
+    if (pass_avg_delta is not None and pass_avg_delta > 0) or (wrong_delta is not None and wrong_delta < 0):
+        return "VOLUME_SAFE_REDUCES_DAMAGE"
+    return "VOLUME_SAFE_NO_CLEAR_EDGE"
 
 
 def _mid_short_wrong_direction_filter_read(

@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-13",
+    version: "LAB-44",
+    title: "MID_SHORT 1h Volume Safe Shadow",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan monitor read-only untuk filter volume-safe setelah Wrong Direction Deep Dive menemukan indikasi short telat saat volume terlalu meledak.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-volume-safe-shadow memisahkan MID_SHORT 1h + Taker Sell >= 52% menjadi PASS volume <= 1.50x, FAIL volume > 1.50x, dan MISSING.",
+      "Halaman /mid-short-volume-safe-shadow menampilkan baseline vs pass/fail, wrong-direction share, realistic R, drawdown, taxonomy pass/fail, evidence TP-vs-SL, dan sample signal terbaru.",
+      "Quality Lab, Wrong Direction, Taker Deep Dive, dan menu Research / Advanced sekarang punya link langsung ke Volume Safe Shadow.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Kita bisa forward-observe apakah membuang volume overextended benar-benar mengurangi salah arah dan SL sebelum ada diskusi promosi rule.",
+    links: [
+      { href: "/mid-short-volume-safe-shadow", label: "MID_SHORT Volume Safe" },
+      { href: "/mid-short-wrong-direction-deep-dive", label: "MID_SHORT Wrong Direction" },
+      { href: "/mid-short-taker-sell-deep-dive", label: "MID_SHORT Taker Deep Dive" }
+    ]
+  },
+  {
+    date: "2026-07-13",
     version: "LAB-43",
     title: "MID_SHORT 1h Wrong Direction Deep Dive",
     status: "LIVE",

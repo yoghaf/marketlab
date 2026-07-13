@@ -1386,6 +1386,62 @@ def test_mid_short_1h_wrong_direction_deep_dive_splits_correct_and_wrong_paths()
         assert payload["latest_wrong_direction_signals"][0]["symbol"] == "BADUSDT"
 
 
+def test_mid_short_1h_volume_safe_shadow_splits_pass_and_fail() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 15)
+        rows = [
+            ("pass", "PASSUSDT", base_time, "1.10", [("101", "84", "86"), ("99", "85", "88"), ("98", "84", "87"), ("97", "83", "86")]),
+            ("fail", "FAILUSDT", base_time + timedelta(hours=2), "1.80", [("111", "99", "106"), ("108", "101", "106"), ("109", "102", "107"), ("110", "103", "108")]),
+        ]
+        for signal_id, symbol, signal_time, volume_ratio, candles in rows:
+            db.add(
+                _signal(
+                    signal_id,
+                    symbol,
+                    signal_time,
+                    "SHORT",
+                    "MID_SHORT",
+                    "100",
+                    "110",
+                    "85",
+                    timeframe="1h",
+                    evidence={
+                        "futures_spread_pct": "0.01",
+                        "range_ratio_vs_atr": "1.00",
+                        "volume_ratio_vs_lookback": volume_ratio,
+                        "kline_taker_sell_ratio": "0.56",
+                        "kline_taker_buy_ratio": "0.44",
+                    },
+                )
+            )
+            for index, (high, low, close) in enumerate(candles):
+                open_time = signal_time + timedelta(minutes=15 * index)
+                db.add(_candle(symbol, open_time, open_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).mid_short_1h_volume_safe_shadow(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        assert payload["not_execution_instruction"] is True
+        assert payload["summary"]["scope_count"] == 2
+        assert payload["summary"]["pass_count"] == 1
+        assert payload["summary"]["fail_count"] == 1
+        assert payload["summary"]["missing_count"] == 0
+        assert payload["summary"]["read"] == "VOLUME_SAFE_SHADOW_MONITOR"
+        rows_by_status = {row["shadow_status"]: row for row in payload["status_rows"]}
+        assert rows_by_status["VOLUME_SAFE_PASS"]["correct_direction_1h_count"] == 1
+        assert rows_by_status["VOLUME_SAFE_FAIL"]["wrong_direction_1h_count"] == 1
+        assert payload["latest_pass_signals"][0]["symbol"] == "PASSUSDT"
+        assert payload["latest_fail_signals"][0]["symbol"] == "FAILUSDT"
+
+
 def _signal(
     signal_id: str,
     symbol: str,

@@ -1882,6 +1882,100 @@ export type MidShortWrongDirectionDeepDiveResponse = {
   };
 };
 
+export type MidShortVolumeSafeStatusRow = OneHourWalkForwardPerf & {
+  shadow_status: string;
+  bucket: string;
+  label: string;
+  sample_retention_pct?: string | number | null;
+  wrong_direction_1h_count: number;
+  correct_direction_1h_count: number;
+  flat_1h_count: number;
+  missing_direction_1h_count: number;
+  wrong_direction_1h_share_pct?: string | number | null;
+  correct_direction_1h_share_pct?: string | number | null;
+  wrong_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+  correct_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+};
+
+export type MidShortVolumeSafeShadowResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    base_filter_id: string;
+    shadow_filter_id: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  artifact_type: string;
+  study_scope: string;
+  source_table: string;
+  strategy_version: string;
+  shadow_strategy_version: string;
+  base_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  shadow_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+    status_meaning: string;
+  };
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    scope_count: number;
+    pass_count: number;
+    fail_count: number;
+    missing_count: number;
+    pass_retention_pct?: string | number | null;
+    baseline: OneHourWalkForwardPerf;
+    pass: OneHourWalkForwardPerf;
+    fail: OneHourWalkForwardPerf;
+    missing: OneHourWalkForwardPerf;
+    pass_direction: {
+      wrong_direction_1h_count: number;
+      correct_direction_1h_count: number;
+      wrong_direction_1h_share_pct?: string | number | null;
+      correct_direction_1h_share_pct?: string | number | null;
+      wrong_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+      correct_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+    };
+    fail_direction: {
+      wrong_direction_1h_count: number;
+      correct_direction_1h_count: number;
+      wrong_direction_1h_share_pct?: string | number | null;
+      correct_direction_1h_share_pct?: string | number | null;
+      wrong_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+      correct_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+    };
+    read: string;
+  };
+  status_rows: MidShortVolumeSafeStatusRow[];
+  pass_taxonomy_rows: MidShortFailureBucketRow[];
+  fail_taxonomy_rows: MidShortFailureBucketRow[];
+  pass_evidence_tp_vs_sl: SignalQualityEvidenceField[];
+  latest_pass_signals: SignalPerformanceItem[];
+  latest_fail_signals: SignalPerformanceItem[];
+  latest_missing_signals: SignalPerformanceItem[];
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type SignalFilterStudyRow = SignalPerformanceBucket & {
   filter_id: string;
   label: string;

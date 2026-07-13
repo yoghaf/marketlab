@@ -61,6 +61,7 @@ export default async function MidShortWrongDirectionDeepDivePage({ searchParams 
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-taker-sell-deep-dive">Open Taker Deep Dive</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-second-filter-shadow">Open Second Filter</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-volume-safe-shadow">Open Volume Safe Shadow</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-failure-anatomy">Open Failure Anatomy</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?stage=MID_SHORT&timeframe=1h">Open Quality Lab</Link>
       </div>
