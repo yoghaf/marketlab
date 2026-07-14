@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import json
 import os
 import signal
 import sys
@@ -14,29 +13,11 @@ sys.path.insert(0, str(BACKEND))
 from app.core.logging import configure_logging  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.services.rich_futures_collectors import RICH_PERIODS, RichFuturesCollector  # noqa: E402
+from app.services.run_lock import JsonRunLock  # noqa: E402
 from app.services.utils import utcnow  # noqa: E402
 
 LOCK_PATH = ROOT / "data" / "rich_futures_collector.lock"
-
-
-class RunLock:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def acquire(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-        payload = {"pid": os.getpid(), "acquired_at": utcnow().isoformat()}
-        os.write(fd, json.dumps(payload).encode("utf-8"))
-        os.close(fd)
-        return True
-
-    def release(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
+LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_RICH_LOCK_STALE_SECONDS", "3600"))
 
 
 def due_periods(now: datetime) -> list[str]:
@@ -81,6 +62,7 @@ async def main() -> None:
     parser.add_argument("--interval-seconds", type=int, default=60)
     parser.add_argument("--periods", default="", help="Comma-separated periods. Overrides cadence when set.")
     parser.add_argument("--include-funding", action="store_true", help="Collect /fapi/v1/fundingRate in this run.")
+    parser.add_argument("--funding-only", action="store_true", help="Only collect funding history.")
     parser.add_argument("--symbols-limit", type=int, default=0, help="Limit active symbols for smoke tests. 0 means all.")
     args = parser.parse_args()
 
@@ -97,15 +79,17 @@ async def main() -> None:
     completed = 0
     while not stop_requested:
         now = datetime.now(UTC)
-        periods = [period.strip() for period in args.periods.split(",") if period.strip()] if args.periods else due_periods(now)
+        periods = [] if args.funding_only else (
+            [period.strip() for period in args.periods.split(",") if period.strip()] if args.periods else due_periods(now)
+        )
         periods = [period for period in periods if period in RICH_PERIODS]
-        include_funding = args.include_funding or ("1h" in periods)
+        include_funding = args.funding_only or args.include_funding or ("1h" in periods)
         symbols_limit = args.symbols_limit or None
 
         if not periods and not include_funding:
             print(f"{utcnow().isoformat()} rich_futures skipped: no cadence due")
         else:
-            lock = RunLock(LOCK_PATH)
+            lock = JsonRunLock(LOCK_PATH, "rich_futures_collector", stale_seconds=LOCK_STALE_SECONDS)
             if not lock.acquire():
                 print(f"{utcnow().isoformat()} rich_futures skipped: lock exists at {LOCK_PATH}")
             else:

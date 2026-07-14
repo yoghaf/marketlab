@@ -48,14 +48,14 @@ class RichFuturesCollector:
     async def run_periods(self, periods: list[str], include_funding: bool = False, symbols_limit: int | None = None) -> list[CollectorRun]:
         cleaned_periods = [period for period in periods if period in RICH_PERIODS]
         runs: list[CollectorRun] = []
+        if include_funding:
+            runs.append(await self.collect_funding_history(symbols_limit))
         for period in cleaned_periods:
             runs.append(await self.collect_taker_buy_sell_volume(period, symbols_limit))
             runs.append(await self.collect_global_long_short_account_ratio(period, symbols_limit))
             runs.append(await self.collect_top_trader_position_ratio(period, symbols_limit))
             runs.append(await self.collect_top_trader_account_ratio(period, symbols_limit))
             runs.append(await self.collect_open_interest_history(period, symbols_limit))
-        if include_funding:
-            runs.append(await self.collect_funding_history(symbols_limit))
         return runs
 
     async def collect_taker_buy_sell_volume(self, period: str, symbols_limit: int | None = None) -> CollectorRun:
@@ -432,6 +432,8 @@ class RichFuturesCollector:
         self.db.add(run)
         self.db.commit()
         self.db.refresh(run)
+        run_id = run.id
+        started_at = run.started_at
         try:
             result = await work(run)
             run.status = "SUCCESS" if not result.get("error_count") else "PARTIAL"
@@ -440,11 +442,13 @@ class RichFuturesCollector:
             run.error_count = result.get("error_count", 0)
             run.details_json = result.get("details_json")
         except Exception as exc:
+            self.db.rollback()
+            run = self.db.get(CollectorRun, run_id) or run
             run.status = "ERROR"
-            run.error_count += 1
+            run.error_count = (run.error_count or 0) + 1
             self.db.add(
                 CollectorError(
-                    collector_run_id=run.id,
+                    collector_run_id=run_id,
                     collector_name=collector_name,
                     symbol=None,
                     endpoint=None,
@@ -458,9 +462,13 @@ class RichFuturesCollector:
             logger.exception("rich futures collector failed: %s", collector_name)
         finally:
             run.finished_at = utcnow()
-            run.duration_seconds = duration_seconds(run.started_at, run.finished_at)
-            run.request_count = self._request_count(run.id)
-            self.db.commit()
+            run.duration_seconds = duration_seconds(started_at, run.finished_at)
+            try:
+                run.request_count = self._request_count(run_id)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
         return run
 
     def _active_symbols(self, symbols_limit: int | None = None) -> list[str]:
