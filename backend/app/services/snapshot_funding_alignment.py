@@ -36,8 +36,8 @@ FUNDING_STATUSES = ("FUNDING_ALIGNED", "FUNDING_CARRIED_FORWARD", "FUNDING_STALE
 class MarketStateAlignmentConfig:
     current_oi_max_age_seconds: int = 5 * 60
     mark_max_age_seconds: int = 5 * 60
-    futures_book_max_age_seconds: int = 2 * 60
-    spot_book_max_age_seconds: int = 2 * 60
+    futures_book_max_age_seconds: int = 10 * 60
+    spot_book_max_age_seconds: int = 10 * 60
     funding_max_carry_forward_seconds: int = 9 * 60 * 60
 
 
