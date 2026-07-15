@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-15",
+    version: "LAB-47",
+    title: "Other Lane Research Queue",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan antrian riset lane selain MID_SHORT supaya fokus penelitian tidak berhenti sambil menunggu sample MID_SHORT bertambah.",
+    changes: [
+      "Signal Quality Lab sekarang punya panel Other Lane Research Queue untuk MID_LONG 1h, EARLY_LONG 15m, EARLY_SHORT 15m, dan MID_LONG 15m.",
+      "Setiap lane menampilkan sample, TP/SL/Open, realistic R, SL share, evidence gap, serta link langsung ke filter Quality Lab yang relevan.",
+      "Panel ini memakai data V2 Profit/Loss Research yang sudah ada, jadi tidak menambah rule, threshold, scanner decision, TP/SL formula, atau execution.",
+      "Tujuannya memilih lane deep-dive berikutnya secara data-driven, bukan berdasarkan tebakan."
+    ],
+    impact: "Kita bisa meneliti alternatif selain MID_SHORT dengan urutan yang jelas: MID_LONG 1h sebagai pembanding utama, lalu EARLY_LONG/EARLY_SHORT 15m untuk membaca impulse fresh.",
+    links: [
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" },
+      { href: "/signal-quality-lab?stage=MID_LONG&timeframe=1h&position_lock=false", label: "MID_LONG 1h" },
+      { href: "/signal-quality-lab?stage=EARLY_LONG&timeframe=15m&position_lock=false", label: "EARLY_LONG 15m" },
+      { href: "/signal-quality-lab?stage=EARLY_SHORT&timeframe=15m&position_lock=false", label: "EARLY_SHORT 15m" }
+    ]
+  },
+  {
+    date: "2026-07-15",
     version: "LAB-46",
     title: "MID_SHORT 1h V2.1 Decision Panel",
     status: "LIVE",

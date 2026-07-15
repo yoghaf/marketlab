@@ -154,6 +154,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
 
           <V2ProfitLossResearchPanel data={data?.profit_loss_research || null} />
 
+          <OtherLaneResearchQueue data={data?.profit_loss_research || null} />
+
           <CollapsiblePanel
             title={`Filter Study ${filterStudy?.filters.timeframe || "1h"} ${labelFor(filterStudy?.filters.stage || "MID_SHORT")}`}
             description="Ranking filter read-only untuk melihat mana yang memperbaiki Signal. Ini belum mengubah rule produksi."
@@ -563,6 +565,100 @@ function V2ProfitLossResearchPanel({ data }: { data: SignalQualityProfitLossRese
       <div className="border-t border-line">
         <div className="px-4 py-3 text-sm font-bold">Stage + timeframe V2</div>
         <ProfitLossLaneTable rows={data.lane_rows} />
+      </div>
+    </SectionCard>
+  );
+}
+
+function OtherLaneResearchQueue({ data }: { data: SignalQualityProfitLossResearch | null }) {
+  const targets = [
+    {
+      stage: "MID_LONG",
+      timeframe: "1h",
+      priority: "Prioritas 1",
+      read: "Pembanding paling dekat dengan MID_SHORT 1h. Cocok untuk cek apakah long 1h punya pattern profit/loss yang lebih stabil."
+    },
+    {
+      stage: "EARLY_LONG",
+      timeframe: "15m",
+      priority: "Prioritas 2",
+      read: "Menguji impulse fresh long. Fokusnya bukan banyak signal, tapi apakah volume/taker/OI awal benar-benar memisahkan TP dan SL."
+    },
+    {
+      stage: "EARLY_SHORT",
+      timeframe: "15m",
+      priority: "Prioritas 3",
+      read: "Menguji impulse fresh short. Berguna untuk tahu apakah short cepat hanya noise atau punya kondisi awal yang bisa dipisahkan."
+    },
+    {
+      stage: "MID_LONG",
+      timeframe: "15m",
+      priority: "Pantau",
+      read: "Lane ini sering lebih noisy. Tetap dipantau untuk tahu apakah problemnya direction, cost, atau entry terlalu telat."
+    }
+  ];
+
+  const laneRows = data?.lane_rows || [];
+  const rows = targets.map((target) => ({
+    ...target,
+    lane: laneRows.find((row) => row.stage === target.stage && row.timeframe === target.timeframe)
+  }));
+
+  return (
+    <SectionCard
+      title="Other Lane Research Queue"
+      description="Sambil menunggu MID_SHORT 1h bertambah sample, ini lane lain yang paling masuk akal diteliti. Panel ini tidak mengubah rule live."
+    >
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        {rows.map((row) => {
+          const href = `/signal-quality-lab?stage=${row.stage}&timeframe=${row.timeframe}&position_lock=false`;
+          return (
+            <div key={`${row.stage}-${row.timeframe}`} className="flex min-h-full flex-col rounded-lg border border-line bg-field/40 p-4 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase text-slate-500">{row.priority}</div>
+                  <div className="mt-1 text-lg font-bold text-ink">{labelFor(row.stage)} {row.timeframe}</div>
+                </div>
+                <StatusBadge value={row.lane?.realistic_read || "WAITING_SAMPLE"} />
+              </div>
+
+              <div className="mt-4 grid gap-2">
+                <Insight label="Sample" value={row.lane ? String(row.lane.sample_count) : "-"} />
+                <Insight label="TP / SL / Open" value={row.lane ? `${row.lane.tp_count ?? 0} / ${row.lane.sl_count ?? 0} / ${row.lane.open_count ?? 0}` : "-"} />
+                <Insight
+                  label="Realistic R"
+                  value={row.lane ? `${fmtSigned(row.lane.realistic_total_r_closed)}R` : "-"}
+                />
+                <Insight
+                  label="SL share"
+                  value={row.lane?.sl_share_pct == null ? "-" : `${fmtNumber(row.lane.sl_share_pct)}%`}
+                />
+              </div>
+
+              <p className="mt-4 flex-1 text-slate-600">{row.read}</p>
+
+              {row.lane?.top_evidence_gap ? (
+                <div className="mt-3 rounded border border-line bg-white p-3">
+                  <div className="text-xs font-semibold uppercase text-slate-500">Evidence gap</div>
+                  <div className="mt-1 font-semibold">{row.lane.top_evidence_gap.label}</div>
+                  <div className="text-xs text-slate-500">TP-SL median delta {fmtSigned(row.lane.top_evidence_gap.delta_tp_minus_sl)}</div>
+                </div>
+              ) : null}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={href}>
+                  Open lane
+                </Link>
+                <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={`${href}&min_sample=10`}>
+                  Stricter sample
+                </Link>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="border-t border-line p-4 text-sm text-slate-600">
+        Urutan ini sengaja masih read-only: kita cari lane yang punya sample cukup, realistic R tidak bocor parah, SL share bisa turun, dan evidence gap lebih jelas dari baseline. Kalau ada lane bagus, baru dibuat deep-dive terpisah seperti MID_SHORT.
       </div>
     </SectionCard>
   );
