@@ -98,18 +98,23 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
-      <div className="flex flex-wrap gap-2 text-sm">
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Radar</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Signal History</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/shadow-forward-log">MID_SHORT Shadow Log</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-failure-anatomy">MID_SHORT Failure Anatomy</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-second-filter-shadow">MID_SHORT Second Filter</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-taker-sell-deep-dive">MID_SHORT Taker Deep Dive</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-wrong-direction-deep-dive">MID_SHORT Wrong Direction</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-volume-safe-shadow">MID_SHORT Volume Safe</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">MID_SHORT Combo Study</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-factory">Signal Factory Raw</Link>
-        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={showArchive ? "/signal-quality-lab" : "/signal-quality-lab?show_archive=true"}>{showArchive ? "Hide Archive" : "Show V3/V4 Archive"}</Link>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Live Radar</Link>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Open Signal History</Link>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+        <details className="relative">
+          <summary className="cursor-pointer list-none rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field">Deep research links</summary>
+          <div className="absolute left-0 top-11 z-10 grid w-72 gap-1 rounded-lg border border-line bg-white p-2 shadow-lg">
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/shadow-forward-log">MID_SHORT Shadow Log</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/mid-short-failure-anatomy">Failure Anatomy</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/mid-short-wrong-direction-deep-dive">Wrong Direction</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/mid-short-volume-safe-shadow">Volume Safe</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/mid-short-taker-sell-deep-dive">Taker Sell Deep Dive</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/mid-short-second-filter-shadow">Second Filter</Link>
+            <Link className="rounded px-3 py-2 hover:bg-field" href="/signal-factory">Signal Factory Raw</Link>
+          </div>
+        </details>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={showArchive ? "/signal-quality-lab" : "/signal-quality-lab?show_archive=true"}>{showArchive ? "Hide Archive" : "Show V3/V4 Archive"}</Link>
       </div>
 
       {error ? (

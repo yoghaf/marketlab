@@ -17,9 +17,9 @@ export function MetricCard({
     info: "border-blue-200 bg-blue-50"
   }[tone];
   return (
-    <div className={`min-w-0 rounded-md border p-4 ${toneClass}`}>
+    <div className={`min-w-0 rounded-lg border p-4 shadow-sm ${toneClass}`}>
       <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
-      <div className="mt-2 min-h-14 break-words text-2xl font-bold leading-7 text-ink" title={String(value)}>{value}</div>
+      <div className="mt-2 min-h-12 break-words text-2xl font-black leading-7 text-ink" title={String(value)}>{value}</div>
       {helper && <div className="mt-1 text-xs leading-5 text-slate-600">{helper}</div>}
     </div>
   );
