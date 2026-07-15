@@ -14,6 +14,7 @@ const labGroups = [
     title: "Research Fokus",
     links: [
       { href: "/mid-short-filter-combination-study", label: "MID_SHORT V2.1 Decision", helper: "Filter kandidat promosi" },
+      { href: "/mid-long-research-study", label: "MID_LONG 1h Research", helper: "Kenapa long 1h SL" },
       { href: "/signal-quality-lab", label: "Signal Quality Lab", helper: "Kenapa TP/SL" },
       { href: "/signal-1h-review", label: "1h Review", helper: "Long/short 1h" },
       { href: "/shadow-forward-log", label: "Shadow Log", helper: "Forward sample" }

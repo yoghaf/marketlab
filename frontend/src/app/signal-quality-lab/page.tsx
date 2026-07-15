@@ -612,6 +612,7 @@ function OtherLaneResearchQueue({ data }: { data: SignalQualityProfitLossResearc
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
         {rows.map((row) => {
           const href = `/signal-quality-lab?stage=${row.stage}&timeframe=${row.timeframe}&position_lock=false`;
+          const dedicatedHref = row.stage === "MID_LONG" && row.timeframe === "1h" ? "/mid-long-research-study" : href;
           return (
             <div key={`${row.stage}-${row.timeframe}`} className="flex min-h-full flex-col rounded-lg border border-line bg-field/40 p-4 text-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -646,7 +647,7 @@ function OtherLaneResearchQueue({ data }: { data: SignalQualityProfitLossResearc
               ) : null}
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={href}>
+                <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={dedicatedHref}>
                   Open lane
                 </Link>
                 <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={`${href}&min_sample=10`}>

@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-15",
+    version: "LAB-48",
+    title: "MID_LONG 1h Research Study",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan halaman khusus untuk meneliti MID_LONG 1h dengan pola kerja seperti riset MID_SHORT: baseline, evidence TP/SL, filter ranking, dan sample signal.",
+    changes: [
+      "Halaman /mid-long-research-study membaca Quality Lab MID_LONG 1h dan Filter Study MID_LONG 1h secara read-only.",
+      "Panel utama menampilkan sample, closed TP/SL, ideal R, realistic R, SL share, evidence gap, top loss symbol, dan verdict riset.",
+      "Filter ranking memperlihatkan filter mana yang memperbaiki atau memperburuk MID_LONG 1h dibanding baseline.",
+      "Halaman juga menampilkan best, worst, dan open MID_LONG 1h signals dengan entry futures, SL, TP, ideal R, dan realistic R.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Kita bisa membedah apakah MID_LONG 1h bisa diselamatkan dengan filter atau harus ditahan, tanpa mengganggu riset MID_SHORT yang masih menunggu sample.",
+    links: [
+      { href: "/mid-long-research-study", label: "MID_LONG 1h Research" },
+      { href: "/signal-quality-lab?stage=MID_LONG&timeframe=1h&position_lock=false", label: "Quality Lab MID_LONG 1h" },
+      { href: "/signal-performance?stage=MID_LONG&timeframe=1h&position_lock=false", label: "Signal History MID_LONG 1h" }
+    ]
+  },
+  {
+    date: "2026-07-15",
     version: "LAB-47",
     title: "Other Lane Research Queue",
     status: "LIVE",
