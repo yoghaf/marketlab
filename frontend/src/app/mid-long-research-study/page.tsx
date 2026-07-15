@@ -12,6 +12,9 @@ import {
   SignalQualityEvidenceField,
   SignalQualityLabResponse,
   SignalQualityProfitLossLane,
+  OneHourWalkForwardCandidate,
+  OneHourWalkForwardLane,
+  OneHourWalkForwardResponse,
   fetchJson,
   fmtNumber,
   fmtPrice,
@@ -49,8 +52,10 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
 
   let quality: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
+  let walkForward: OneHourWalkForwardResponse | null = null;
   let error: string | null = null;
   let filterError: string | null = null;
+  let walkForwardError: string | null = null;
 
   try {
     quality = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${qualityQuery.toString()}`, { revalidateSeconds: 120 });
@@ -64,10 +69,20 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     filterError = err instanceof Error ? err.message : "MID_LONG Filter Study API failed";
   }
 
+  try {
+    walkForward = await fetchJson<OneHourWalkForwardResponse>(
+      `/api/signal-candidates/one-hour-walk-forward?include_watch_only=${includeWatchOnly}&position_lock=${positionLock}&min_sample=${minSample}&limit=${limit}`,
+      { revalidateSeconds: 120 }
+    );
+  } catch (err) {
+    walkForwardError = err instanceof Error ? err.message : "MID_LONG Walk Forward API failed";
+  }
+
   const aggregate = quality?.aggregate;
   const lane = quality?.profit_loss_research?.lane_rows?.find((row) => row.stage === "MID_LONG" && row.timeframe === "1h") || null;
   const topFilters = filterStudy?.rows || [];
   const promising = topFilters.filter((row) => ["PROMISING_FILTER", "REDUCES_DAMAGE"].includes(row.verdict)).slice(0, 6);
+  const walkLane = walkForward?.lanes?.find((row) => row.stage === "MID_LONG" && row.timeframe === "1h") || null;
 
   return (
     <div className="space-y-5">
@@ -127,6 +142,17 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <div className="p-4 text-sm text-stale">{filterError}</div>
             ) : (
               <FilterTable rows={topFilters} />
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="Walk-forward validation"
+            description="Train/validation split kronologis. Ini mengecek apakah filter tetap kuat di data setelahnya, bukan cuma bagus di seluruh sample."
+          >
+            {walkForwardError ? (
+              <div className="p-4 text-sm text-stale">{walkForwardError}</div>
+            ) : (
+              <WalkForwardPanel lane={walkLane} />
             )}
           </SectionCard>
 
@@ -252,6 +278,75 @@ function FilterTable({ rows }: { rows: SignalFilterStudyRow[] }) {
           {!rows.length && (
             <tr>
               <td colSpan={10}><EmptyState title="No filter rows" detail="Belum ada filter candidate untuk sample ini." /></td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WalkForwardPanel({ lane }: { lane: OneHourWalkForwardLane | null }) {
+  if (!lane) {
+    return <EmptyState title="No walk-forward lane" detail="Belum ada payload walk-forward untuk MID_LONG 1h." />;
+  }
+  const candidates = lane.actionable_candidates.length ? lane.actionable_candidates : lane.filter_candidates.slice(0, 8);
+  return (
+    <div>
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Lane status" value={labelFor(lane.lane_status)} />
+        <Info label="Train / validation" value={`${lane.train_count} / ${lane.validation_count}`} />
+        <Info label="Baseline all" value={`${fmtSigned(lane.baseline_all.realistic_total_r_closed)}R`} />
+        <Info label="Baseline validation" value={`${fmtSigned(lane.baseline_validation.realistic_total_r_closed)}R`} />
+        <Info label="Validation SL" value={lane.baseline_validation.sl_share_pct == null ? "-" : `${fmtNumber(lane.baseline_validation.sl_share_pct)}%`} />
+        <Info label="Actionable" value={String(lane.actionable_candidates.length)} />
+      </div>
+      <div className="border-t border-line p-4 text-sm text-slate-700">{lane.lane_note}</div>
+      <WalkForwardTable rows={candidates} />
+    </div>
+  );
+}
+
+function WalkForwardTable({ rows }: { rows: OneHourWalkForwardCandidate[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Verdict</th>
+            <th>Filter</th>
+            <th>Score</th>
+            <th>Train R</th>
+            <th>Validation R</th>
+            <th>Validation TP / SL</th>
+            <th>Validation SL share</th>
+            <th>Avg delta</th>
+            <th>Risk</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td>{row.score}</td>
+              <td>{fmtSigned(row.train.realistic_total_r_closed)}R</td>
+              <td className={Number(row.validation.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>{fmtSigned(row.validation.realistic_total_r_closed)}R</td>
+              <td>{row.validation.tp_count ?? 0} / {row.validation.sl_count ?? 0}</td>
+              <td>{row.validation.sl_share_pct == null ? "-" : `${fmtNumber(row.validation.sl_share_pct)}%`}</td>
+              <td>{fmtSigned(row.validation.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-md text-sm text-slate-600">
+                <div>{row.note}</div>
+                {row.risk_notes?.length ? <div className="mt-1 text-xs text-stale">{row.risk_notes.join(" ")}</div> : null}
+              </td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={9}><EmptyState title="No walk-forward filters" detail="Belum ada filter yang cukup sample di validation." /></td>
             </tr>
           )}
         </tbody>
