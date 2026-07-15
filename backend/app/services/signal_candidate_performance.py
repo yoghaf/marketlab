@@ -964,6 +964,12 @@ class SignalCandidatePerformanceService:
             if row.get("read") in {"COMBO_SHADOW_CANDIDATE", "COMBO_REDUCES_DAMAGE"}
         ]
         top_candidate = candidate_rows[0] if candidate_rows else (rows[0] if rows else None)
+        decision_panel = _mid_short_filter_combination_decision_panel(
+            rows,
+            baseline=baseline,
+            baseline_direction=baseline_direction,
+            min_sample=min_sample,
+        )
         top_items: list[dict[str, Any]] = []
         top_fail_items: list[dict[str, Any]] = []
         top_missing_items: list[dict[str, Any]] = []
@@ -1018,6 +1024,7 @@ class SignalCandidatePerformanceService:
                 "top_filter_label": top_candidate.get("label") if top_candidate else None,
                 "read": _mid_short_filter_combination_summary_read(rows, min_sample=min_sample),
             },
+            "decision_panel": decision_panel,
             "combination_rows": rows,
             "candidate_rows": candidate_rows[:limit],
             "baseline_path_rows": _anatomy_bucket_rows(
@@ -6005,6 +6012,133 @@ def _mid_short_filter_combination_summary_read(rows: list[dict[str, Any]], *, mi
     if any(row.get("read") == "COMBO_REDUCES_DAMAGE" for row in ready_rows):
         return "HAS_COMBO_DAMAGE_REDUCTION"
     return "NO_CLEAN_COMBO_FILTER_YET"
+
+
+def _mid_short_filter_combination_decision_panel(
+    rows: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    baseline_direction: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    ready_rows = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    shadow_rows = [row for row in ready_rows if row.get("read") == "COMBO_SHADOW_CANDIDATE"]
+    top_shadow = shadow_rows[0] if shadow_rows else None
+    monitor_rows = [row for row in ready_rows if row.get("read") in {"COMBO_SHADOW_CANDIDATE", "COMBO_REDUCES_DAMAGE"}]
+    monitor_row = top_shadow or (monitor_rows[0] if monitor_rows else (ready_rows[0] if ready_rows else None))
+    best_sl = min(
+        ready_rows,
+        key=lambda row: (
+            _decimal_or_none_any(row.get("sl_share_delta_vs_baseline")) or Decimal("999"),
+            _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline")) or Decimal("-999"),
+        ),
+        default=None,
+    )
+    best_wrong = min(
+        ready_rows,
+        key=lambda row: (
+            _decimal_or_none_any(row.get("wrong_direction_1h_share_pct_delta_vs_baseline")) or Decimal("999"),
+            _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline")) or Decimal("-999"),
+        ),
+        default=None,
+    )
+    best_drawdown = max(
+        ready_rows,
+        key=lambda row: (
+            _decimal_or_none_any(row.get("max_drawdown_delta_vs_baseline")) or Decimal("-999"),
+            _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline")) or Decimal("-999"),
+        ),
+        default=None,
+    )
+
+    baseline_closed = int(baseline.get("closed_count") or 0)
+    baseline_realistic_total = _decimal_or_zero(baseline.get("realistic_total_r_closed"))
+    baseline_realistic_avg = _decimal_or_zero(baseline.get("realistic_avg_r_closed"))
+    baseline_sl_share = _decimal_or_none_any(baseline.get("sl_share_pct"))
+    baseline_wrong_share = _decimal_or_none_any(baseline_direction.get("wrong_direction_1h_share_pct"))
+
+    blockers: list[str] = []
+    if baseline_closed < 120:
+        blockers.append("Closed sample masih < 120; belum cukup untuk promosi rule.")
+    if top_shadow is None:
+        blockers.append("Belum ada combo yang lolos sebagai V2.1 shadow candidate.")
+    else:
+        top_sl_delta = _decimal_or_none_any(top_shadow.get("sl_share_delta_vs_baseline"))
+        top_wrong_delta = _decimal_or_none_any(top_shadow.get("wrong_direction_1h_share_pct_delta_vs_baseline"))
+        top_avg_delta = _decimal_or_none_any(top_shadow.get("realistic_avg_r_delta_vs_baseline"))
+        if top_sl_delta is not None and top_sl_delta > Decimal("-5"):
+            blockers.append("SL share belum turun minimal 5pp dari baseline.")
+        if top_wrong_delta is not None and top_wrong_delta > Decimal("-5"):
+            blockers.append("Wrong-direction belum turun minimal 5pp dari baseline.")
+        if top_avg_delta is not None and top_avg_delta < Decimal("0.08"):
+            blockers.append("Realistic avg R belum naik minimal +0.08R dari baseline.")
+
+    if top_shadow is not None:
+        decision = "MONITOR_V2_1_SHADOW"
+    elif any(row.get("read") == "COMBO_REDUCES_DAMAGE" for row in ready_rows):
+        decision = "MONITOR_DAMAGE_REDUCTION_ONLY"
+    elif ready_rows:
+        decision = "NO_PROMOTABLE_FILTER_YET"
+    else:
+        decision = "WAIT_MORE_SAMPLE"
+
+    recommendation = (
+        "Pantau top combo sebagai V2.1 shadow, tapi jangan promosi ke Signal Factory sampai blocker promosi hilang."
+        if decision == "MONITOR_V2_1_SHADOW"
+        else "Belum ada filter yang cukup bersih untuk dipromosikan; lanjut kumpulkan sample dan baca damage-reduction."
+    )
+
+    return {
+        "decision": decision,
+        "recommendation": recommendation,
+        "baseline_snapshot": {
+            "closed_count": baseline_closed,
+            "tp_count": int(baseline.get("tp_count") or 0),
+            "sl_count": int(baseline.get("sl_count") or 0),
+            "realistic_total_r_closed": baseline_realistic_total,
+            "realistic_avg_r_closed": baseline_realistic_avg,
+            "sl_share_pct": baseline_sl_share,
+            "wrong_direction_1h_share_pct": baseline_wrong_share,
+        },
+        "watch_filter": _mid_short_filter_combination_brief(monitor_row),
+        "best_sl_reducer": _mid_short_filter_combination_brief(best_sl),
+        "best_wrong_direction_reducer": _mid_short_filter_combination_brief(best_wrong),
+        "best_drawdown_reducer": _mid_short_filter_combination_brief(best_drawdown),
+        "promotion_blockers": blockers or ["Belum ada blocker teknis, tapi tetap butuh forward validation sebelum rule live."],
+        "next_validation": [
+            "Tunggu closed sample MID_SHORT 1h minimal 120.",
+            "Top filter harus menjaga realistic total R positif.",
+            "SL share dan wrong-direction idealnya turun >= 5pp vs baseline.",
+            "Realistic avg R idealnya naik >= +0.08R vs baseline.",
+            "Tidak boleh ada concentration satu symbol > 20%.",
+        ],
+    }
+
+
+def _mid_short_filter_combination_brief(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "filter_id": row.get("filter_id"),
+        "label": row.get("label"),
+        "expression": row.get("expression"),
+        "read": row.get("read"),
+        "sample_count": row.get("sample_count"),
+        "closed_count": row.get("closed_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": row.get("realistic_avg_r_delta_vs_baseline"),
+        "sl_share_pct": row.get("sl_share_pct"),
+        "sl_share_delta_vs_baseline": row.get("sl_share_delta_vs_baseline"),
+        "wrong_direction_1h_share_pct": row.get("wrong_direction_1h_share_pct"),
+        "wrong_direction_1h_share_pct_delta_vs_baseline": row.get("wrong_direction_1h_share_pct_delta_vs_baseline"),
+        "max_realistic_drawdown_r": row.get("max_realistic_drawdown_r"),
+        "max_drawdown_delta_vs_baseline": row.get("max_drawdown_delta_vs_baseline"),
+        "top_symbol": row.get("top_symbol"),
+        "top_symbol_share_pct": row.get("top_symbol_share_pct"),
+    }
 
 
 def _mid_short_wrong_direction_filter_read(

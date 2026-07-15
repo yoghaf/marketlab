@@ -1510,6 +1510,15 @@ def test_mid_short_1h_filter_combination_study_ranks_volume_combo() -> None:
         assert payload["top_filter_pass_signals"][0]["symbol"] == "PASSUSDT"
         assert payload["top_filter_fail_signals"][0]["symbol"] == "FAILUSDT"
         assert payload["summary"]["read"] in {"HAS_V2_1_SHADOW_CANDIDATE", "HAS_COMBO_DAMAGE_REDUCTION"}
+        assert payload["decision_panel"]["decision"] in {
+            "MONITOR_V2_1_SHADOW",
+            "MONITOR_DAMAGE_REDUCTION_ONLY",
+            "NO_PROMOTABLE_FILTER_YET",
+            "WAIT_MORE_SAMPLE",
+        }
+        assert payload["decision_panel"]["watch_filter"]["filter_id"] == payload["summary"]["top_filter_id"]
+        assert payload["decision_panel"]["promotion_blockers"]
+        assert payload["decision_panel"]["next_validation"]
 
 
 def _signal(

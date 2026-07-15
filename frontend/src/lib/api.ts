@@ -1981,6 +1981,28 @@ export type MidShortFilterCombinationRow = MidShortSecondFilterRow & {
   risk_notes: string[];
 };
 
+export type MidShortFilterCombinationDecisionBrief = {
+  filter_id?: string | null;
+  label?: string | null;
+  expression?: string | null;
+  read?: string | null;
+  sample_count?: number | null;
+  closed_count?: number | null;
+  tp_count?: number | null;
+  sl_count?: number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  sl_share_pct?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  wrong_direction_1h_share_pct?: string | number | null;
+  wrong_direction_1h_share_pct_delta_vs_baseline?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  max_drawdown_delta_vs_baseline?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+};
+
 export type MidShortFilterCombinationStudyResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -2032,6 +2054,25 @@ export type MidShortFilterCombinationStudyResponse = {
     top_filter_id?: string | null;
     top_filter_label?: string | null;
     read: string;
+  };
+  decision_panel?: {
+    decision: string;
+    recommendation: string;
+    baseline_snapshot: {
+      closed_count: number;
+      tp_count: number;
+      sl_count: number;
+      realistic_total_r_closed?: string | number | null;
+      realistic_avg_r_closed?: string | number | null;
+      sl_share_pct?: string | number | null;
+      wrong_direction_1h_share_pct?: string | number | null;
+    };
+    watch_filter?: MidShortFilterCombinationDecisionBrief | null;
+    best_sl_reducer?: MidShortFilterCombinationDecisionBrief | null;
+    best_wrong_direction_reducer?: MidShortFilterCombinationDecisionBrief | null;
+    best_drawdown_reducer?: MidShortFilterCombinationDecisionBrief | null;
+    promotion_blockers: string[];
+    next_validation: string[];
   };
   combination_rows: MidShortFilterCombinationRow[];
   candidate_rows: MidShortFilterCombinationRow[];

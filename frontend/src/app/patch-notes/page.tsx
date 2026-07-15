@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-15",
+    version: "LAB-46",
+    title: "MID_SHORT 1h V2.1 Decision Panel",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Mengembangkan Combo Study menjadi panel keputusan read-only setelah rich/funding pipeline pulih.",
+    changes: [
+      "Endpoint /api/signal-candidates/mid-short-1h-filter-combination-study sekarang mengirim decision_panel berisi baseline snapshot, watch filter, best SL reducer, best wrong-direction reducer, best drawdown reducer, blocker promosi, dan next validation.",
+      "Halaman /mid-short-filter-combination-study menampilkan V2.1 decision panel supaya hasil riset bisa dibaca cepat tanpa harus membedah seluruh tabel kombinasi.",
+      "Panel ini membedakan filter yang layak dipantau sebagai shadow dari filter yang belum cukup bersih untuk dipromosikan.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Riset MID_SHORT 1h sekarang punya kesimpulan operasional: pantau V2.1 shadow, tapi promosi rule menunggu sample dan penurunan SL/wrong-direction yang lebih kuat.",
+    links: [
+      { href: "/mid-short-filter-combination-study", label: "MID_SHORT Combo Study" },
+      { href: "/signal-quality-lab?stage=MID_SHORT&timeframe=1h", label: "Quality Lab MID_SHORT 1h" }
+    ]
+  },
+  {
     date: "2026-07-13",
     version: "LAB-45",
     title: "MID_SHORT 1h Filter Combination Study",

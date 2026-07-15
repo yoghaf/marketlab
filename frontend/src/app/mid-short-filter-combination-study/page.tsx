@@ -6,6 +6,7 @@ import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   MidShortFailureBucketRow,
+  MidShortFilterCombinationDecisionBrief,
   MidShortFilterCombinationRow,
   MidShortFilterCombinationStudyResponse,
   SignalPerformanceItem,
@@ -125,6 +126,8 @@ export default async function MidShortFilterCombinationStudyPage({ searchParams 
             )}
           </SectionCard>
 
+          <DecisionPanel data={data?.decision_panel} />
+
           <SectionCard title="Combination ranking" description="Cari baris yang realistic R naik, SL share turun, wrong-direction turun, drawdown tidak memburuk, dan sample tidak terlalu kecil.">
             <CombinationTable rows={data?.combination_rows || []} />
           </SectionCard>
@@ -160,6 +163,78 @@ export default async function MidShortFilterCombinationStudyPage({ searchParams 
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function DecisionPanel({ data }: { data?: MidShortFilterCombinationStudyResponse["decision_panel"] }) {
+  if (!data) {
+    return (
+      <SectionCard title="V2.1 decision panel" description="Ringkasan keputusan belum tersedia dari API.">
+        <div className="p-4 text-sm text-slate-500">No decision panel</div>
+      </SectionCard>
+    );
+  }
+  return (
+    <SectionCard
+      title="V2.1 decision panel"
+      description="Ringkasan praktis: apa yang layak dipantau, apa blocker promosi, dan validasi berikutnya. Ini tetap read-only."
+    >
+      <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <Info label="Decision" value={labelFor(data.decision)} />
+        <Info label="Baseline" value={`${fmtSigned(data.baseline_snapshot.realistic_total_r_closed)}R / ${data.baseline_snapshot.tp_count}-${data.baseline_snapshot.sl_count}`} />
+        <Info label="Baseline SL" value={fmtPct(data.baseline_snapshot.sl_share_pct)} />
+        <Info label="Baseline wrong 1h" value={fmtPct(data.baseline_snapshot.wrong_direction_1h_share_pct)} />
+      </div>
+      <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-4">
+        <DecisionBrief title="Watch filter" row={data.watch_filter} />
+        <DecisionBrief title="Best SL reducer" row={data.best_sl_reducer} />
+        <DecisionBrief title="Best wrong-direction reducer" row={data.best_wrong_direction_reducer} />
+        <DecisionBrief title="Best drawdown reducer" row={data.best_drawdown_reducer} />
+      </div>
+      <div className="grid gap-4 border-t border-line p-4 lg:grid-cols-3">
+        <div className="rounded border border-line bg-field/40 p-3 lg:col-span-1">
+          <div className="text-xs font-semibold uppercase text-slate-500">Recommendation</div>
+          <div className="mt-2 text-sm font-semibold">{data.recommendation}</div>
+        </div>
+        <div className="rounded border border-line bg-field/40 p-3">
+          <div className="text-xs font-semibold uppercase text-slate-500">Promotion blockers</div>
+          <ul className="mt-2 grid gap-1 text-sm">
+            {data.promotion_blockers.map((item) => <li key={item}>- {item}</li>)}
+          </ul>
+        </div>
+        <div className="rounded border border-line bg-field/40 p-3">
+          <div className="text-xs font-semibold uppercase text-slate-500">Next validation</div>
+          <ul className="mt-2 grid gap-1 text-sm">
+            {data.next_validation.map((item) => <li key={item}>- {item}</li>)}
+          </ul>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function DecisionBrief({ title, row }: { title: string; row?: MidShortFilterCombinationDecisionBrief | null }) {
+  if (!row) {
+    return (
+      <div className="rounded border border-line bg-field/40 p-3">
+        <div className="text-xs font-semibold uppercase text-slate-500">{title}</div>
+        <div className="mt-2 text-sm text-slate-500">No row</div>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded border border-line bg-field/40 p-3">
+      <div className="text-xs font-semibold uppercase text-slate-500">{title}</div>
+      <div className="mt-1 font-semibold">{row.label || row.filter_id}</div>
+      <div className="mt-2 grid gap-1 text-xs text-slate-600">
+        <div>Sample: {row.sample_count ?? 0}, closed {row.closed_count ?? 0}</div>
+        <div>TP/SL: {row.tp_count ?? 0} / {row.sl_count ?? 0}</div>
+        <div>Realistic: {fmtSigned(row.realistic_total_r_closed)}R ({fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R avg delta)</div>
+        <div>SL: {fmtPct(row.sl_share_pct)} ({fmtPctDelta(row.sl_share_delta_vs_baseline)})</div>
+        <div>Wrong 1h: {fmtPct(row.wrong_direction_1h_share_pct)} ({fmtPctDelta(row.wrong_direction_1h_share_pct_delta_vs_baseline)})</div>
+        <div>Top symbol: {row.top_symbol || "-"} ({fmtPct(row.top_symbol_share_pct)})</div>
+      </div>
     </div>
   );
 }
