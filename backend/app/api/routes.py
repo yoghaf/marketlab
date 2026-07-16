@@ -394,11 +394,16 @@ def signal_detail(
 ):
     if not signal_id and not symbol:
         raise HTTPException(status_code=400, detail="signal_id or symbol is required")
+    try:
+        v3_filter_map = SignalPerformanceSnapshotService().v3_shadow_filter_map()
+    except (FileNotFoundError, json.JSONDecodeError):
+        v3_filter_map = None
     payload = SignalCandidatePerformanceService(db).detail(
         signal_id=signal_id,
         symbol=symbol,
         timeframe=timeframe,
         include_watch_only=True,
+        v3_filter_map=v3_filter_map,
     )
     if payload is None:
         raise HTTPException(status_code=404, detail="Signal not found")

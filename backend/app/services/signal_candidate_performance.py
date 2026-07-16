@@ -153,6 +153,7 @@ class SignalCandidatePerformanceService:
         symbol: str | None = None,
         timeframe: str | None = None,
         include_watch_only: bool = True,
+        v3_filter_map: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any] | None:
         signals = self._load_signals(
             epoch=epoch,
@@ -188,7 +189,9 @@ class SignalCandidatePerformanceService:
         item.update(
             _v3_shadow_result_for_item(
                 item,
-                self.v3_shadow_filter_map(
+                v3_filter_map
+                if v3_filter_map is not None
+                else self.v3_shadow_filter_map(
                     epoch=epoch,
                     include_watch_only=include_watch_only,
                     position_lock=True,
@@ -3914,6 +3917,15 @@ def signal_factory_v3_shadow_for_candidate(
         "evidence_snapshot": _evidence_snapshot_from_mapping(merged),
     }
     return _v3_shadow_result_for_item(item, filter_map)
+
+
+def build_v3_shadow_filter_map(
+    items: list[dict[str, Any]],
+    *,
+    min_sample: int = 5,
+    limit: int = 100,
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    return _v3_shadow_filter_map(items, min_sample=max(1, min_sample), limit=max(1, limit))
 
 
 def _evidence_snapshot_from_mapping(evidence: dict[str, Any]) -> dict[str, Decimal | None]:

@@ -29,6 +29,7 @@ const patches: PatchItem[] = [
       "Garis Entry, SL, dan TP tampil langsung pada price scale; zona target berwarna hijau dan zona risiko berwarna merah.",
       "Marker ENTRY dan result TP/SL ditampilkan pada candle terdekat, sedangkan posisi open memperpanjang box sampai candle futures terbaru.",
       "Tooltip OHLC memakai waktu WIB dan menjaga presisi harga token bernilai kecil.",
+      "Signal Detail memakai snapshot riset untuk metadata V3 agar halaman tidak menghitung ulang seluruh kalibrasi saat dibuka.",
       "Patch ini tidak mengubah Signal Factory rule, scanner decision, evaluator TP/SL, threshold, atau execution."
     ],
     impact: "Setiap signal sekarang bisa diaudit secara visual: kapan entry terjadi, bagaimana harga bergerak, dan apakah jalurnya benar-benar menyentuh TP atau SL.",

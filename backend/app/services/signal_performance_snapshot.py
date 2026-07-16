@@ -14,6 +14,7 @@ from app.services.signal_candidate_performance import (
     build_one_hour_filter_candidate_study_payload,
     build_one_hour_v4_shadow_monitor_payload,
     build_one_hour_walk_forward_payload,
+    build_v3_shadow_filter_map,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import json_safe, utcnow
@@ -120,6 +121,10 @@ class SignalPerformanceSnapshotService:
     def forward_integrity_1h(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(FORWARD_INTEGRITY_1H_FILE)
         return _slice_payload(payload, limit=max(1, limit), list_keys=("items", "stale_items"))
+
+    def v3_shadow_filter_map(self) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        payload = self._read(PERFORMANCE_FILE)
+        return build_v3_shadow_filter_map(list(payload.get("items") or []), min_sample=5, limit=100)
 
     def one_hour_filter_candidate_study(self, *, min_sample: int, limit: int) -> dict[str, Any]:
         payload = self._read(PERFORMANCE_1H_FILE)
