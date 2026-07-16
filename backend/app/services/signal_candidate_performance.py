@@ -16,8 +16,8 @@ from app.models.market import (
     FuturesKline1h,
     FuturesKline1m,
     FuturesKline15m,
-    FuturesOpenInterestHistory,
     MarketlabActiveUniverse,
+    RichFutures5mAlignment,
     SignalForwardReturnLog,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
@@ -1297,9 +1297,9 @@ class SignalCandidatePerformanceService:
             start_time=min_signal_time - timedelta(hours=72) if min_signal_time is not None else None,
             end_time=max_signal_time + timedelta(hours=4) if max_signal_time is not None else None,
         )
-        oi_history = self._load_oi_history(
+        oi_history = self._load_1h_oi_changes(
             source_symbols,
-            start_time=min_signal_time - timedelta(minutes=15) if min_signal_time is not None else None,
+            start_time=min_signal_time if min_signal_time is not None else None,
             end_time=max_signal_time + timedelta(hours=1, minutes=15) if max_signal_time is not None else None,
         )
         normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
@@ -2107,7 +2107,7 @@ class SignalCandidatePerformanceService:
             )
         return dict(output)
 
-    def _load_oi_history(
+    def _load_1h_oi_changes(
         self,
         symbols: set[str],
         *,
@@ -2118,26 +2118,27 @@ class SignalCandidatePerformanceService:
             return {}
         query = (
             select(
-                FuturesOpenInterestHistory.symbol,
-                FuturesOpenInterestHistory.timestamp,
-                FuturesOpenInterestHistory.sum_open_interest,
+                RichFutures5mAlignment.symbol,
+                RichFutures5mAlignment.window_close_time,
+                RichFutures5mAlignment.oi_change_pct,
             )
             .where(
-                FuturesOpenInterestHistory.symbol.in_(symbols),
-                FuturesOpenInterestHistory.period == "5m",
-                FuturesOpenInterestHistory.timestamp >= start_time,
-                FuturesOpenInterestHistory.sum_open_interest.is_not(None),
+                RichFutures5mAlignment.symbol.in_(symbols),
+                RichFutures5mAlignment.timeframe == "1h",
+                RichFutures5mAlignment.alignment_status == "ALIGNED",
+                RichFutures5mAlignment.window_close_time >= start_time,
+                RichFutures5mAlignment.oi_change_pct.is_not(None),
             )
             .order_by(
-                asc(FuturesOpenInterestHistory.symbol),
-                asc(FuturesOpenInterestHistory.timestamp),
+                asc(RichFutures5mAlignment.symbol),
+                asc(RichFutures5mAlignment.window_close_time),
             )
         )
         if end_time is not None:
-            query = query.where(FuturesOpenInterestHistory.timestamp <= end_time)
+            query = query.where(RichFutures5mAlignment.window_close_time <= end_time)
         output: dict[str, list[tuple[datetime, Decimal]]] = defaultdict(list)
         for row in self.db.execute(query).all():
-            output[row.symbol].append((_naive(row.timestamp), Decimal(row.sum_open_interest)))
+            output[row.symbol].append((_naive(row.window_close_time), Decimal(row.oi_change_pct)))
         return dict(output)
 
     def _load_1m_candles(
@@ -5104,15 +5105,12 @@ def _mid_short_oi_context(
         point = ordered[index]
         return point if cutoff - point[0] <= timedelta(minutes=10) else None
 
-    start = point_at_or_before(signal_time)
     end = point_at_or_before(signal_time + timedelta(hours=1))
-    change = None
-    if start is not None and end is not None and start[1] > 0:
-        change = (end[1] - start[1]) / start[1] * Decimal("100")
     return {
-        "forward_1h_oi_change_pct": change,
-        "oi_entry_timestamp": start[0] if start else None,
+        "forward_1h_oi_change_pct": end[1] if end else None,
+        "oi_entry_timestamp": signal_time,
         "oi_forward_1h_timestamp": end[0] if end else None,
+        "oi_forward_source": "rich_futures_5m_alignment timeframe=1h",
     }
 
 
