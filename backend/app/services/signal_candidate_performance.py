@@ -477,6 +477,7 @@ class SignalCandidatePerformanceService:
             sl_items,
             rows=sl_failure_cause_rows,
         )
+        legacy_path_read = _mid_short_failure_summary_read(annotated, min_sample=min_sample)
         improvement_candidates = _mid_short_failure_improvement_candidates(
             annotated,
             baseline=baseline,
@@ -536,7 +537,8 @@ class SignalCandidatePerformanceService:
                 "dominant_failure_cause": sl_failure_cause_summary["dominant_failure_cause"],
                 "dominant_failure_count": sl_failure_cause_summary["dominant_failure_count"],
                 "dominant_failure_share_pct": sl_failure_cause_summary["dominant_failure_share_pct"],
-                "read": _mid_short_failure_summary_read(annotated, min_sample=min_sample),
+                "legacy_path_read": legacy_path_read,
+                "read": _mid_short_failure_cause_read(sl_failure_cause_summary, min_sample=min_sample),
             },
             "baseline": baseline,
             "sl_failure_cause_summary": sl_failure_cause_summary,
@@ -4934,6 +4936,16 @@ SL_FAILURE_RESEARCH_ACTIONS = {
     "MIXED_UNRESOLVED": "Kumpulkan sample dan bedah chart; belum ada satu penyebab dominan yang terukur.",
 }
 
+SL_FAILURE_EVIDENCE_STRENGTH = {
+    "STOP_TOO_TIGHT": "PATH_CONFIRMED",
+    "TARGET_TOO_FAR": "PATH_CONFIRMED",
+    "REGIME_CONFLICT": "CONTEXT_SUPPORTED",
+    "LATE_ENTRY": "EVIDENCE_SUPPORTED",
+    "WRONG_DIRECTION": "PATH_SUPPORTED",
+    "NO_FOLLOWTHROUGH": "PATH_SUPPORTED",
+    "MIXED_UNRESOLVED": "UNRESOLVED",
+}
+
 
 def _mid_short_sl_failure_classification(item: dict[str, Any]) -> dict[str, Any]:
     if str(item.get("result_status") or "") != "SL_HIT":
@@ -5025,6 +5037,8 @@ def _mid_short_sl_failure_classification(item: dict[str, Any]) -> dict[str, Any]
 def _mid_short_sl_failure_cause_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for cause in SL_FAILURE_RESEARCH_ACTIONS:
+        groups[cause] = []
     for item in sl_items:
         groups[str(item.get("failure_primary_cause") or "MIXED_UNRESOLVED")].append(item)
 
@@ -5067,12 +5081,22 @@ def _mid_short_sl_failure_cause_rows(items: list[dict[str, Any]]) -> list[dict[s
                     for item in cause_items
                     if item.get("entry_overextended_bucket") != "ENTRY_EXTENSION_OK"
                 ),
-                "evidence_strength": str(cause_items[0].get("failure_evidence_strength") or "UNRESOLVED"),
+                "evidence_strength": SL_FAILURE_EVIDENCE_STRENGTH[cause],
                 "research_action": SL_FAILURE_RESEARCH_ACTIONS.get(cause),
             }
         )
     rows.sort(key=lambda row: (int(row["sl_count"]), str(row["cause"])), reverse=True)
     return rows
+
+
+def _mid_short_failure_cause_read(summary: dict[str, Any], *, min_sample: int) -> str:
+    sl_count = int(summary.get("sl_count") or 0)
+    if sl_count == 0:
+        return "NO_SL_IN_SCOPE"
+    if sl_count < min_sample:
+        return "WAIT_MORE_CLOSED_SAMPLE"
+    cause = str(summary.get("dominant_failure_cause") or "MIXED_UNRESOLVED")
+    return f"SL_PRIMARY_{cause}"
 
 
 def _mid_short_sl_failure_cause_summary(
@@ -5082,7 +5106,7 @@ def _mid_short_sl_failure_cause_summary(
 ) -> dict[str, Any]:
     sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
     unresolved = sum(1 for item in sl_items if item.get("failure_primary_cause") == "MIXED_UNRESOLVED")
-    dominant = rows[0] if rows else None
+    dominant = next((row for row in rows if int(row.get("sl_count") or 0) > 0), None)
     return {
         "sl_count": len(sl_items),
         "classified_sl_count": len(sl_items) - unresolved,

@@ -1678,6 +1678,7 @@ export type MidShortFailureAnatomyResponse = {
     dominant_failure_cause?: string | null;
     dominant_failure_count: number;
     dominant_failure_share_pct?: string | number | null;
+    legacy_path_read: string;
     read: string;
   };
   baseline: OneHourWalkForwardPerf;

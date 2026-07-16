@@ -1217,6 +1217,11 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
         assert cause_rows["TARGET_TOO_FAR"]["sl_count"] == 1
         assert payload["sl_failure_cause_summary"]["classified_sl_count"] == 2
         assert payload["sl_failure_cause_summary"]["unresolved_sl_count"] == 0
+        assert payload["summary"]["read"] in {
+            "SL_PRIMARY_STOP_TOO_TIGHT",
+            "SL_PRIMARY_TARGET_TOO_FAR",
+        }
+        assert payload["summary"]["legacy_path_read"]
         assert payload["improvement_candidates"]
 
         filtered = SignalCandidatePerformanceService(db).mid_short_1h_failure_anatomy(

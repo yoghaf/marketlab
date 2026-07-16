@@ -87,7 +87,7 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
               helper={`${summary?.unresolved_sl_count ?? 0} belum jelas`}
             />
             <MetricCard label="Salah arah 1h" value={summary?.wrong_direction_1h_count ?? 0} helper={`${summary?.correct_direction_1h_count ?? 0} benar arah`} tone="bad" />
-            <MetricCard label="Realistic R" value={`${fmtSigned(data?.baseline.realistic_total_r_closed)}R`} helper={summary?.read || "-"} tone={Number(data?.baseline.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
+            <MetricCard label="Realistic R" value={`${fmtSigned(data?.baseline.realistic_total_r_closed)}R`} helper={labelFor(summary?.read || "-")} tone={Number(data?.baseline.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
           </section>
 
           <SectionCard title="Failure controls" description="Filter ini hanya mengubah audit. Tidak mengubah Signal Factory atau scanner.">
