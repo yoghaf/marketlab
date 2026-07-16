@@ -2733,6 +2733,81 @@ def _realistic_price_impact_pct(base: dict[str, Any]) -> Decimal | None:
     return total_pct / Decimal("100")
 
 
+def build_misidentification_audit_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: dict[str, int] | Counter[str],
+    latest_candle_time: datetime | str | None,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    timeframe: str,
+    stages: tuple[str, ...],
+    min_sample: int,
+    limit: int,
+    max_signals_per_stage: int,
+    source: str,
+) -> dict[str, Any]:
+    lanes: list[dict[str, Any]] = []
+    latest_times = [_parse_dt(latest_candle_time)]
+    for stage in stages:
+        stage_items = [
+            dict(item)
+            for item in evaluated
+            if str(item.get("stage") or "").upper() == stage and str(item.get("timeframe") or "") == timeframe
+        ]
+        stage_items.sort(key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol") or "")))
+        if max_signals_per_stage > 0:
+            stage_items = stage_items[-max_signals_per_stage:]
+        latest_times.extend(_parse_dt(item.get("signal_timestamp")) for item in stage_items)
+        lanes.append(
+            _misidentification_lane(
+                stage=stage,
+                timeframe=timeframe,
+                items=stage_items,
+                min_sample=min_sample,
+                limit=limit,
+            )
+        )
+
+    latest_time = max((value for value in latest_times if value is not None), default=None)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "timeframe": timeframe,
+            "stages": list(stages),
+            "min_sample": min_sample,
+            "limit": limit,
+            "max_signals_per_stage": max_signals_per_stage,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "study_scope": "signal_misidentification_audit_read_only",
+        "source": source,
+        "method": (
+            "Classifies logged Signal outcomes using available path/evidence fields, MFE/MAE, "
+            "extension/fill evidence, and a conservative reverse-direction proxy. It does not change live rules."
+        ),
+        "latest_evaluation_candle_time": latest_time,
+        "latest_futures_15m_close_time": latest_time,
+        "skipped_by_position_lock": dict(skipped),
+        "lanes": lanes,
+        "summary": _misidentification_summary(lanes),
+        "guardrails": [
+            "No Signal Factory rule changed.",
+            "No scanner behavior changed.",
+            "No TP/SL formula or outcome calculation changed.",
+            "Reverse analysis is a conservative proxy from the same paper-live path, not a new signal rule.",
+            "A reverse candidate means worth researching, not permission to flip live direction.",
+        ],
+    }
+
+
 def _performance_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     status_counts = Counter(str(item["result_status"]) for item in items)
     closed = [item for item in items if item["result_status"] in COMPLETED_OUTCOMES]

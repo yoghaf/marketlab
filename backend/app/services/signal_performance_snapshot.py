@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.services.multitimeframe_features import REPO_ROOT
 from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
+    build_misidentification_audit_payload,
     build_one_hour_filter_candidate_study_payload,
     build_one_hour_v4_shadow_monitor_payload,
     build_one_hour_walk_forward_payload,
@@ -166,6 +167,33 @@ class SignalPerformanceSnapshotService:
             position_lock=bool((payload.get("filters") or {}).get("position_lock", True)),
             min_sample=max(1, min_sample),
             limit=max(1, limit),
+            source="signal_performance_snapshot_1h",
+        )
+        study["snapshot"] = payload.get("snapshot")
+        return study
+
+    def misidentification_audit_1h(
+        self,
+        *,
+        stages: tuple[str, ...],
+        min_sample: int,
+        limit: int,
+        max_signals_per_stage: int,
+    ) -> dict[str, Any]:
+        payload = self._read(PERFORMANCE_1H_FILE)
+        aggregate = payload.get("aggregate") or {}
+        study = build_misidentification_audit_payload(
+            evaluated=list(payload.get("items") or []),
+            skipped=aggregate.get("skip_reasons") or {},
+            latest_candle_time=payload.get("latest_futures_15m_close_time") or payload.get("latest_evaluation_candle_time"),
+            epoch=str(payload.get("epoch") or OBSERVATION_EPOCH),
+            include_watch_only=bool((payload.get("filters") or {}).get("include_watch_only", False)),
+            position_lock=bool((payload.get("filters") or {}).get("position_lock", True)),
+            timeframe="1h",
+            stages=stages,
+            min_sample=max(1, min_sample),
+            limit=max(1, limit),
+            max_signals_per_stage=max(1, max_signals_per_stage),
             source="signal_performance_snapshot_1h",
         )
         study["snapshot"] = payload.get("snapshot")

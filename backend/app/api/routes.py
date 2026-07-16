@@ -854,17 +854,40 @@ def signal_candidates_misidentification_audit(
             payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
             return payload
 
-    payload = json_safe(
-        SignalCandidatePerformanceService(db).misidentification_audit(
-            include_watch_only=include_watch_only,
-            position_lock=position_lock,
-            timeframe=normalized_timeframe,
-            stages=normalized_stages,
-            min_sample=normalized_min_sample,
-            limit=normalized_limit,
-            max_signals_per_stage=normalized_max_signals,
+    if not include_watch_only and normalized_timeframe == "1h":
+        try:
+            payload = json_safe(
+                SignalPerformanceSnapshotService().misidentification_audit_1h(
+                    stages=normalized_stages,
+                    min_sample=normalized_min_sample,
+                    limit=normalized_limit,
+                    max_signals_per_stage=normalized_max_signals,
+                )
+            )
+        except FileNotFoundError:
+            payload = json_safe(
+                SignalCandidatePerformanceService(db).misidentification_audit(
+                    include_watch_only=include_watch_only,
+                    position_lock=position_lock,
+                    timeframe=normalized_timeframe,
+                    stages=normalized_stages,
+                    min_sample=normalized_min_sample,
+                    limit=normalized_limit,
+                    max_signals_per_stage=normalized_max_signals,
+                )
+            )
+    else:
+        payload = json_safe(
+            SignalCandidatePerformanceService(db).misidentification_audit(
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                timeframe=normalized_timeframe,
+                stages=normalized_stages,
+                min_sample=normalized_min_sample,
+                limit=normalized_limit,
+                max_signals_per_stage=normalized_max_signals,
+            )
         )
-    )
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_MISIDENTIFICATION_CACHE_LOCK:
         _SIGNAL_MISIDENTIFICATION_CACHE[cache_key] = (monotonic(), payload)
