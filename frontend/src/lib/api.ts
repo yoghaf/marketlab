@@ -2266,6 +2266,7 @@ export type OneHourWalkForwardResponse = {
     stages: string[];
     min_sample: number;
     limit: number;
+    max_signals_per_stage: number;
   };
   read_only: boolean;
   not_live_signal: boolean;

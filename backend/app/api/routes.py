@@ -825,10 +825,12 @@ def signal_candidates_misidentification_audit(
     stages: str = "MID_LONG,MID_SHORT",
     min_sample: int = 20,
     limit: int = 50,
+    max_signals_per_stage: int = 500,
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 100))
     normalized_min_sample = max(1, min(min_sample, 100))
+    normalized_max_signals = max(50, min(max_signals_per_stage, 2000))
     normalized_timeframe = timeframe or "1h"
     normalized_stages = tuple(
         stage.strip().upper()
@@ -842,6 +844,7 @@ def signal_candidates_misidentification_audit(
         normalized_stages,
         normalized_min_sample,
         normalized_limit,
+        normalized_max_signals,
     )
     now = monotonic()
     with _SIGNAL_MISIDENTIFICATION_CACHE_LOCK:
@@ -859,6 +862,7 @@ def signal_candidates_misidentification_audit(
             stages=normalized_stages,
             min_sample=normalized_min_sample,
             limit=normalized_limit,
+            max_signals_per_stage=normalized_max_signals,
         )
     )
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}

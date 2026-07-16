@@ -9,7 +9,7 @@ from decimal import Decimal
 from time import monotonic
 from typing import Any, Callable
 
-from sqlalchemy import asc, func, or_, select
+from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.market import FuturesKline1m, FuturesKline15m, MarketlabActiveUniverse, SignalForwardReturnLog
@@ -1075,6 +1075,7 @@ class SignalCandidatePerformanceService:
         stages: tuple[str, ...] = ("MID_LONG", "MID_SHORT"),
         min_sample: int = 20,
         limit: int = 50,
+        max_signals_per_stage: int = 500,
     ) -> dict[str, Any]:
         lanes: list[dict[str, Any]] = []
         latest_times: list[datetime] = []
@@ -1086,6 +1087,7 @@ class SignalCandidatePerformanceService:
                 position_lock=position_lock,
                 stage=stage,
                 timeframe=timeframe,
+                max_signals=max_signals_per_stage,
             )
             skipped_total.update(skipped)
             if latest_candle_time:
@@ -1110,6 +1112,7 @@ class SignalCandidatePerformanceService:
                 "stages": list(stages),
                 "min_sample": min_sample,
                 "limit": limit,
+                "max_signals_per_stage": max_signals_per_stage,
             },
             "read_only": True,
             "not_live_signal": True,
@@ -1142,6 +1145,7 @@ class SignalCandidatePerformanceService:
         position_lock: bool,
         stage: str,
         timeframe: str,
+        max_signals: int,
     ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None]:
         signals = self._load_signals(
             epoch=epoch,
@@ -1150,6 +1154,7 @@ class SignalCandidatePerformanceService:
             timeframe=timeframe,
             symbol=None,
             signal_id=None,
+            limit_latest=max_signals,
         )
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
         source_symbols = {row.symbol for row in signals}
@@ -1860,6 +1865,7 @@ class SignalCandidatePerformanceService:
         timeframe: str | None,
         symbol: str | None = None,
         signal_id: str | None = None,
+        limit_latest: int | None = None,
     ) -> list[SignalForwardReturnLog]:
         query = (
             select(SignalForwardReturnLog)
@@ -1870,7 +1876,6 @@ class SignalCandidatePerformanceService:
                 SignalForwardReturnLog.sl_ref.is_not(None),
                 SignalForwardReturnLog.tp_ref.is_not(None),
             )
-            .order_by(asc(SignalForwardReturnLog.signal_timestamp), asc(SignalForwardReturnLog.symbol))
         )
         if not include_watch_only:
             query = query.where(
@@ -1887,7 +1892,18 @@ class SignalCandidatePerformanceService:
             query = query.where(SignalForwardReturnLog.symbol == symbol.upper())
         if signal_id:
             query = query.where(SignalForwardReturnLog.signal_id == signal_id)
-        return list(self.db.scalars(query).all())
+        if limit_latest is not None and limit_latest > 0:
+            rows = list(
+                self.db.scalars(
+                    query.order_by(desc(SignalForwardReturnLog.signal_timestamp), desc(SignalForwardReturnLog.symbol)).limit(limit_latest)
+                ).all()
+            )
+            return list(reversed(rows))
+        return list(
+            self.db.scalars(
+                query.order_by(asc(SignalForwardReturnLog.signal_timestamp), asc(SignalForwardReturnLog.symbol))
+            ).all()
+        )
 
     def _load_15m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
         if not symbols:
