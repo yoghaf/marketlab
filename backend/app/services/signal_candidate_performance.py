@@ -2018,10 +2018,10 @@ class SignalCandidatePerformanceService:
                 FuturesKline15m.volume,
                 FuturesKline15m.taker_buy_base_volume,
                 FuturesKline15m.taker_sell_base_volume,
+                FuturesKline15m.aggregation_status,
             )
             .where(
                 FuturesKline15m.symbol.in_(symbols),
-                FuturesKline15m.aggregation_status == "AGG_READY",
             )
             .order_by(asc(FuturesKline15m.symbol), asc(FuturesKline15m.open_time))
         )
@@ -2032,6 +2032,8 @@ class SignalCandidatePerformanceService:
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
+            if row.aggregation_status != "AGG_READY":
+                continue
             output[row.symbol].append(
                 PerfCandle(
                     open_time=_naive(row.open_time),
@@ -2073,10 +2075,10 @@ class SignalCandidatePerformanceService:
                 FuturesKline1h.volume,
                 FuturesKline1h.taker_buy_base_volume,
                 FuturesKline1h.taker_sell_base_volume,
+                FuturesKline1h.aggregation_status,
             )
             .where(
                 FuturesKline1h.symbol.in_(symbols),
-                FuturesKline1h.aggregation_status == "AGG_READY",
             )
             .order_by(asc(FuturesKline1h.symbol), asc(FuturesKline1h.open_time))
         )
@@ -2087,6 +2089,8 @@ class SignalCandidatePerformanceService:
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
+            if row.aggregation_status != "AGG_READY":
+                continue
             output[row.symbol].append(
                 PerfCandle(
                     open_time=_naive(row.open_time),
@@ -4850,6 +4854,13 @@ def _mid_short_target_distance_context(
     entry_oi_change = _decimal_or_none_any(evidence.get("oi_change_pct"))
     forward_taker_sell = _decimal_or_none_any(forward_context.get("forward_1h_taker_sell_ratio"))
     forward_oi_change = _decimal_or_none_any(oi_context.get("forward_1h_oi_change_pct"))
+    ordered_candles = sorted(candles, key=lambda candle: candle.open_time)
+    open_times = [candle.open_time for candle in ordered_candles]
+    prepared_future_4h = [
+        candle
+        for candle in ordered_candles[bisect_left(open_times, signal_time):]
+        if candle.close_time <= signal_time + timedelta(hours=4)
+    ]
     data_points = {
         "atr": atr_context.get("atr_1h_at_entry"),
         "structure": support_context.get("support_price_proxy"),
@@ -4890,6 +4901,7 @@ def _mid_short_target_distance_context(
                 target_rr=target_rr,
                 protect_at_r=protect_at_r,
                 use_logged_target=use_logged_target,
+                prepared_future_4h=prepared_future_4h,
             )
             for config_id, _label, risk_scale, target_rr, protect_at_r, use_logged_target in LAB52_COUNTERFACTUAL_SPECS
         },
@@ -5122,6 +5134,7 @@ def _mid_short_counterfactual_exit(
     target_rr: Decimal | None,
     protect_at_r: Decimal | None,
     use_logged_target: bool,
+    prepared_future_4h: list[PerfCandle] | None = None,
 ) -> dict[str, Any]:
     entry = _decimal_or_none_any(item.get("entry"))
     logged_risk = _decimal_or_none_any(item.get("risk"))
@@ -5135,12 +5148,16 @@ def _mid_short_counterfactual_exit(
     )
     if stop is None or target is None:
         return {"status": "MISSING_CONTEXT", "realistic_r": None}
-    ordered = sorted(candles, key=lambda candle: candle.open_time)
-    future = [
-        candle
-        for candle in ordered[bisect_left([candle.open_time for candle in ordered], signal_time):]
-        if candle.close_time <= signal_time + timedelta(hours=4)
-    ]
+    if prepared_future_4h is None:
+        ordered = sorted(candles, key=lambda candle: candle.open_time)
+        open_times = [candle.open_time for candle in ordered]
+        future = [
+            candle
+            for candle in ordered[bisect_left(open_times, signal_time):]
+            if candle.close_time <= signal_time + timedelta(hours=4)
+        ]
+    else:
+        future = prepared_future_4h
     if not future:
         return {"status": "MISSING_CONTEXT", "realistic_r": None}
     protected = False
