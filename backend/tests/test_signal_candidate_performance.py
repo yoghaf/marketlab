@@ -14,9 +14,11 @@ from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
+    _mid_short_support_target_shadow_study,
     _mid_short_structure_clearance_shadow_study,
     _mid_short_support_context,
     _mid_short_sl_failure_classification,
+    _lab54_support_target_results,
     mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
 )
@@ -1445,6 +1447,138 @@ def test_mid_short_lab53_structure_clearance_study_is_shadow_only() -> None:
     assert status_rows["STRUCTURE_BLOCKED"]["all"]["sl_count"] == 2
     control = next(row for row in study["exit_variant_rows"] if row["config_id"] == "CONTROL_LOGGED")
     assert control["verdict"] == "CURRENT_CONTROL"
+
+
+def test_mid_short_lab54_support_targets_use_cost_buffer_and_wait_for_closed_horizon() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_id": "lab54-waiting",
+        "symbol": "WAITUSDT",
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "realistic_futures_spread_pct": Decimal("0.02"),
+    }
+    partial_path = [
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(minutes=15),
+            open=Decimal("100"),
+            high=Decimal("103"),
+            low=Decimal("95"),
+            close=Decimal("98"),
+        )
+    ]
+
+    results = _lab54_support_target_results(
+        item,
+        support_price=Decimal("92"),
+        prepared_future_4h=partial_path,
+    )
+
+    assert results["CONTROL_LOGGED"]["status"] == "WAITING_4H"
+    assert results["SUPPORT_TOUCH"]["status"] == "WAITING_4H"
+    assert results["SUPPORT_TOUCH"]["target"] == Decimal("92")
+    assert results["SUPPORT_COST_BUFFER"]["target"] == Decimal("92.0276")
+    assert results["SUPPORT_COST_BUFFER"]["target_rr"] < results["SUPPORT_TOUCH"]["target_rr"]
+    assert results["SUPPORT_COST_BUFFER"]["realistic_r"] is None
+
+
+def test_mid_short_lab54_support_target_can_hit_before_logged_target_on_complete_path() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_id": "lab54-complete",
+        "symbol": "PATHUSDT",
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "realistic_futures_spread_pct": Decimal("0.02"),
+    }
+    complete_path = [
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(hours=4),
+            open=Decimal("100"),
+            high=Decimal("104"),
+            low=Decimal("91"),
+            close=Decimal("96"),
+        )
+    ]
+
+    results = _lab54_support_target_results(
+        item,
+        support_price=Decimal("92"),
+        prepared_future_4h=complete_path,
+    )
+
+    assert results["CONTROL_LOGGED"]["status"] == "NEITHER_4H"
+    assert results["SUPPORT_TOUCH"]["status"] == "TP_HIT"
+    assert results["SUPPORT_COST_BUFFER"]["status"] == "TP_HIT"
+    assert results["SUPPORT_TOUCH"]["target_rr"] == Decimal("0.8")
+    assert results["SUPPORT_TOUCH"]["realistic_r"] > Decimal("0")
+
+
+def test_mid_short_lab54_support_target_study_requires_train_and_validation_improvement() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+
+    def result(status: str, realistic_r: Decimal, target: Decimal, rr: Decimal) -> dict:
+        return {
+            "status": status,
+            "realistic_r": realistic_r,
+            "target": target,
+            "target_rr": rr,
+            "result_time_utc": start + timedelta(hours=4),
+            "mfe_r": max(realistic_r, Decimal("0")),
+            "mae_r": min(realistic_r, Decimal("0")),
+            "support_buffer_price": None,
+        }
+
+    items = []
+    for index in range(40):
+        items.append(
+            {
+                "signal_id": f"lab54-{index}",
+                "symbol": f"S{index % 5}USDT",
+                "signal_timestamp": start + timedelta(hours=index),
+                "signal_time_wib": f"2026-01-{1 + index // 24:02d} {index % 24:02d}:00:00 WIB",
+                "entry": Decimal("100"),
+                "risk": Decimal("10"),
+                "stop_loss": Decimal("110"),
+                "take_profit": Decimal("85"),
+                "support_price_proxy": Decimal("92"),
+                "support_method": "CONFIRMED_SWING_LOW_1H",
+                "support_distance_r": Decimal("0.8"),
+                "structure_clearance_status": "STRUCTURE_BLOCKED",
+                "_lab54_support_targets": {
+                    "CONTROL_LOGGED": result("SL_HIT", Decimal("-1.05"), Decimal("85"), Decimal("1.5")),
+                    "TP_0_75R": result("SL_HIT", Decimal("-1.05"), Decimal("92.5"), Decimal("0.75")),
+                    "SUPPORT_TOUCH": result("TP_HIT", Decimal("0.72"), Decimal("92"), Decimal("0.8")),
+                    "SUPPORT_COST_BUFFER": result(
+                        "TP_HIT", Decimal("0.68"), Decimal("92.03"), Decimal("0.797")
+                    ),
+                },
+            }
+        )
+
+    study = _mid_short_support_target_shadow_study(items, min_sample=1)
+
+    assert study["read_only"] is True
+    assert study["not_live_signal"] is True
+    assert study["not_execution_instruction"] is True
+    assert study["summary"]["structure_blocked_count"] == 40
+    assert study["summary"]["blocked_train_count"] == 28
+    assert study["summary"]["blocked_validation_count"] == 12
+    assert study["summary"]["best_validation_config_id"] == "SUPPORT_TOUCH"
+    assert study["summary"]["verdict"] == "SUPPORT_TARGET_VALIDATION_IMPROVES"
+    support_row = next(row for row in study["variant_rows"] if row["config_id"] == "SUPPORT_TOUCH")
+    assert support_row["validation"]["evaluated_count"] == 12
+    assert support_row["validation"]["tp_count"] == 12
+    assert support_row["validation_avg_r_delta_vs_control"] == Decimal("1.77")
+    assert len(study["case_rows"]) == 40
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:

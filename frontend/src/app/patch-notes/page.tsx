@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-16",
+    version: "LAB-54",
+    title: "MID_SHORT 1h Structure-Aware Target Shadow",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menguji apakah target berbasis support 1h memperbaiki cohort STRUCTURE_BLOCKED tanpa mengubah target Signal Factory yang sedang live.",
+    changes: [
+      "Cohort dibatasi ke MID_SHORT 1h STRUCTURE_BLOCKED dari LAB-53 agar pertanyaan riset tidak bercampur dengan signal yang jalur targetnya sudah clear.",
+      "Empat target dibandingkan pada entry, stop, biaya, position lock, dan jalur futures yang sama: logged target, fixed 0.75R, support touch, serta support plus execution-impact buffer.",
+      "Support memakai nearest closed 1h support yang sudah tersedia saat signal; buffer biaya memakai half-spread futures plus slippage satu sisi dari model realistis existing.",
+      "No-hit yang belum memiliki empat jam candle closed disimpan sebagai WAITING_4H dan tidak dipaksa menjadi hasil.",
+      "Train/validation kronologis, distribusi target RR, drawdown, konsentrasi symbol, dan delta terhadap control ditampilkan bersama ledger lengkap per signal.",
+      "Patch ini tidak mengubah Signal Factory, scanner, target live, stop, threshold, outcome logic, atau execution."
+    ],
+    impact: "Kita dapat membedakan apakah banyak SL terjadi karena target melewati support nyata atau karena arah/entry memang salah, sebelum mencoba perubahan rule apa pun.",
+    links: [
+      { href: "/mid-short-failure-anatomy", label: "Support Target Study" },
+      { href: "/signal-performance?stage=MID_SHORT&timeframe=1h", label: "MID_SHORT Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-16",
     version: "LAB-53",
     title: "MID_SHORT 1h Structure Clearance Shadow",
     status: "LIVE",

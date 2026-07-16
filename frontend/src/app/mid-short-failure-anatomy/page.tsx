@@ -13,6 +13,9 @@ import {
   MidShortStructureBlockedCase,
   MidShortStructureClearanceStatusRow,
   MidShortStructureExitVariantRow,
+  MidShortSupportTargetCase,
+  MidShortSupportTargetPerformance,
+  MidShortSupportTargetVariantRow,
   MidShortTargetDistanceCase,
   MidShortTargetDistanceMetricRow,
   SignalPerformanceItem,
@@ -58,6 +61,7 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
 
   const summary = data?.summary;
   const structureStudy = data?.structure_clearance_study;
+  const supportTargetStudy = data?.support_target_study;
   const targetStudy = data?.target_distance_study;
 
   return (
@@ -207,6 +211,75 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
           <SectionCard title="LAB-53 limitations" description={structureStudy?.method || "Metode belum tersedia."}>
             <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
               {(structureStudy?.limitations || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
+            </ul>
+          </SectionCard>
+
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <MetricCard
+              label="Blocked cohort"
+              value={`${supportTargetStudy?.summary.structure_blocked_count ?? 0}/${supportTargetStudy?.summary.source_count ?? 0}`}
+              helper="Hanya STRUCTURE_BLOCKED"
+            />
+            <MetricCard
+              label="Train / validation"
+              value={`${supportTargetStudy?.summary.blocked_train_count ?? 0} / ${supportTargetStudy?.summary.blocked_validation_count ?? 0}`}
+              helper="Split kronologis 70/30"
+            />
+            <MetricCard
+              label="Validation ready"
+              value={`${supportTargetStudy?.summary.control_validation_evaluated_count ?? 0}`}
+              helper={`${supportTargetStudy?.summary.control_validation_waiting_count ?? 0} waiting 4h`}
+            />
+            <MetricCard
+              label="Best support target"
+              value={labelFor(supportTargetStudy?.summary.best_validation_config_id || "UNAVAILABLE")}
+              helper="Dipilih dari validation, shadow only"
+            />
+            <MetricCard
+              label="Best validation"
+              value={`${fmtSigned(supportTargetStudy?.summary.best_validation_total_realistic_r)}R`}
+              helper={`Avg ${fmtSigned(supportTargetStudy?.summary.best_validation_avg_realistic_r)}R`}
+              tone={Number(supportTargetStudy?.summary.best_validation_total_realistic_r || 0) > 0 ? "good" : "warn"}
+            />
+            <MetricCard
+              label="LAB-54 verdict"
+              value={labelFor(supportTargetStudy?.summary.verdict || "UNAVAILABLE")}
+              helper="Tidak mengubah target live"
+              tone="warn"
+            />
+          </section>
+
+          <SectionCard
+            title="LAB-54 Structure-Aware Target Shadow"
+            description="Menguji target pada support 1h untuk cohort yang target logged-nya terhalang struktur. Entry, stop, biaya, position lock, dan jalur futures tetap sama."
+          >
+            <SupportTargetVariantTable rows={supportTargetStudy?.variant_rows || []} />
+            <div className="border-t border-line p-4 text-sm text-slate-700">
+              <span className="font-semibold">Action: </span>
+              {supportTargetStudy?.summary.recommended_action || "Belum tersedia."}
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Full support-target ledger"
+            description="Setiap STRUCTURE_BLOCKED signal dibandingkan dengan target logged, fixed 0.75R, support touch, dan support plus execution-impact buffer. WAITING_4H tidak dipaksa menjadi hasil."
+          >
+            <SupportTargetLedger rows={supportTargetStudy?.case_rows || []} />
+          </SectionCard>
+
+          <SectionCard title="LAB-54 method and limitations" description={supportTargetStudy?.method || "Metode belum tersedia."}>
+            <div className="border-b border-line p-4 text-sm text-slate-700">
+              <div className="grid gap-2 md:grid-cols-2">
+                {Object.entries(supportTargetStudy?.target_definitions || {}).map(([key, value]) => (
+                  <div key={key} className="border-l-2 border-blue-700 pl-3">
+                    <div className="font-semibold">{labelFor(key)}</div>
+                    <div>{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
+              {(supportTargetStudy?.limitations || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
             </ul>
           </SectionCard>
 
@@ -444,6 +517,124 @@ function StructureBlockedTable({ rows }: { rows: MidShortStructureBlockedCase[] 
           {!rows.length && <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">Tidak ada STRUCTURE_BLOCKED dalam scope ini.</td></tr>}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function SupportTargetVariantTable({ rows }: { rows: MidShortSupportTargetVariantRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Target method</th>
+            <th>All blocked</th>
+            <th>Train</th>
+            <th>Validation</th>
+            <th>Validation delta vs logged</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.config_id}>
+              <td className="max-w-xs">
+                <div className="font-semibold">{row.label}</div>
+                <div className="mt-1 text-xs text-slate-500">{labelFor(row.target_method)}</div>
+              </td>
+              <td><SupportTargetPerfCell value={row.all} /></td>
+              <td><SupportTargetPerfCell value={row.train} /></td>
+              <td><SupportTargetPerfCell value={row.validation} /></td>
+              <td className="text-xs">
+                <div>Avg {fmtSigned(row.validation_avg_r_delta_vs_control)}R</div>
+                <div>Total {fmtSigned(row.validation_total_r_delta_vs_control)}R</div>
+                <div>DD {fmtSigned(row.validation_drawdown_delta_vs_control)}R</div>
+                <div>SL {fmtSigned(row.validation_sl_share_delta_vs_control)} pp</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={6} className="py-8 text-center text-sm text-slate-500">Support target study belum tersedia.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SupportTargetPerfCell({ value }: { value: MidShortSupportTargetPerformance }) {
+  return (
+    <div className="min-w-40 text-xs">
+      <div className="font-semibold">eval {value.evaluated_count}/{value.source_count}</div>
+      <div>TP {value.tp_count} / SL {value.sl_count} / both {value.both_count}</div>
+      <div>Neither {value.neither_count} / wait {value.waiting_count}</div>
+      <div>{fmtSigned(value.total_realistic_r)}R / avg {fmtSigned(value.avg_realistic_r)}R</div>
+      <div>Median {fmtSigned(value.median_realistic_r)}R / DD {fmtSigned(value.max_drawdown_r)}R</div>
+      <div className="text-slate-500">
+        Target RR {fmtNumber(value.target_rr_q1)} / {fmtNumber(value.target_rr_median)} / {fmtNumber(value.target_rr_q3)}
+      </div>
+    </div>
+  );
+}
+
+function SupportTargetLedger({ rows }: { rows: MidShortSupportTargetCase[] }) {
+  if (!rows.length) {
+    return <div className="p-8 text-center text-sm text-slate-500">Tidak ada STRUCTURE_BLOCKED dalam scope ini.</div>;
+  }
+  return (
+    <div>
+      {rows.map((row) => (
+        <article key={row.signal_id} className="border-b border-line p-4 last:border-b-0">
+          <div className="grid gap-3 text-sm lg:grid-cols-[1.1fr_1fr_1.5fr_auto] lg:items-start">
+            <div>
+              <div className="font-semibold text-blue-700">{row.symbol}</div>
+              <div className="text-xs text-slate-500">{row.signal_time_wib || fmtTime(row.signal_timestamp)}</div>
+            </div>
+            <div className="text-xs">
+              <div>Entry {fmtPrice(row.entry)}</div>
+              <div>SL {fmtPrice(row.stop_loss)}</div>
+              <div>Risk {fmtPrice(row.risk)}</div>
+            </div>
+            <div className="text-xs">
+              <div>Support {fmtPrice(row.support_price_proxy)} ({fmtNumber(row.support_distance_r)}R)</div>
+              <div className="text-slate-500">{labelFor(row.support_method)}</div>
+            </div>
+            <Link
+              className="font-semibold text-blue-700 hover:underline"
+              href={`/signals/${encodeURIComponent(row.symbol)}?timeframe=1h&signal_id=${encodeURIComponent(row.signal_id)}`}
+            >
+              Open chart
+            </Link>
+          </div>
+          <div className="mt-4 grid gap-4 border-t border-line pt-4 md:grid-cols-2 xl:grid-cols-4">
+            <SupportTargetResultBlock label="Logged target" value={row.control} />
+            <SupportTargetResultBlock label="Fixed 0.75R" value={row.fixed_0_75r} />
+            <SupportTargetResultBlock label="Support touch" value={row.support_touch} />
+            <SupportTargetResultBlock label="Support + cost buffer" value={row.support_cost_buffer} />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function SupportTargetResultBlock({
+  label,
+  value
+}: {
+  label: string;
+  value: MidShortSupportTargetCase["control"];
+}) {
+  return (
+    <div className="border-l-2 border-line pl-3 text-xs">
+      <div className="mb-2 font-semibold">{label}</div>
+      <StatusBadge value={value.status} />
+      <div className="mt-2">Target {fmtPrice(value.target)} / {fmtNumber(value.target_rr)}R</div>
+      <div>Result {fmtSigned(value.realistic_r)}R</div>
+      <div>MFE / MAE {fmtSigned(value.mfe_r)}R / {fmtSigned(value.mae_r)}R</div>
+      <div className="text-slate-500">{value.result_time_utc ? fmtTime(value.result_time_utc) : "Belum ada result time"}</div>
+      {value.support_buffer_price != null && (
+        <div className="text-slate-500">Buffer {fmtPrice(value.support_buffer_price)}</div>
+      )}
     </div>
   );
 }

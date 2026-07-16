@@ -1752,6 +1752,74 @@ export type MidShortStructureBlockedCase = {
   failure_primary_cause?: string | null;
 };
 
+export type MidShortSupportTargetPerformance = {
+  source_count: number;
+  evaluated_count: number;
+  waiting_count: number;
+  missing_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_count: number;
+  breakeven_count: number;
+  neither_count: number;
+  total_realistic_r: string | number;
+  avg_realistic_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  max_drawdown_r: string | number;
+  tp_share_pct_closed?: string | number | null;
+  sl_share_pct_closed?: string | number | null;
+  target_rr_q1?: string | number | null;
+  target_rr_median?: string | number | null;
+  target_rr_q3?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidShortSupportTargetVariantRow = {
+  config_id: string;
+  label: string;
+  target_method: string;
+  all: MidShortSupportTargetPerformance;
+  train: MidShortSupportTargetPerformance;
+  validation: MidShortSupportTargetPerformance;
+  train_avg_r_delta_vs_control?: string | number | null;
+  validation_avg_r_delta_vs_control?: string | number | null;
+  validation_total_r_delta_vs_control?: string | number | null;
+  validation_drawdown_delta_vs_control?: string | number | null;
+  validation_sl_share_delta_vs_control?: string | number | null;
+  verdict: string;
+};
+
+export type MidShortSupportTargetResult = {
+  status: string;
+  target?: string | number | null;
+  target_rr?: string | number | null;
+  realistic_r?: string | number | null;
+  result_time_utc?: string | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+  support_buffer_price?: string | number | null;
+};
+
+export type MidShortSupportTargetCase = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp: string;
+  signal_time_wib?: string | null;
+  entry?: string | number | null;
+  stop_loss?: string | number | null;
+  risk?: string | number | null;
+  support_price_proxy?: string | number | null;
+  support_method?: string | null;
+  support_distance_r?: string | number | null;
+  control: MidShortSupportTargetResult;
+  fixed_0_75r: MidShortSupportTargetResult;
+  support_touch: MidShortSupportTargetResult;
+  support_cost_buffer: MidShortSupportTargetResult;
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -1853,6 +1921,37 @@ export type MidShortFailureAnatomyResponse = {
     status_rows: MidShortStructureClearanceStatusRow[];
     exit_variant_rows: MidShortStructureExitVariantRow[];
     blocked_case_rows: MidShortStructureBlockedCase[];
+    limitations: string[];
+  };
+  support_target_study: {
+    study_id: string;
+    read_only: boolean;
+    not_live_signal: boolean;
+    not_execution_instruction: boolean;
+    evaluation_horizon: string;
+    method: string;
+    target_definitions: Record<string, string>;
+    summary: {
+      source_count: number;
+      structure_blocked_count: number;
+      blocked_train_count: number;
+      blocked_validation_count: number;
+      validation_cutoff_utc?: string | null;
+      control_validation_evaluated_count: number;
+      control_validation_waiting_count: number;
+      best_validation_config_id?: string | null;
+      best_validation_avg_realistic_r?: string | number | null;
+      best_validation_total_realistic_r?: string | number | null;
+      verdict: string;
+      recommended_action: string;
+    };
+    control: {
+      all: MidShortSupportTargetPerformance;
+      train: MidShortSupportTargetPerformance;
+      validation: MidShortSupportTargetPerformance;
+    };
+    variant_rows: MidShortSupportTargetVariantRow[];
+    case_rows: MidShortSupportTargetCase[];
     limitations: string[];
   };
   target_distance_study: {

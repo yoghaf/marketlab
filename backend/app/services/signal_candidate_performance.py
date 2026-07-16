@@ -482,6 +482,10 @@ class SignalCandidatePerformanceService:
             annotated,
             min_sample=min_sample,
         )
+        support_target_study = _mid_short_support_target_shadow_study(
+            annotated,
+            min_sample=min_sample,
+        )
         for item in annotated:
             _strip_lab52_internal_item_fields(item)
         baseline = _walk_forward_perf(annotated)
@@ -561,6 +565,7 @@ class SignalCandidatePerformanceService:
             "sl_failure_cause_summary": sl_failure_cause_summary,
             "sl_failure_cause_rows": sl_failure_cause_rows,
             "structure_clearance_study": structure_clearance_study,
+            "support_target_study": support_target_study,
             "target_distance_study": target_distance_study,
             "mfe_mae_summary": _mid_short_mfe_mae_summary(annotated),
             "outcome_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
@@ -583,6 +588,7 @@ class SignalCandidatePerformanceService:
                 "LAB-52 entry diagnostics use only information closed at signal time; forward fields are outcome-only.",
                 "LAB-52 exit variants are fixed-cohort 4h simulations and do not replace the live TP/SL rule.",
                 "LAB-53 structure clearance is a read-only shadow split and does not suppress live signals.",
+                "LAB-54 support-aware targets are read-only 4h simulations and do not replace the live target.",
                 "Improvement candidates are research-only filters, not live scanner rules.",
                 "No TP/SL formula, execution, order, leverage, or position sizing is created.",
             ],
@@ -4834,6 +4840,20 @@ LAB52_COUNTERFACTUAL_SPECS = (
 )
 
 
+LAB54_TARGET_SPECS = (
+    ("CONTROL_LOGGED", "Logged target", "LOGGED_TARGET"),
+    ("TP_0_75R", "Fixed target 0.75R", "FIXED_R_REFERENCE"),
+    ("SUPPORT_TOUCH", "Nearest closed 1h support", "SUPPORT_REFERENCE"),
+    (
+        "SUPPORT_COST_BUFFER",
+        "Before support + execution-impact buffer",
+        "SUPPORT_EXECUTION_BUFFER",
+    ),
+)
+
+LAB54_SUPPORT_CONFIG_IDS = frozenset({"SUPPORT_TOUCH", "SUPPORT_COST_BUFFER"})
+
+
 LAB52_ITEM_ONLY_FIELDS = frozenset(
     {
         "_lab52_counterfactuals",
@@ -4886,6 +4906,7 @@ LAB52_ITEM_ONLY_FIELDS = frozenset(
         "target_distance_primary_hypothesis",
         "structure_clearance_status",
         "support_clearance_to_target_r",
+        "_lab54_support_targets",
     }
 )
 
@@ -4988,6 +5009,11 @@ def _mid_short_target_distance_context(
             )
             for config_id, _label, risk_scale, target_rr, protect_at_r, use_logged_target in LAB52_COUNTERFACTUAL_SPECS
         },
+        "_lab54_support_targets": _lab54_support_target_results(
+            item,
+            support_price=_decimal_or_none_any(support_context.get("support_price_proxy")),
+            prepared_future_4h=prepared_future_4h,
+        ),
     }
 
 
@@ -5026,6 +5052,7 @@ def _empty_mid_short_target_distance_context() -> dict[str, Any]:
         "target_distance_context_total": 6,
         "target_distance_context_status": "CONTEXT_MISSING",
         "_lab52_counterfactuals": {},
+        "_lab54_support_targets": {},
     }
 
 
@@ -5220,6 +5247,8 @@ def _mid_short_counterfactual_exit(
     protect_at_r: Decimal | None,
     use_logged_target: bool,
     prepared_future_4h: list[PerfCandle] | None = None,
+    target_override: Decimal | None = None,
+    require_complete_horizon_for_neither: bool = False,
 ) -> dict[str, Any]:
     entry = _decimal_or_none_any(item.get("entry"))
     logged_risk = _decimal_or_none_any(item.get("risk"))
@@ -5228,11 +5257,23 @@ def _mid_short_counterfactual_exit(
         return {"status": "MISSING_CONTEXT", "realistic_r": None}
     risk = logged_risk * risk_scale
     stop = _decimal_or_none_any(item.get("stop_loss")) if use_logged_target else entry + risk
-    target = _decimal_or_none_any(item.get("take_profit")) if use_logged_target else (
-        entry - (risk * target_rr) if target_rr is not None else None
-    )
+    if target_override is not None:
+        target = target_override
+    elif use_logged_target:
+        target = _decimal_or_none_any(item.get("take_profit"))
+    else:
+        target = entry - (risk * target_rr) if target_rr is not None else None
     if stop is None or target is None:
         return {"status": "MISSING_CONTEXT", "realistic_r": None}
+    if target <= 0 or target >= entry or stop <= entry:
+        return {
+            "status": "INVALID_TARGET_GEOMETRY",
+            "realistic_r": None,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "risk": risk,
+        }
     if prepared_future_4h is None:
         ordered = sorted(candles, key=lambda candle: candle.open_time)
         open_times = [candle.open_time for candle in ordered]
@@ -5300,6 +5341,22 @@ def _mid_short_counterfactual_exit(
         if protect_at_r is not None and not protected and candle.low <= entry - (risk * protect_at_r):
             protected = True
     last = future[-1]
+    if (
+        require_complete_horizon_for_neither
+        and last.close_time < signal_time + timedelta(hours=4) - timedelta(milliseconds=1)
+    ):
+        return {
+            "status": "WAITING_4H",
+            "result_time_utc": last.close_time,
+            "ideal_r": None,
+            "realistic_r": None,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "risk": risk,
+            "mfe_r": mfe,
+            "mae_r": mae,
+        }
     ideal_r = (entry - last.close) / risk
     realistic = _realistic_result_fields(
         item,
@@ -5323,6 +5380,61 @@ def _mid_short_counterfactual_exit(
         "mfe_r": mfe,
         "mae_r": mae,
     }
+
+
+def _lab54_support_target_results(
+    item: dict[str, Any],
+    *,
+    support_price: Decimal | None,
+    prepared_future_4h: list[PerfCandle],
+) -> dict[str, dict[str, Any]]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    if entry is None or risk is None or risk <= 0:
+        return {}
+
+    logged_target = _decimal_or_none_any(item.get("take_profit"))
+    fixed_target = entry - (risk * Decimal("0.75"))
+    impact_pct = _realistic_price_impact_pct(item)
+    support_buffer = support_price * impact_pct if support_price is not None and impact_pct is not None else None
+    buffered_target = support_price + support_buffer if support_price is not None and support_buffer is not None else None
+    target_by_config = {
+        "CONTROL_LOGGED": logged_target,
+        "TP_0_75R": fixed_target,
+        "SUPPORT_TOUCH": support_price,
+        "SUPPORT_COST_BUFFER": buffered_target,
+    }
+    results: dict[str, dict[str, Any]] = {}
+    for config_id, _label, method in LAB54_TARGET_SPECS:
+        target = target_by_config.get(config_id)
+        if target is None:
+            results[config_id] = {
+                "status": "MISSING_CONTEXT",
+                "realistic_r": None,
+                "target": None,
+                "target_rr": None,
+                "target_method": method,
+                "support_buffer_price": support_buffer,
+            }
+            continue
+        result = _mid_short_counterfactual_exit(
+            item,
+            candles=[],
+            risk_scale=Decimal("1"),
+            target_rr=None,
+            protect_at_r=None,
+            use_logged_target=True,
+            prepared_future_4h=prepared_future_4h,
+            target_override=target,
+            require_complete_horizon_for_neither=True,
+        )
+        results[config_id] = {
+            **result,
+            "target_rr": (entry - target) / risk if target < entry else None,
+            "target_method": method,
+            "support_buffer_price": support_buffer if config_id == "SUPPORT_COST_BUFFER" else None,
+        }
+    return results
 
 
 LAB52_METRICS = (
@@ -5779,6 +5891,365 @@ def _lab53_recommended_action(verdict: str) -> str:
             "Do not promote the structure filter; current validation does not improve the baseline."
         ),
     }.get(verdict, "Keep the current live rule frozen.")
+
+
+def _mid_short_support_target_shadow_study(
+    items: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> dict[str, Any]:
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(items)
+    blocked = [item for item in ordered if item.get("structure_clearance_status") == "STRUCTURE_BLOCKED"]
+    blocked_train = [item for item in train if item.get("structure_clearance_status") == "STRUCTURE_BLOCKED"]
+    blocked_validation = [
+        item for item in validation if item.get("structure_clearance_status") == "STRUCTURE_BLOCKED"
+    ]
+    control = {
+        "all": _lab54_target_performance(blocked, "CONTROL_LOGGED"),
+        "train": _lab54_target_performance(blocked_train, "CONTROL_LOGGED"),
+        "validation": _lab54_target_performance(blocked_validation, "CONTROL_LOGGED"),
+    }
+    variant_rows = [
+        _lab54_target_variant_row(
+            config_id=config_id,
+            label=label,
+            target_method=target_method,
+            blocked=blocked,
+            blocked_train=blocked_train,
+            blocked_validation=blocked_validation,
+            control=control,
+            min_sample=min_sample,
+        )
+        for config_id, label, target_method in LAB54_TARGET_SPECS
+    ]
+    support_rows = [row for row in variant_rows if row["config_id"] in LAB54_SUPPORT_CONFIG_IDS]
+    comparable_support_rows = [
+        row
+        for row in support_rows
+        if row["validation"].get("avg_realistic_r") is not None
+    ]
+    best_support_row = (
+        max(
+            comparable_support_rows,
+            key=lambda row: Decimal(row["validation"]["avg_realistic_r"]),
+        )
+        if comparable_support_rows
+        else None
+    )
+    verdict = _lab54_support_target_verdict(
+        best_support_row,
+        min_sample=min_sample,
+    )
+    return {
+        "study_id": "LAB_54_STRUCTURE_AWARE_TARGET_SHADOW",
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "evaluation_horizon": "4h closed futures path",
+        "method": (
+            "Only STRUCTURE_BLOCKED MID_SHORT 1h rows are evaluated. SUPPORT_TOUCH uses the nearest 1h "
+            "support formed by candles closed at signal time. SUPPORT_COST_BUFFER places the reference target "
+            "above support by one modeled exit-impact unit: half futures spread plus one-side slippage."
+        ),
+        "target_definitions": {
+            "CONTROL_LOGGED": "Logged target and logged stop.",
+            "TP_0_75R": "Fixed 0.75R target with the logged stop.",
+            "SUPPORT_TOUCH": "Target reference equals the nearest closed 1h support proxy.",
+            "SUPPORT_COST_BUFFER": (
+                "target = support * (1 + ((futures_spread_pct / 2 + slippage_pct_per_side) / 100))"
+            ),
+            "waiting_rule": "No-hit rows remain WAITING_4H until the full four-hour path is closed.",
+        },
+        "summary": {
+            "source_count": len(ordered),
+            "structure_blocked_count": len(blocked),
+            "blocked_train_count": len(blocked_train),
+            "blocked_validation_count": len(blocked_validation),
+            "validation_cutoff_utc": validation_cutoff,
+            "control_validation_evaluated_count": control["validation"]["evaluated_count"],
+            "control_validation_waiting_count": control["validation"]["waiting_count"],
+            "best_validation_config_id": best_support_row.get("config_id") if best_support_row else None,
+            "best_validation_avg_realistic_r": (
+                best_support_row["validation"].get("avg_realistic_r") if best_support_row else None
+            ),
+            "best_validation_total_realistic_r": (
+                best_support_row["validation"].get("total_realistic_r") if best_support_row else None
+            ),
+            "verdict": verdict,
+            "recommended_action": _lab54_recommended_action(verdict),
+        },
+        "control": control,
+        "variant_rows": variant_rows,
+        "case_rows": [
+            _lab54_support_target_case_row(item)
+            for item in sorted(
+                blocked,
+                key=lambda row: (
+                    _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                    str(row.get("symbol") or ""),
+                ),
+                reverse=True,
+            )
+        ],
+        "limitations": [
+            "Nearest support is a closed-candle proxy, not an order-book liquidity wall.",
+            "The cost buffer uses the existing realistic spread/slippage model; it is not an optimized threshold.",
+            "TP/SL and same-candle ambiguity use the same conservative path rules as the existing paper study.",
+            "A TP or SL hit is final even before four hours; unresolved rows require the full closed 4h horizon.",
+            "The chronological split is one checkpoint and must not be promoted without further forward validation.",
+            "No target variant changes Signal Factory, scanner output, logged TP/SL, or execution.",
+        ],
+    }
+
+
+def _lab54_target_variant_row(
+    *,
+    config_id: str,
+    label: str,
+    target_method: str,
+    blocked: list[dict[str, Any]],
+    blocked_train: list[dict[str, Any]],
+    blocked_validation: list[dict[str, Any]],
+    control: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    all_perf = _lab54_target_performance(blocked, config_id)
+    train_perf = _lab54_target_performance(blocked_train, config_id)
+    validation_perf = _lab54_target_performance(blocked_validation, config_id)
+    validation_avg_delta = _decimal_delta(
+        validation_perf.get("avg_realistic_r"),
+        control["validation"].get("avg_realistic_r"),
+    )
+    train_avg_delta = _decimal_delta(
+        train_perf.get("avg_realistic_r"),
+        control["train"].get("avg_realistic_r"),
+    )
+    validation_drawdown_delta = _decimal_delta(
+        validation_perf.get("max_drawdown_r"),
+        control["validation"].get("max_drawdown_r"),
+    )
+    return {
+        "config_id": config_id,
+        "label": label,
+        "target_method": target_method,
+        "all": all_perf,
+        "train": train_perf,
+        "validation": validation_perf,
+        "train_avg_r_delta_vs_control": train_avg_delta,
+        "validation_avg_r_delta_vs_control": validation_avg_delta,
+        "validation_total_r_delta_vs_control": _decimal_delta(
+            validation_perf.get("total_realistic_r"),
+            control["validation"].get("total_realistic_r"),
+        ),
+        "validation_drawdown_delta_vs_control": validation_drawdown_delta,
+        "validation_sl_share_delta_vs_control": _decimal_delta(
+            validation_perf.get("sl_share_pct_closed"),
+            control["validation"].get("sl_share_pct_closed"),
+        ),
+        "verdict": _lab54_target_variant_verdict(
+            config_id=config_id,
+            train=train_perf,
+            validation=validation_perf,
+            control_train=control["train"],
+            control_validation=control["validation"],
+            min_sample=min_sample,
+        ),
+    }
+
+
+def _lab54_target_performance(items: list[dict[str, Any]], config_id: str) -> dict[str, Any]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+        ),
+    )
+    rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    status_counts: Counter[str] = Counter()
+    missing_count = 0
+    for item in ordered:
+        configs = item.get("_lab54_support_targets")
+        result = configs.get(config_id) if isinstance(configs, dict) else None
+        if not isinstance(result, dict):
+            missing_count += 1
+            continue
+        status = str(result.get("status") or "MISSING_CONTEXT")
+        status_counts[status] += 1
+        if status in {"MISSING_CONTEXT", "INVALID_TARGET_GEOMETRY"}:
+            missing_count += 1
+        if result.get("realistic_r") is not None:
+            rows.append((item, result))
+    values = [Decimal(result["realistic_r"]) for _item, result in rows]
+    target_rr_values = [
+        Decimal(result["target_rr"])
+        for _item, result in rows
+        if result.get("target_rr") is not None
+    ]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    symbol_counts = Counter(str(item.get("symbol") or "") for item, _result in rows)
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    closed_count = (
+        status_counts.get("TP_HIT", 0)
+        + status_counts.get("SL_HIT", 0)
+        + status_counts.get("BOTH_HIT_SAME_CANDLE", 0)
+        + status_counts.get("BREAKEVEN_PROTECTED", 0)
+    )
+    return {
+        "source_count": len(ordered),
+        "evaluated_count": len(rows),
+        "waiting_count": status_counts.get("WAITING_4H", 0),
+        "missing_count": missing_count,
+        "closed_count": closed_count,
+        "tp_count": status_counts.get("TP_HIT", 0),
+        "sl_count": status_counts.get("SL_HIT", 0),
+        "both_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
+        "breakeven_count": status_counts.get("BREAKEVEN_PROTECTED", 0),
+        "neither_count": status_counts.get("NEITHER_4H", 0),
+        "total_realistic_r": sum(values, Decimal("0")),
+        "avg_realistic_r": _avg_decimal(values),
+        "median_realistic_r": _percentile_decimal(values, Decimal("0.50")),
+        "max_drawdown_r": max_drawdown,
+        "tp_share_pct_closed": (
+            Decimal(status_counts.get("TP_HIT", 0)) / Decimal(closed_count) * Decimal("100")
+            if closed_count
+            else None
+        ),
+        "sl_share_pct_closed": (
+            Decimal(status_counts.get("SL_HIT", 0) + status_counts.get("BOTH_HIT_SAME_CANDLE", 0))
+            / Decimal(closed_count)
+            * Decimal("100")
+            if closed_count
+            else None
+        ),
+        "target_rr_q1": _percentile_decimal(target_rr_values, Decimal("0.25")),
+        "target_rr_median": _percentile_decimal(target_rr_values, Decimal("0.50")),
+        "target_rr_q3": _percentile_decimal(target_rr_values, Decimal("0.75")),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(rows)) * Decimal("100") if rows else None,
+    }
+
+
+def _lab54_target_variant_verdict(
+    *,
+    config_id: str,
+    train: dict[str, Any],
+    validation: dict[str, Any],
+    control_train: dict[str, Any],
+    control_validation: dict[str, Any],
+    min_sample: int,
+) -> str:
+    if config_id == "CONTROL_LOGGED":
+        return "CURRENT_CONTROL"
+    if config_id == "TP_0_75R":
+        return "FIXED_TARGET_REFERENCE"
+    required_validation = max(10, min_sample // 2)
+    if (
+        int(validation.get("evaluated_count") or 0) < required_validation
+        or int(train.get("evaluated_count") or 0) < max(10, min_sample)
+    ):
+        return "NEEDS_MORE_SAMPLE"
+    validation_delta = _decimal_delta(
+        validation.get("avg_realistic_r"),
+        control_validation.get("avg_realistic_r"),
+    )
+    train_delta = _decimal_delta(
+        train.get("avg_realistic_r"),
+        control_train.get("avg_realistic_r"),
+    )
+    drawdown_delta = _decimal_delta(
+        validation.get("max_drawdown_r"),
+        control_validation.get("max_drawdown_r"),
+    )
+    if (
+        validation_delta is not None
+        and validation_delta > 0
+        and train_delta is not None
+        and train_delta > 0
+        and Decimal(validation.get("total_realistic_r") or 0) > 0
+        and (drawdown_delta is None or drawdown_delta >= 0)
+    ):
+        return "SUPPORT_TARGET_VALIDATION_IMPROVES"
+    if validation_delta is not None and validation_delta > 0:
+        return "SUPPORT_TARGET_REDUCES_DAMAGE_ONLY"
+    if train_delta is not None and train_delta > 0:
+        return "SUPPORT_TARGET_TRAIN_ONLY"
+    return "SUPPORT_TARGET_NO_IMPROVEMENT"
+
+
+def _lab54_support_target_verdict(
+    best_support_row: dict[str, Any] | None,
+    *,
+    min_sample: int,
+) -> str:
+    if best_support_row is None:
+        return "SUPPORT_TARGET_NEEDS_MORE_SAMPLE"
+    if int(best_support_row["validation"].get("evaluated_count") or 0) < max(10, min_sample // 2):
+        return "SUPPORT_TARGET_NEEDS_MORE_SAMPLE"
+    row_verdict = str(best_support_row.get("verdict") or "")
+    if row_verdict == "SUPPORT_TARGET_VALIDATION_IMPROVES":
+        return "SUPPORT_TARGET_VALIDATION_IMPROVES"
+    if row_verdict == "SUPPORT_TARGET_REDUCES_DAMAGE_ONLY":
+        return "SUPPORT_TARGET_REDUCES_DAMAGE_ONLY"
+    return "SUPPORT_TARGET_NO_IMPROVEMENT"
+
+
+def _lab54_support_target_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    configs = item.get("_lab54_support_targets") if isinstance(item.get("_lab54_support_targets"), dict) else {}
+
+    def result_for(config_id: str) -> dict[str, Any]:
+        result = configs.get(config_id) if isinstance(configs.get(config_id), dict) else {}
+        return {
+            "status": result.get("status") or "MISSING_CONTEXT",
+            "target": result.get("target"),
+            "target_rr": result.get("target_rr"),
+            "realistic_r": result.get("realistic_r"),
+            "result_time_utc": result.get("result_time_utc"),
+            "mfe_r": result.get("mfe_r"),
+            "mae_r": result.get("mae_r"),
+            "support_buffer_price": result.get("support_buffer_price"),
+        }
+
+    return {
+        "signal_id": item.get("signal_id"),
+        "symbol": item.get("symbol"),
+        "signal_timestamp": item.get("signal_timestamp"),
+        "signal_time_wib": item.get("signal_time_wib"),
+        "entry": item.get("entry"),
+        "stop_loss": item.get("stop_loss"),
+        "risk": item.get("risk"),
+        "support_price_proxy": item.get("support_price_proxy"),
+        "support_method": item.get("support_method"),
+        "support_distance_r": item.get("support_distance_r"),
+        "control": result_for("CONTROL_LOGGED"),
+        "fixed_0_75r": result_for("TP_0_75R"),
+        "support_touch": result_for("SUPPORT_TOUCH"),
+        "support_cost_buffer": result_for("SUPPORT_COST_BUFFER"),
+    }
+
+
+def _lab54_recommended_action(verdict: str) -> str:
+    return {
+        "SUPPORT_TARGET_VALIDATION_IMPROVES": (
+            "Keep the best support target in shadow for another forward checkpoint; do not change the live TP."
+        ),
+        "SUPPORT_TARGET_REDUCES_DAMAGE_ONLY": (
+            "Monitor more samples; the target reduces damage but is not independently positive."
+        ),
+        "SUPPORT_TARGET_NEEDS_MORE_SAMPLE": (
+            "Wait for more completed four-hour validation paths before judging support-aware targets."
+        ),
+        "SUPPORT_TARGET_NO_IMPROVEMENT": (
+            "Do not promote support-aware targets; continue the wrong-direction and entry-timing investigation."
+        ),
+    }.get(verdict, "Keep the current live target frozen.")
 
 
 def _lab52_data_derived_thresholds(tp_items: list[dict[str, Any]]) -> dict[str, Any]:
