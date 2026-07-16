@@ -469,6 +469,7 @@ class SignalCandidatePerformanceService:
             include_watch_only=include_watch_only,
             position_lock=position_lock,
             shadow_status=shadow_status,
+            include_target_distance_context=True,
         )
         source_before_base_filter_count = len(annotated)
         normalized_base_filter = (base_filter or "ALL").upper()
@@ -478,7 +479,7 @@ class SignalCandidatePerformanceService:
             normalized_base_filter = "ALL"
         target_distance_study = _mid_short_target_distance_study(annotated, min_sample=min_sample)
         for item in annotated:
-            item.pop("_lab52_counterfactuals", None)
+            _strip_lab52_internal_item_fields(item)
         baseline = _walk_forward_perf(annotated)
         closed = [item for item in annotated if item.get("result_status") in COMPLETED_OUTCOMES]
         tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
@@ -564,11 +565,11 @@ class SignalCandidatePerformanceService:
             "symbol_rows": _anatomy_bucket_rows(annotated, key="symbol", min_sample=1, baseline=baseline, limit=limit),
             "evidence_tp_vs_sl": _evidence_field_rows(closed, min_sample=max(3, min_sample // 2)),
             "improvement_candidates": improvement_candidates,
-            "latest_sl_signals": _sorted_signal_rows(sl_items, limit=limit),
-            "latest_tp_signals": _sorted_signal_rows(tp_items, limit=limit),
+            "latest_sl_signals": _sorted_signal_rows(sl_items, limit=min(limit, 20)),
+            "latest_tp_signals": _sorted_signal_rows(tp_items, limit=min(limit, 20)),
             "latest_open_signals": _sorted_signal_rows(
                 [item for item in annotated if item.get("result_status") == "OPEN"],
-                limit=limit,
+                limit=min(limit, 20),
             ),
             "guardrails": [
                 "Failure anatomy only reads logged V2 MID_SHORT 1h signals and local futures candles.",
@@ -1259,6 +1260,7 @@ class SignalCandidatePerformanceService:
         include_watch_only: bool,
         position_lock: bool,
         shadow_status: str,
+        include_target_distance_context: bool = False,
     ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None, str]:
         signals = self._load_signals(
             epoch=epoch,
@@ -1292,15 +1294,23 @@ class SignalCandidatePerformanceService:
             global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
         )
         self._apply_universe_context(evaluated, source_symbols)
-        one_hour_candles = self._load_1h_candles(
-            source_symbols,
-            start_time=min_signal_time - timedelta(hours=72) if min_signal_time is not None else None,
-            end_time=max_signal_time + timedelta(hours=4) if max_signal_time is not None else None,
+        one_hour_candles = (
+            self._load_1h_candles(
+                source_symbols,
+                start_time=min_signal_time - timedelta(hours=72) if min_signal_time is not None else None,
+                end_time=max_signal_time + timedelta(hours=4) if max_signal_time is not None else None,
+            )
+            if include_target_distance_context
+            else {}
         )
-        oi_history = self._load_1h_oi_changes(
-            source_symbols,
-            start_time=min_signal_time if min_signal_time is not None else None,
-            end_time=max_signal_time + timedelta(hours=1, minutes=15) if max_signal_time is not None else None,
+        oi_history = (
+            self._load_1h_oi_changes(
+                source_symbols,
+                start_time=min_signal_time if min_signal_time is not None else None,
+                end_time=max_signal_time + timedelta(hours=1, minutes=15) if max_signal_time is not None else None,
+            )
+            if include_target_distance_context
+            else {}
         )
         normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
         if normalized_shadow_status != "ALL":
@@ -1315,6 +1325,7 @@ class SignalCandidatePerformanceService:
                 candles,
                 one_hour_candles=one_hour_candles,
                 oi_history=oi_history,
+                include_target_distance_context=include_target_distance_context,
             ),
             skipped,
             latest_candle_time,
@@ -4771,6 +4782,7 @@ def _annotate_mid_short_failure_anatomy(
     *,
     one_hour_candles: dict[str, list[PerfCandle]] | None = None,
     oi_history: dict[str, list[tuple[datetime, Decimal]]] | None = None,
+    include_target_distance_context: bool = False,
 ) -> list[dict[str, Any]]:
     one_hour_candles = one_hour_candles or {}
     oi_history = oi_history or {}
@@ -4782,11 +4794,15 @@ def _annotate_mid_short_failure_anatomy(
         symbol_candles = candles.get(symbol, [])
         path = _mid_short_path_anatomy(item, symbol_candles)
         regime = _mid_short_regime_context(item, btc_candles=btc_candles, eth_candles=eth_candles)
-        target_context = _mid_short_target_distance_context(
-            item,
-            candles=symbol_candles,
-            one_hour_candles=one_hour_candles.get(symbol, []),
-            oi_rows=oi_history.get(symbol, []),
+        target_context = (
+            _mid_short_target_distance_context(
+                item,
+                candles=symbol_candles,
+                one_hour_candles=one_hour_candles.get(symbol, []),
+                oi_rows=oi_history.get(symbol, []),
+            )
+            if include_target_distance_context
+            else {}
         )
         base = {
             **item,
@@ -4810,6 +4826,65 @@ LAB52_COUNTERFACTUAL_SPECS = (
     ("ATR_RISK_0_75X_RR_1_5", "Risk 0.75x logged + target 1.50R", Decimal("0.75"), Decimal("1.50"), None, False),
     ("ATR_RISK_1_25X_RR_1_5", "Risk 1.25x logged + target 1.50R", Decimal("1.25"), Decimal("1.50"), None, False),
 )
+
+
+LAB52_ITEM_ONLY_FIELDS = frozenset(
+    {
+        "_lab52_counterfactuals",
+        "atr_1h_at_entry",
+        "atr_pct_entry",
+        "logged_risk_atr_ratio",
+        "atr_30_median",
+        "atr_vs_30_median",
+        "atr_prior_value",
+        "atr_signal_inflation_ratio",
+        "signal_true_range_atr",
+        "signal_tr_contribution_pct",
+        "pre_entry_1h_move_atr",
+        "pre_entry_4h_move_atr",
+        "atr_closed_candle_count",
+        "support_price_proxy",
+        "support_distance_r",
+        "support_before_target",
+        "support_method",
+        "forward_1h_realized_range_atr",
+        "forward_1h_mfe_r",
+        "forward_1h_mae_r",
+        "forward_2h_mfe_r",
+        "forward_2h_mae_r",
+        "forward_4h_mfe_r",
+        "forward_4h_mae_r",
+        "forward_1h_taker_sell_ratio",
+        "forward_1h_volume_vs_pre30",
+        "forward_1h_oi_change_pct",
+        "time_to_0_25r_minutes",
+        "time_to_0_50r_minutes",
+        "time_to_0_75r_minutes",
+        "time_to_1_00r_minutes",
+        "time_to_1_25r_minutes",
+        "time_to_1_50r_minutes",
+        "time_to_mfe_minutes",
+        "volume_baseline_candle_count",
+        "oi_entry_timestamp",
+        "oi_forward_1h_timestamp",
+        "oi_forward_source",
+        "entry_taker_sell_ratio",
+        "entry_volume_ratio",
+        "entry_oi_change_pct",
+        "taker_sell_delta_1h",
+        "oi_change_delta_1h",
+        "target_distance_context_available",
+        "target_distance_context_total",
+        "target_distance_context_status",
+        "target_distance_hypotheses",
+        "target_distance_primary_hypothesis",
+    }
+)
+
+
+def _strip_lab52_internal_item_fields(item: dict[str, Any]) -> None:
+    for field in LAB52_ITEM_ONLY_FIELDS:
+        item.pop(field, None)
 
 
 def _mid_short_target_distance_context(

@@ -58,6 +58,7 @@ from app.services.utils import duration_seconds, json_safe, model_to_dict, utcno
 router = APIRouter()
 
 _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
+_MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS = 900.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
@@ -569,9 +570,9 @@ def signal_candidates_mid_short_1h_failure_anatomy(
     now = monotonic()
     with _MID_SHORT_FAILURE_ANATOMY_CACHE_LOCK:
         cached = _MID_SHORT_FAILURE_ANATOMY_CACHE.get(cache_key)
-        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+        if cached and now - cached[0] <= _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS:
             payload = dict(cached[1])
-            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            payload["cache"] = {"hit": True, "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS}
             return payload
 
     payload = json_safe(
@@ -584,7 +585,7 @@ def signal_candidates_mid_short_1h_failure_anatomy(
             limit=normalized_limit,
         )
     )
-    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    payload["cache"] = {"hit": False, "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS}
     with _MID_SHORT_FAILURE_ANATOMY_CACHE_LOCK:
         _MID_SHORT_FAILURE_ANATOMY_CACHE[cache_key] = (monotonic(), payload)
     return payload
