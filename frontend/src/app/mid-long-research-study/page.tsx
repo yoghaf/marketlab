@@ -82,6 +82,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?stage=MID_LONG&timeframe=1h&position_lock=false">Open Quality Lab filtered</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Radar</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance?stage=MID_LONG&timeframe=1h&position_lock=false">Open Signal History</Link>
+        <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-misidentification-audit?stages=MID_LONG,MID_SHORT&timeframe=1h&position_lock=false">Open Misidentification Audit</Link>
       </div>
 
       {error ? (

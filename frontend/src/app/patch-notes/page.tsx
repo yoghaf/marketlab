@@ -18,6 +18,26 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-16",
+    version: "LAB-49",
+    title: "Signal Misidentification Audit",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menambahkan audit read-only untuk menjawab apakah loss banyak terjadi karena salah arah, entry/risk model, stop/timeout, atau cost/fill drag.",
+    changes: [
+      "Endpoint /api/signal-candidates/misidentification-audit membandingkan MID_LONG dan MID_SHORT per timeframe dengan path anatomy, direction 1h, reverse proxy, evidence correct-vs-wrong, dan latest TP/SL samples.",
+      "Halaman /signal-misidentification-audit menampilkan verdict per lane: reverse layak diteliti, identifikasi arah lemah, atau entry/risk model lemah.",
+      "Reverse proxy dibuat konservatif: hanya menandai reverse-clean kalau path candle yang sama cukup untuk target kebalikan tanpa menyentuh stop kebalikan.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Kita bisa membedah apakah MID_LONG/MID_SHORT kalah karena definisi arah yang salah atau karena entry/SL/TP yang perlu difilter, sebelum membuat rule baru.",
+    links: [
+      { href: "/signal-misidentification-audit", label: "Misidentification Audit" },
+      { href: "/mid-long-research-study", label: "MID_LONG 1h Research" },
+      { href: "/signal-quality-lab", label: "Signal Quality Lab" }
+    ]
+  },
+  {
     date: "2026-07-15",
     version: "LAB-48",
     title: "MID_LONG 1h Research Study",

@@ -1065,6 +1065,117 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def misidentification_audit(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = False,
+        timeframe: str = "1h",
+        stages: tuple[str, ...] = ("MID_LONG", "MID_SHORT"),
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        lanes: list[dict[str, Any]] = []
+        latest_times: list[datetime] = []
+        skipped_total: Counter[str] = Counter()
+        for stage in stages:
+            annotated, skipped, latest_candle_time = self._anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                stage=stage,
+                timeframe=timeframe,
+            )
+            skipped_total.update(skipped)
+            if latest_candle_time:
+                latest_times.append(latest_candle_time)
+            lanes.append(
+                _misidentification_lane(
+                    stage=stage,
+                    timeframe=timeframe,
+                    items=annotated,
+                    min_sample=min_sample,
+                    limit=limit,
+                )
+            )
+
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "timeframe": timeframe,
+                "stages": list(stages),
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "study_scope": "signal_misidentification_audit_read_only",
+            "method": (
+                "Classifies closed Signal losses using path anatomy, 1h forward direction, MFE/MAE, "
+                "extension/fill evidence, and a conservative reverse-direction proxy. It does not change live rules."
+            ),
+            "latest_evaluation_candle_time": max(latest_times, default=None),
+            "latest_futures_15m_close_time": max(latest_times, default=None),
+            "skipped_by_position_lock": dict(skipped_total),
+            "lanes": lanes,
+            "summary": _misidentification_summary(lanes),
+            "guardrails": [
+                "No Signal Factory rule changed.",
+                "No scanner behavior changed.",
+                "No TP/SL formula or outcome calculation changed.",
+                "Reverse analysis is a conservative proxy from the same paper-live path, not a new signal rule.",
+                "A reverse candidate means worth researching, not permission to flip live direction.",
+            ],
+        }
+
+    def _anatomy_dataset(
+        self,
+        *,
+        epoch: str,
+        include_watch_only: bool,
+        position_lock: bool,
+        stage: str,
+        timeframe: str,
+    ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None]:
+        signals = self._load_signals(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=None,
+            signal_id=None,
+        )
+        min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        source_symbols = {row.symbol for row in signals}
+        candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
+        candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
+        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_start = latest_base_time or candle_start
+        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start)
+        candles = _merge_candle_maps(base_candles, tail_candles)
+        latest_candle_time = max(
+            (candle.close_time for rows in candles.values() for candle in rows),
+            default=None,
+        )
+        evaluated, skipped = self._evaluate(
+            signals,
+            candles,
+            position_lock=position_lock,
+            global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
+        )
+        self._apply_universe_context(evaluated, source_symbols)
+        return _annotate_mid_short_failure_anatomy(evaluated, candles), skipped, latest_candle_time
+
     def _mid_short_1h_anatomy_dataset(
         self,
         *,
@@ -4851,6 +4962,372 @@ def _mid_short_candidate_filter_read(perf: dict[str, Any], *, min_sample: int) -
     if avg_delta is not None and avg_delta < 0:
         return "WORSE_THAN_SHADOW_PASS"
     return "NO_CLEAR_SEPARATION"
+
+
+def _misidentification_lane(
+    *,
+    stage: str,
+    timeframe: str,
+    items: list[dict[str, Any]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    direction = _stage_direction(stage)
+    baseline = _walk_forward_perf(items)
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        tags = _misidentification_tags(item)
+        reverse = _reverse_proxy(item)
+        enriched.append(
+            {
+                **item,
+                "misidentification_primary_reason": _misidentification_reason(tags, reverse),
+                "reverse_proxy_bucket": reverse["bucket"],
+                "reverse_clean_proxy": reverse["reverse_clean_proxy"],
+                "reverse_both_zone_proxy": reverse["reverse_both_zone_proxy"],
+                "reverse_mfe_r": reverse["reverse_mfe_r"],
+                "reverse_mae_r": reverse["reverse_mae_r"],
+                "entry_overextended_bucket": _entry_overextended(item),
+                "cost_or_fill_bucket": _cost_or_fill_drag(item),
+            }
+        )
+
+    closed = [item for item in enriched if item.get("result_status") in COMPLETED_OUTCOMES]
+    wrong_1h = [item for item in closed if item.get("direction_1h") == "WRONG_DIRECTION"]
+    correct_1h = [item for item in closed if item.get("direction_1h") == "CORRECT_DIRECTION"]
+    reverse_clean = [item for item in closed if item.get("reverse_clean_proxy")]
+    reverse_both_zone = [item for item in closed if item.get("reverse_both_zone_proxy")]
+    summary = {
+        "sample_count": len(enriched),
+        "closed_count": len(closed),
+        "tp_count": int(baseline.get("tp_count") or 0),
+        "sl_count": int(baseline.get("sl_count") or 0),
+        "wrong_direction_1h_count": len(wrong_1h),
+        "correct_direction_1h_count": len(correct_1h),
+        "reverse_clean_count": len(reverse_clean),
+        "reverse_both_zone_count": len(reverse_both_zone),
+        "sl_share_pct": baseline.get("sl_share_pct"),
+        "wrong_direction_1h_share_pct": _pct(len(wrong_1h), len(closed)),
+        "reverse_clean_share_pct": _pct(len(reverse_clean), len(closed)),
+        "verdict": _misidentification_verdict(baseline, len(wrong_1h), len(reverse_clean), min_sample=min_sample),
+        "read": _misidentification_read(baseline, len(wrong_1h), len(reverse_clean), min_sample=min_sample),
+    }
+    return {
+        "lane": f"{stage}_{timeframe}",
+        "stage": stage,
+        "timeframe": timeframe,
+        "direction": direction,
+        "summary": summary,
+        "baseline": baseline,
+        "reason_rows": _misidentification_bucket_rows(
+            enriched,
+            key="misidentification_primary_reason",
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        ),
+        "reverse_rows": _misidentification_bucket_rows(
+            enriched,
+            key="reverse_proxy_bucket",
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        ),
+        "path_rows": _misidentification_bucket_rows(
+            enriched,
+            key="path_type",
+            baseline=baseline,
+            min_sample=min_sample,
+            limit=limit,
+        ),
+        "evidence_correct_vs_wrong": _misidentification_evidence_rows(enriched),
+        "latest_sl_signals": _sorted_signal_rows([item for item in enriched if item.get("result_status") == "SL_HIT"], limit=limit),
+        "latest_tp_signals": _sorted_signal_rows([item for item in enriched if item.get("result_status") == "TP_HIT"], limit=limit),
+        "reverse_clean_examples": _sorted_signal_rows(reverse_clean, limit=min(limit, 20)),
+    }
+
+
+def _misidentification_tags(item: dict[str, Any]) -> set[str]:
+    tags: set[str] = set()
+    if item.get("direction_1h") == "WRONG_DIRECTION":
+        tags.add("WRONG_DIRECTION_1H")
+    if item.get("direction_2h") == "WRONG_DIRECTION":
+        tags.add("WRONG_DIRECTION_2H")
+    if item.get("direction_4h") == "WRONG_DIRECTION":
+        tags.add("WRONG_DIRECTION_4H")
+    if item.get("path_type") in {"SL_THEN_WOULD_TP", "TP_NEAR_THEN_SL"}:
+        tags.add("STOP_OR_TIMING_PROBLEM")
+    if item.get("path_type") == "CHOPPY_BOTH_ZONE" or item.get("result_status") == "BOTH_HIT_SAME_CANDLE":
+        tags.add("CHOPPY_BOTH_ZONE")
+    if _decimal_or_none_any(item.get("mfe_before_first_hit_r")) is not None and _decimal_or_none_any(item.get("mfe_before_first_hit_r")) >= Decimal("0.75"):
+        tags.add("FAVORABLE_THEN_REVERSED")
+    if _entry_overextended(item) != "ENTRY_EXTENSION_OK":
+        tags.add("ENTRY_OVEREXTENDED")
+    if _cost_or_fill_drag(item) != "COST_FILL_OK":
+        tags.add("COST_OR_FILL_DRAG")
+    return tags
+
+
+def _misidentification_reason(tags: set[str], reverse: dict[str, Any]) -> str:
+    if reverse.get("reverse_clean_proxy"):
+        return "WRONG_DIRECTION_REVERSE_CANDIDATE"
+    if "CHOPPY_BOTH_ZONE" in tags:
+        return "CHOPPY_BOTH_SIDE_RISK"
+    if "WRONG_DIRECTION_1H" in tags and "WRONG_DIRECTION_2H" in tags:
+        return "WRONG_DIRECTION_PERSISTENT"
+    if "WRONG_DIRECTION_1H" in tags:
+        return "WRONG_DIRECTION_SHORT_TERM"
+    if "STOP_OR_TIMING_PROBLEM" in tags:
+        return "STOP_OR_TIMING_PROBLEM"
+    if "FAVORABLE_THEN_REVERSED" in tags:
+        return "FAVORABLE_THEN_REVERSED"
+    if "ENTRY_OVEREXTENDED" in tags:
+        return "ENTRY_OVEREXTENDED"
+    if "COST_OR_FILL_DRAG" in tags:
+        return "COST_OR_FILL_DRAG"
+    return "MIXED_OR_NO_CLEAR_CAUSE"
+
+
+def _reverse_proxy(item: dict[str, Any]) -> dict[str, Any]:
+    mfe = _decimal_or_none_any(item.get("mfe_r"))
+    mae = _decimal_or_none_any(item.get("mae_r"))
+    rr = _decimal_or_none_any(item.get("rr")) or Decimal("1.5")
+    if mfe is None or mae is None:
+        return {
+            "bucket": "REVERSE_UNKNOWN",
+            "reverse_clean_proxy": False,
+            "reverse_both_zone_proxy": False,
+            "reverse_mfe_r": None,
+            "reverse_mae_r": None,
+        }
+    reverse_mfe = abs(mae)
+    reverse_mae = -abs(mfe)
+    reverse_tp = reverse_mfe >= rr
+    reverse_sl = abs(reverse_mae) >= Decimal("1")
+    if reverse_tp and not reverse_sl:
+        bucket = "REVERSE_CLEAN_PROXY"
+    elif reverse_tp and reverse_sl:
+        bucket = "REVERSE_BOTH_ZONE_PROXY"
+    elif not reverse_tp and reverse_sl:
+        bucket = "REVERSE_WOULD_SL_PROXY"
+    else:
+        bucket = "REVERSE_NO_TP_PROXY"
+    return {
+        "bucket": bucket,
+        "reverse_clean_proxy": bucket == "REVERSE_CLEAN_PROXY",
+        "reverse_both_zone_proxy": bucket == "REVERSE_BOTH_ZONE_PROXY",
+        "reverse_mfe_r": reverse_mfe,
+        "reverse_mae_r": reverse_mae,
+    }
+
+
+def _entry_overextended(item: dict[str, Any]) -> str:
+    range_atr = _evidence_value(item, "range_ratio_vs_atr")
+    price_atr = _evidence_value(item, "price_atr_multiple")
+    atr_ext = _evidence_value(item, "atr_extension_normalized")
+    price_return = _evidence_value(item, "price_return")
+    if range_atr is not None and range_atr >= Decimal("1.5"):
+        return "RANGE_OVEREXTENDED"
+    if price_atr is not None and price_atr >= Decimal("1.5"):
+        return "PRICE_ATR_OVEREXTENDED"
+    if atr_ext is not None and atr_ext >= Decimal("1.5"):
+        return "ATR_EXTENSION_OVEREXTENDED"
+    direction = str(item.get("direction") or "")
+    if direction == "LONG" and price_return is not None and price_return >= Decimal("2.0"):
+        return "LONG_AFTER_STRONG_GREEN"
+    if direction == "SHORT" and price_return is not None and price_return <= Decimal("-2.0"):
+        return "SHORT_AFTER_STRONG_RED"
+    return "ENTRY_EXTENSION_OK"
+
+
+def _cost_or_fill_drag(item: dict[str, Any]) -> str:
+    fill = str(item.get("realistic_fill_quality") or "")
+    penalty = _decimal_or_none_any(item.get("realism_penalty_r"))
+    ideal = _decimal_or_none_any(item.get("realized_r"))
+    realistic = _decimal_or_none_any(item.get("realistic_realized_r"))
+    if fill in {"FILL_BAD", "SPREAD_UNKNOWN"}:
+        return fill
+    if ideal is not None and realistic is not None and ideal > 0 and realistic <= 0:
+        return "IDEAL_WIN_REALISTIC_LOSS"
+    if penalty is not None and penalty >= Decimal("0.25"):
+        return "HIGH_REALISM_PENALTY"
+    return "COST_FILL_OK"
+
+
+def _misidentification_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    key: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = _anatomy_bucket_rows(items, key=key, min_sample=min_sample, baseline=baseline, limit=None)
+    for row in rows:
+        row["read"] = _misidentification_bucket_read(row, min_sample=min_sample)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            int(row.get("sl_count") or 0),
+            Decimal(row.get("realistic_total_r_closed") or 0) * Decimal("-1"),
+            int(row.get("sample_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _misidentification_bucket_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("closed_count") or 0) < min_sample:
+        return "WAIT_MORE_SAMPLE"
+    bucket = str(row.get("bucket") or "")
+    if bucket in {"WRONG_DIRECTION_REVERSE_CANDIDATE", "REVERSE_CLEAN_PROXY"}:
+        return "REVERSE_WORTH_RESEARCH"
+    if bucket.startswith("WRONG_DIRECTION"):
+        return "DIRECTION_WEAK"
+    if bucket in {"ENTRY_OVEREXTENDED", "RANGE_OVEREXTENDED", "PRICE_ATR_OVEREXTENDED", "ATR_EXTENSION_OVEREXTENDED"}:
+        return "ENTRY_FILTER_CANDIDATE"
+    if bucket in {"STOP_OR_TIMING_PROBLEM", "FAVORABLE_THEN_REVERSED", "SL_THEN_WOULD_TP", "TP_NEAR_THEN_SL"}:
+        return "STOP_OR_TIMEOUT_RESEARCH"
+    if Decimal(row.get("realistic_total_r_closed") or 0) > 0:
+        return "HEALTHY_BUCKET"
+    return "LOSS_BUCKET"
+
+
+def _misidentification_evidence_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    correct = [item for item in items if item.get("direction_1h") == "CORRECT_DIRECTION"]
+    wrong = [item for item in items if item.get("direction_1h") == "WRONG_DIRECTION"]
+    fields = [
+        ("price_return", "Price return %"),
+        ("volume_ratio_vs_lookback", "Volume vs avg"),
+        ("range_ratio_vs_atr", "Range / ATR"),
+        ("atr_extension_normalized", "ATR extension"),
+        ("price_atr_multiple", "Price / ATR"),
+        ("kline_taker_buy_ratio", "Taker buy ratio"),
+        ("kline_taker_sell_ratio", "Taker sell ratio"),
+        ("oi_change_pct", "OI change %"),
+        ("oi_zscore", "OI z-score"),
+        ("funding_percentile_30d", "Funding percentile"),
+        ("global_long_short_ratio", "Global L/S"),
+        ("top_trader_position_ratio", "Top position"),
+        ("top_trader_account_ratio", "Top account"),
+        ("futures_spread_pct", "Futures spread %"),
+    ]
+    rows: list[dict[str, Any]] = []
+    for field, label in fields:
+        correct_values = [value for value in (_evidence_value(item, field) for item in correct) if value is not None]
+        wrong_values = [value for value in (_evidence_value(item, field) for item in wrong) if value is not None]
+        correct_median = _median_decimal(correct_values)
+        wrong_median = _median_decimal(wrong_values)
+        rows.append(
+            {
+                "field": field,
+                "label": label,
+                "quality_flag": _evidence_gap_flag(correct_median, wrong_median),
+                "available_count": len(correct_values) + len(wrong_values),
+                "missing_count": len(correct) + len(wrong) - len(correct_values) - len(wrong_values),
+                "available_pct": _pct(len(correct_values) + len(wrong_values), len(correct) + len(wrong)),
+                "correct_count": len(correct_values),
+                "wrong_count": len(wrong_values),
+                "correct_median": correct_median,
+                "wrong_median": wrong_median,
+                "delta_correct_minus_wrong": _decimal_delta(correct_median, wrong_median),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            row["quality_flag"] in {"CORRECT_HIGHER", "WRONG_HIGHER"},
+            abs(Decimal(row.get("delta_correct_minus_wrong") or 0)),
+            int(row.get("available_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _evidence_gap_flag(correct_median: Decimal | None, wrong_median: Decimal | None) -> str:
+    if correct_median is None or wrong_median is None:
+        return "UNAVAILABLE"
+    delta = correct_median - wrong_median
+    if abs(delta) < Decimal("0.05"):
+        return "NO_CLEAR_GAP"
+    return "CORRECT_HIGHER" if delta > 0 else "WRONG_HIGHER"
+
+
+def _misidentification_verdict(
+    baseline: dict[str, Any],
+    wrong_1h_count: int,
+    reverse_clean_count: int,
+    *,
+    min_sample: int,
+) -> str:
+    closed = int(baseline.get("closed_count") or 0)
+    if closed < min_sample:
+        return "WAIT_MORE_SAMPLE"
+    wrong_share = Decimal(wrong_1h_count) / Decimal(closed) * Decimal("100") if closed else Decimal("0")
+    reverse_share = Decimal(reverse_clean_count) / Decimal(closed) * Decimal("100") if closed else Decimal("0")
+    realistic_total = Decimal(baseline.get("realistic_total_r_closed") or 0)
+    sl_share = baseline.get("sl_share_pct")
+    if reverse_share >= Decimal("20"):
+        return "REVERSE_HYPOTHESIS_WORTH_TESTING"
+    if wrong_share >= Decimal("55"):
+        return "DIRECTION_IDENTIFICATION_WEAK"
+    if sl_share is not None and Decimal(sl_share) >= Decimal("60"):
+        return "RISK_OR_ENTRY_MODEL_WEAK"
+    if realistic_total > 0:
+        return "DIRECTION_ACCEPTABLE_MONITOR"
+    return "NO_CLEAR_FIX_YET"
+
+
+def _misidentification_read(
+    baseline: dict[str, Any],
+    wrong_1h_count: int,
+    reverse_clean_count: int,
+    *,
+    min_sample: int,
+) -> str:
+    verdict = _misidentification_verdict(
+        baseline,
+        wrong_1h_count,
+        reverse_clean_count,
+        min_sample=min_sample,
+    )
+    return {
+        "WAIT_MORE_SAMPLE": "Sample belum cukup untuk menyimpulkan salah arah.",
+        "REVERSE_HYPOTHESIS_WORTH_TESTING": "Ada cukup banyak SL yang secara path lebih cocok kalau dibalik; perlu studi reverse read-only, belum boleh jadi rule.",
+        "DIRECTION_IDENTIFICATION_WEAK": "Banyak signal bergerak melawan arah dalam 1h; masalah utama kemungkinan definisi arah.",
+        "RISK_OR_ENTRY_MODEL_WEAK": "Arah tidak jelas-jelas salah, tetapi SL share tinggi; fokus ke entry telat, stop placement, timeout, atau filter cost.",
+        "DIRECTION_ACCEPTABLE_MONITOR": "Arah relatif bisa diterima dalam sample ini; tetap pantau realistic R dan drawdown.",
+        "NO_CLEAR_FIX_YET": "Loss tersebar di beberapa penyebab; perlu pecah per bucket/evidence.",
+    }.get(verdict, verdict)
+
+
+def _misidentification_summary(lanes: list[dict[str, Any]]) -> dict[str, Any]:
+    lane_count = len(lanes)
+    reverse_count = sum(1 for lane in lanes if lane.get("summary", {}).get("verdict") == "REVERSE_HYPOTHESIS_WORTH_TESTING")
+    direction_weak_count = sum(1 for lane in lanes if lane.get("summary", {}).get("verdict") == "DIRECTION_IDENTIFICATION_WEAK")
+    entry_weak_count = sum(1 for lane in lanes if lane.get("summary", {}).get("verdict") == "RISK_OR_ENTRY_MODEL_WEAK")
+    ranked = sorted(
+        lanes,
+        key=lambda lane: Decimal(lane.get("baseline", {}).get("realistic_total_r_closed") or 0),
+        reverse=True,
+    )
+    return {
+        "lane_count": lane_count,
+        "reverse_worth_testing_count": reverse_count,
+        "direction_weak_count": direction_weak_count,
+        "entry_or_risk_weak_count": entry_weak_count,
+        "best_lane": ranked[0]["lane"] if ranked else None,
+        "worst_lane": ranked[-1]["lane"] if ranked else None,
+    }
+
+
+def _stage_direction(stage: str) -> str:
+    if "SHORT" in stage:
+        return "SHORT"
+    if "LONG" in stage:
+        return "LONG"
+    return "UNKNOWN"
 
 
 def _mid_short_second_filter_specs() -> list[FilterStudySpec]:

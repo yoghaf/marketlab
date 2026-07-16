@@ -90,6 +90,8 @@ _SIGNAL_ONE_HOUR_V4_SHADOW_CACHE_LOCK = Lock()
 _SIGNAL_ONE_HOUR_V4_SHADOW_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_CALIBRATION_CACHE_LOCK = Lock()
 _SIGNAL_CALIBRATION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_SIGNAL_MISIDENTIFICATION_CACHE_LOCK = Lock()
+_SIGNAL_MISIDENTIFICATION_CACHE: dict[tuple, tuple[float, dict]] = {}
 _V3_SHADOW_COMPARISON_CACHE_LOCK = Lock()
 _V3_SHADOW_COMPARISON_CACHE: dict[tuple, tuple[float, dict]] = {}
 _V3_SHADOW_FORWARD_CACHE_LOCK = Lock()
@@ -812,6 +814,56 @@ def signal_candidates_filter_study(
     payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
     with _SIGNAL_FILTER_STUDY_CACHE_LOCK:
         _SIGNAL_FILTER_STUDY_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/signal-candidates/misidentification-audit")
+def signal_candidates_misidentification_audit(
+    include_watch_only: bool = False,
+    position_lock: bool = False,
+    timeframe: str = "1h",
+    stages: str = "MID_LONG,MID_SHORT",
+    min_sample: int = 20,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 100))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    normalized_timeframe = timeframe or "1h"
+    normalized_stages = tuple(
+        stage.strip().upper()
+        for stage in stages.split(",")
+        if stage.strip()
+    ) or ("MID_LONG", "MID_SHORT")
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_timeframe,
+        normalized_stages,
+        normalized_min_sample,
+        normalized_limit,
+    )
+    now = monotonic()
+    with _SIGNAL_MISIDENTIFICATION_CACHE_LOCK:
+        cached = _SIGNAL_MISIDENTIFICATION_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).misidentification_audit(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            timeframe=normalized_timeframe,
+            stages=normalized_stages,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+        )
+    )
+    payload["cache"] = {"hit": False, "ttl_seconds": _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS}
+    with _SIGNAL_MISIDENTIFICATION_CACHE_LOCK:
+        _SIGNAL_MISIDENTIFICATION_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

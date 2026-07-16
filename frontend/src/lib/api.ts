@@ -2283,6 +2283,94 @@ export type OneHourWalkForwardResponse = {
   guardrails: string[];
 };
 
+export type MisidentificationBucketRow = OneHourWalkForwardPerf & {
+  dimension: string;
+  bucket: string;
+  label: string;
+  sample_count: number;
+  read: string;
+};
+
+export type MisidentificationEvidenceRow = {
+  field: string;
+  label: string;
+  quality_flag: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  correct_count: number;
+  wrong_count: number;
+  correct_median?: string | number | null;
+  wrong_median?: string | number | null;
+  delta_correct_minus_wrong?: string | number | null;
+};
+
+export type MisidentificationLane = {
+  lane: string;
+  stage: string;
+  timeframe: string;
+  direction: string;
+  summary: {
+    sample_count: number;
+    closed_count: number;
+    tp_count: number;
+    sl_count: number;
+    wrong_direction_1h_count: number;
+    correct_direction_1h_count: number;
+    reverse_clean_count: number;
+    reverse_both_zone_count: number;
+    sl_share_pct?: string | number | null;
+    wrong_direction_1h_share_pct?: string | number | null;
+    reverse_clean_share_pct?: string | number | null;
+    verdict: string;
+    read: string;
+  };
+  baseline: OneHourWalkForwardPerf;
+  reason_rows: MisidentificationBucketRow[];
+  reverse_rows: MisidentificationBucketRow[];
+  path_rows: MisidentificationBucketRow[];
+  evidence_correct_vs_wrong: MisidentificationEvidenceRow[];
+  latest_sl_signals: SignalPerformanceItem[];
+  latest_tp_signals: SignalPerformanceItem[];
+  reverse_clean_examples: SignalPerformanceItem[];
+};
+
+export type MisidentificationAuditResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    timeframe: string;
+    stages: string[];
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  strategy_version: string;
+  study_scope: string;
+  method: string;
+  latest_evaluation_candle_time?: string | null;
+  latest_futures_15m_close_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  lanes: MisidentificationLane[];
+  summary: {
+    lane_count: number;
+    reverse_worth_testing_count: number;
+    direction_weak_count: number;
+    entry_or_risk_weak_count: number;
+    best_lane?: string | null;
+    worst_lane?: string | null;
+  };
+  guardrails: string[];
+  cache?: {
+    hit: boolean;
+    ttl_seconds?: number | null;
+  };
+};
+
 export type OneHourV4ShadowSelectedFilter = {
   stage: string;
   direction: string;

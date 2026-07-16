@@ -1521,6 +1521,88 @@ def test_mid_short_1h_filter_combination_study_ranks_volume_combo() -> None:
         assert payload["decision_panel"]["next_validation"]
 
 
+def test_misidentification_audit_flags_wrong_direction_and_reverse_proxy() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        base_time = datetime(2026, 1, 1, 0, 0)
+        db.add(
+            _signal(
+                "long_wrong",
+                "LONGUSDT",
+                base_time,
+                "LONG",
+                "MID_LONG",
+                "100",
+                "90",
+                "115",
+                timeframe="1h",
+                evidence={
+                    "range_ratio_vs_atr": "1.7",
+                    "price_return": "2.2",
+                    "futures_spread_pct": "0.01",
+                },
+            )
+        )
+        db.add(
+            _signal(
+                "short_right",
+                "SHORTUSDT",
+                base_time + timedelta(hours=2),
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                timeframe="1h",
+                evidence={
+                    "kline_taker_sell_ratio": "0.58",
+                    "oi_zscore": "1.4",
+                    "futures_spread_pct": "0.01",
+                },
+            )
+        )
+        for index, (high, low, close) in enumerate([
+            ("101", "84", "86"),
+            ("96", "82", "84"),
+            ("95", "81", "83"),
+            ("94", "80", "82"),
+        ]):
+            open_time = base_time + timedelta(minutes=15 * index)
+            db.add(_candle("LONGUSDT", open_time, open_time + timedelta(minutes=15), high=high, low=low, close=close))
+        for index, (high, low, close) in enumerate([
+            ("101", "84", "86"),
+            ("98", "83", "84"),
+            ("96", "82", "83"),
+            ("95", "81", "82"),
+        ]):
+            open_time = base_time + timedelta(hours=2, minutes=15 * index)
+            db.add(_candle("SHORTUSDT", open_time, open_time + timedelta(minutes=15), high=high, low=low, close=close))
+        db.commit()
+
+        payload = SignalCandidatePerformanceService(db).misidentification_audit(
+            position_lock=False,
+            min_sample=1,
+            limit=10,
+        )
+
+        assert payload["read_only"] is True
+        lanes = {lane["stage"]: lane for lane in payload["lanes"]}
+        mid_long = lanes["MID_LONG"]
+        mid_short = lanes["MID_SHORT"]
+        assert mid_long["summary"]["closed_count"] == 1
+        assert mid_long["summary"]["wrong_direction_1h_count"] == 1
+        assert mid_long["summary"]["reverse_clean_count"] == 1
+        assert mid_long["summary"]["verdict"] == "REVERSE_HYPOTHESIS_WORTH_TESTING"
+        assert mid_long["reason_rows"][0]["bucket"] == "WRONG_DIRECTION_REVERSE_CANDIDATE"
+        assert mid_long["reverse_rows"][0]["bucket"] == "REVERSE_CLEAN_PROXY"
+        assert mid_long["reverse_clean_examples"][0]["symbol"] == "LONGUSDT"
+        assert mid_short["summary"]["correct_direction_1h_count"] == 1
+        assert mid_short["summary"]["reverse_clean_count"] == 0
+        assert payload["summary"]["reverse_worth_testing_count"] == 1
+
+
 def _signal(
     signal_id: str,
     symbol: str,

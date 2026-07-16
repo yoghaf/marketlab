@@ -101,6 +101,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Live Radar</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Open Signal History</Link>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-misidentification-audit">Open Misidentification Audit</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
         <details className="relative">
           <summary className="cursor-pointer list-none rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field">Deep research links</summary>
