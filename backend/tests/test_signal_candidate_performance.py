@@ -225,6 +225,22 @@ def test_detail_returns_latest_symbol_signal_with_current_open_r() -> None:
         assert payload["item"]["result_status"] == "OPEN"
         assert payload["item"]["unrealized_r"] == Decimal("0.5")
         assert payload["item"]["evidence_snapshot"]["price_return"] == Decimal("1.25")
+        assert payload["chart"]["market"] == "BINANCE_USDS_M_FUTURES"
+        assert payload["chart"]["result_status"] == "OPEN"
+        assert payload["chart"]["entry"] == Decimal("100")
+        assert payload["chart"]["stop_loss"] == Decimal("90")
+        assert payload["chart"]["take_profit"] == Decimal("115")
+        assert payload["chart"]["candle_count"] == 1
+        assert payload["chart"]["candles"][0] == {
+            "open_time": second_time,
+            "close_time": second_time + timedelta(minutes=15),
+            "open": Decimal("100"),
+            "high": Decimal("108"),
+            "low": Decimal("98"),
+            "close": Decimal("105"),
+            "volume": Decimal("100"),
+            "source_interval": "1m",
+        }
 
 
 def test_detail_can_load_exact_signal_id() -> None:
@@ -245,6 +261,9 @@ def test_detail_can_load_exact_signal_id() -> None:
         assert payload is not None
         assert payload["item"]["signal_id"] == "old"
         assert payload["item"]["result_status"] == "TP_HIT"
+        assert payload["chart"]["result_status"] == "TP_HIT"
+        assert payload["chart"]["result_time"] == first_time + timedelta(minutes=15)
+        assert payload["chart"]["box_end_time"] == first_time + timedelta(minutes=15)
 
 
 def test_open_signal_with_symbol_candle_behind_global_latest_is_marked_stale() -> None:

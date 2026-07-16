@@ -1319,7 +1319,39 @@ export type SignalDetailResponse = {
     created_at?: string | null;
     updated_at?: string | null;
   };
+  chart?: SignalChartPayload;
   evidence: Record<string, unknown>;
+};
+
+export type SignalChartCandle = {
+  open_time: string;
+  close_time: string;
+  open: string | number;
+  high: string | number;
+  low: string | number;
+  close: string | number;
+  volume?: string | number | null;
+  source_interval: "15m" | "1m" | string;
+};
+
+export type SignalChartPayload = {
+  market: string;
+  price_source: string;
+  display_interval: string;
+  candle_count: number;
+  signal_time: string;
+  signal_time_wib?: string | null;
+  result_time?: string | null;
+  result_time_wib?: string | null;
+  box_end_time: string;
+  direction: string;
+  result_status: string;
+  entry: string | number;
+  stop_loss: string | number;
+  take_profit: string | number;
+  latest_price?: string | number | null;
+  latest_candle_time?: string | null;
+  candles: SignalChartCandle[];
 };
 
 export type SignalQualityBucket = SignalPerformanceBucket & {

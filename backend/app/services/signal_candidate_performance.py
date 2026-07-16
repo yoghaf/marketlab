@@ -72,9 +72,12 @@ EVIDENCE_FIELDS = [
 class PerfCandle:
     open_time: datetime
     close_time: datetime
+    open: Decimal
     high: Decimal
     low: Decimal
     close: Decimal
+    volume: Decimal | None = None
+    source_interval: str = "15m"
 
 
 @dataclass(frozen=True)
@@ -194,6 +197,24 @@ class SignalCandidatePerformanceService:
                 ),
             )
         )
+        chart_start_time = signal_time - timedelta(hours=24)
+        chart_result_time = _parse_dt(item.get("result_time_utc"))
+        chart_end_time = chart_result_time + timedelta(hours=2) if chart_result_time else None
+        chart_base_candles = self._load_15m_candles(
+            symbols,
+            start_time=chart_start_time,
+            end_time=chart_end_time,
+        )
+        latest_chart_base_time = max(
+            (candle.close_time for rows in chart_base_candles.values() for candle in rows),
+            default=None,
+        )
+        chart_tail_candles = self._load_1m_candles(
+            symbols,
+            start_time=latest_chart_base_time or chart_start_time,
+            end_time=chart_end_time,
+        )
+        chart_candles = _merge_candle_maps(chart_base_candles, chart_tail_candles).get(signal.symbol, [])
         return {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
@@ -229,6 +250,7 @@ class SignalCandidatePerformanceService:
                 "created_at": signal.created_at,
                 "updated_at": signal.updated_at,
             },
+            "chart": _signal_chart_payload(signal, item, chart_candles),
             "evidence": signal.evidence or {},
         }
 
@@ -1921,9 +1943,11 @@ class SignalCandidatePerformanceService:
                 FuturesKline15m.symbol,
                 FuturesKline15m.open_time,
                 FuturesKline15m.close_time,
+                FuturesKline15m.open,
                 FuturesKline15m.high,
                 FuturesKline15m.low,
                 FuturesKline15m.close,
+                FuturesKline15m.volume,
             )
             .where(
                 FuturesKline15m.symbol.in_(symbols),
@@ -1942,9 +1966,12 @@ class SignalCandidatePerformanceService:
                 PerfCandle(
                     open_time=_naive(row.open_time),
                     close_time=_naive(row.close_time),
+                    open=Decimal(row.open),
                     high=Decimal(row.high),
                     low=Decimal(row.low),
                     close=Decimal(row.close),
+                    volume=Decimal(row.volume) if row.volume is not None else None,
+                    source_interval="15m",
                 )
             )
         return dict(output)
@@ -1963,9 +1990,11 @@ class SignalCandidatePerformanceService:
                 FuturesKline1m.symbol,
                 FuturesKline1m.open_time,
                 FuturesKline1m.close_time,
+                FuturesKline1m.open_price,
                 FuturesKline1m.high_price,
                 FuturesKline1m.low_price,
                 FuturesKline1m.close_price,
+                FuturesKline1m.volume,
             )
             .where(
                 FuturesKline1m.symbol.in_(symbols),
@@ -1982,9 +2011,12 @@ class SignalCandidatePerformanceService:
                 PerfCandle(
                     open_time=_naive(row.open_time),
                     close_time=_naive(row.close_time),
+                    open=Decimal(row.open_price),
                     high=Decimal(row.high_price),
                     low=Decimal(row.low_price),
                     close=Decimal(row.close_price),
+                    volume=Decimal(row.volume) if row.volume is not None else None,
+                    source_interval="1m",
                 )
             )
         return dict(output)
@@ -3809,6 +3841,48 @@ def _merge_candle_maps(
             by_open_time[candle.open_time] = candle
         merged[symbol] = [by_open_time[key] for key in sorted(by_open_time)]
     return merged
+
+
+def _signal_chart_payload(
+    signal: SignalForwardReturnLog,
+    item: dict[str, Any],
+    candles: list[PerfCandle],
+) -> dict[str, Any]:
+    ordered = sorted(candles, key=lambda candle: candle.open_time)
+    latest_candle = ordered[-1] if ordered else None
+    result_time = _parse_dt(item.get("result_time_utc"))
+    box_end_time = result_time or (latest_candle.close_time if latest_candle else _naive(signal.signal_timestamp))
+    return {
+        "market": "BINANCE_USDS_M_FUTURES",
+        "price_source": "local closed futures candles",
+        "display_interval": "15m_closed_plus_1m_tail",
+        "candle_count": len(ordered),
+        "signal_time": signal.signal_timestamp,
+        "signal_time_wib": _wib_string(signal.signal_timestamp),
+        "result_time": result_time,
+        "result_time_wib": _wib_string(result_time),
+        "box_end_time": box_end_time,
+        "direction": signal.direction,
+        "result_status": item.get("result_status"),
+        "entry": item.get("entry"),
+        "stop_loss": item.get("stop_loss"),
+        "take_profit": item.get("take_profit"),
+        "latest_price": item.get("exit_price"),
+        "latest_candle_time": latest_candle.close_time if latest_candle else None,
+        "candles": [
+            {
+                "open_time": candle.open_time,
+                "close_time": candle.close_time,
+                "open": candle.open,
+                "high": candle.high,
+                "low": candle.low,
+                "close": candle.close,
+                "volume": candle.volume,
+                "source_interval": candle.source_interval,
+            }
+            for candle in ordered
+        ],
+    }
 
 
 def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | None]:

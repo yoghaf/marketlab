@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-16",
+    version: "LAB-50",
+    title: "Signal Entry Price Evidence Chart",
+    status: "LIVE",
+    area: "Signal audit UX",
+    summary: "Menambahkan chart candle futures sebagai barang bukti visual untuk setiap signal open maupun closed.",
+    changes: [
+      "Signal Detail sekarang memuat Lightweight Charts dengan candle futures lokal di sekitar waktu signal.",
+      "Garis Entry, SL, dan TP tampil langsung pada price scale; zona target berwarna hijau dan zona risiko berwarna merah.",
+      "Marker ENTRY dan result TP/SL ditampilkan pada candle terdekat, sedangkan posisi open memperpanjang box sampai candle futures terbaru.",
+      "Tooltip OHLC memakai waktu WIB dan menjaga presisi harga token bernilai kecil.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, evaluator TP/SL, threshold, atau execution."
+    ],
+    impact: "Setiap signal sekarang bisa diaudit secara visual: kapan entry terjadi, bagaimana harga bergerak, dan apakah jalurnya benar-benar menyentuh TP atau SL.",
+    links: [
+      { href: "/scanner", label: "Open Radar" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-16",
     version: "LAB-49",
     title: "Signal Misidentification Audit",
     status: "LIVE",

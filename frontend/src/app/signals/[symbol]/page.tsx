@@ -4,6 +4,7 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
 import { SectionCard } from "@/components/SectionCard";
+import { SignalPriceChart } from "@/components/SignalPriceChart";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SignalDetailResponse, fetchJson, fmtNumber, fmtPrice, fmtTime } from "@/lib/api";
 import { labelFor } from "@/lib/labels";
@@ -113,6 +114,13 @@ export default async function SignalDetailPage({
         <MetricCard label="Realistic exit" value={fmtPrice(item.realistic_exit_price)} helper={labelFor(item.realistic_result_status || item.result_status)} />
         <MetricCard label="Fill quality" value={labelFor(item.realistic_fill_quality || "FILL_UNKNOWN")} helper={`Cost ${fmtSigned(item.realistic_cost_r_estimate)}R`} tone={fillTone(item.realistic_fill_quality)} />
       </section>
+
+      <SectionCard
+        title="Futures price evidence"
+        description="Candle futures nyata di sekitar signal. Box hijau menunjukkan area entry ke TP; box merah menunjukkan area entry ke SL. Posisi open bergerak sampai candle terbaru, posisi closed berhenti pada waktu result."
+      >
+        <SignalPriceChart chartData={data.chart} />
+      </SectionCard>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Forward data" value={freshnessLabel(item.result_status)} helper={item.stale_reason || "Candle futures lokal dipakai untuk TP/SL paper-live"} tone={freshnessTone(item.result_status)} />
