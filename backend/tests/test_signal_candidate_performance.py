@@ -11,6 +11,7 @@ from app.models.market import FuturesKline1m, MarketlabActiveUniverse, SignalFor
 from app.services.signal_candidate_performance import (
     FilterStudySpec,
     SignalCandidatePerformanceService,
+    _mid_short_sl_failure_classification,
     mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
 )
@@ -1156,6 +1157,7 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
             ("tp-direct", "TPUSDT", base_time + timedelta(minutes=30), [("101", "84", "86")]),
         ]
         for signal_id, symbol, signal_time, candles in rows:
+            taker_sell = "0.40" if signal_id == "tp-direct" else "0.60"
             db.add(
                 _signal(
                     signal_id,
@@ -1167,7 +1169,12 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
                     "110",
                     "85",
                     timeframe="1h",
-                    evidence={"futures_spread_pct": "0.01", "range_ratio_vs_atr": "1.00"},
+                    evidence={
+                        "futures_spread_pct": "0.01",
+                        "range_ratio_vs_atr": "1.00",
+                        "kline_taker_sell_ratio": taker_sell,
+                        "kline_taker_buy_ratio": str(Decimal("1") - Decimal(taker_sell)),
+                    },
                 )
             )
             for index, (high, low, close) in enumerate(candles):
@@ -1201,8 +1208,88 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
         assert path_rows["TP_DIRECT"]["tp_count"] == 1
         sl_items = {item["symbol"]: item for item in payload["latest_sl_signals"]}
         assert sl_items["SLTPUSDT"]["after_sl_would_hit_tp"] is True
+        assert sl_items["SLTPUSDT"]["after_sl_would_hit_tp_within_4h"] is True
+        assert sl_items["SLTPUSDT"]["failure_primary_cause"] == "STOP_TOO_TIGHT"
         assert sl_items["NEARUSDT"]["tp_near_before_sl"] is True
+        assert sl_items["NEARUSDT"]["failure_primary_cause"] == "TARGET_TOO_FAR"
+        cause_rows = {row["cause"]: row for row in payload["sl_failure_cause_rows"]}
+        assert cause_rows["STOP_TOO_TIGHT"]["sl_count"] == 1
+        assert cause_rows["TARGET_TOO_FAR"]["sl_count"] == 1
+        assert payload["sl_failure_cause_summary"]["classified_sl_count"] == 2
+        assert payload["sl_failure_cause_summary"]["unresolved_sl_count"] == 0
         assert payload["improvement_candidates"]
+
+        filtered = SignalCandidatePerformanceService(db).mid_short_1h_failure_anatomy(
+            position_lock=False,
+            base_filter="TAKER_SELL_GE_52",
+            min_sample=1,
+            limit=10,
+        )
+        assert filtered["summary"]["source_before_base_filter_count"] == 3
+        assert filtered["summary"]["source_count"] == 2
+        assert filtered["summary"]["sl_count"] == 2
+        assert filtered["base_filter"]["filter_id"] == "TAKER_SELL_GE_52"
+
+
+def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:
+    base = {
+        "result_status": "SL_HIT",
+        "after_sl_would_hit_tp_within_4h": False,
+        "tp_near_before_sl": False,
+        "first_hit_candle_index": 3,
+        "mfe_before_first_hit_r": Decimal("0.40"),
+        "mfe_r": Decimal("0.40"),
+        "mae_r": Decimal("-1.10"),
+        "rr": Decimal("1.5"),
+        "direction_15m": "CORRECT_DIRECTION",
+        "direction_1h": "CORRECT_DIRECTION",
+        "direction_2h": "CORRECT_DIRECTION",
+        "btc_1h_regime": "CHOPPY_REGIME",
+        "eth_1h_regime": "CHOPPY_REGIME",
+        "evidence_snapshot": {"range_ratio_vs_atr": Decimal("1.0")},
+    }
+
+    regime = _mid_short_sl_failure_classification(
+        {
+            **base,
+            "direction_1h": "WRONG_DIRECTION",
+            "btc_1h_regime": "BULLISH_REGIME",
+        }
+    )
+    late = _mid_short_sl_failure_classification(
+        {
+            **base,
+            "first_hit_candle_index": 1,
+            "evidence_snapshot": {"range_ratio_vs_atr": Decimal("1.8")},
+        }
+    )
+    wrong = _mid_short_sl_failure_classification(
+        {
+            **base,
+            "direction_1h": "WRONG_DIRECTION",
+            "direction_2h": "WRONG_DIRECTION",
+            "mae_r": Decimal("-1.60"),
+        }
+    )
+    no_followthrough = _mid_short_sl_failure_classification(
+        {
+            **base,
+            "direction_15m": "FLAT",
+            "direction_1h": "FLAT",
+            "direction_2h": "FLAT",
+            "mfe_before_first_hit_r": Decimal("0.10"),
+            "mfe_r": Decimal("0.10"),
+        }
+    )
+
+    assert regime["failure_primary_cause"] == "REGIME_CONFLICT"
+    assert "WRONG_DIRECTION" not in regime["failure_contributors"]
+    assert late["failure_primary_cause"] == "LATE_ENTRY"
+    assert late["entry_overextended_bucket"] == "RANGE_OVEREXTENDED"
+    assert wrong["failure_primary_cause"] == "WRONG_DIRECTION"
+    assert wrong["reverse_clean_proxy"] is True
+    assert no_followthrough["failure_primary_cause"] == "NO_FOLLOWTHROUGH"
+    assert no_followthrough["failure_evidence_strength"] == "PATH_SUPPORTED"
 
 
 def test_mid_short_1h_second_filter_shadow_compares_against_shadow_pass_baseline() -> None:

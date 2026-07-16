@@ -8,6 +8,7 @@ import {
   MidShortFailureAnatomyResponse,
   MidShortFailureBucketRow,
   MidShortFailureImprovementCandidate,
+  MidShortSlFailureCauseRow,
   SignalPerformanceItem,
   SignalQualityEvidenceField,
   fetchJson,
@@ -27,12 +28,14 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
   const shadowStatus = firstParam(params.shadow_status) || "SHADOW_PASS";
+  const baseFilter = firstParam(params.base_filter) || "TAKER_SELL_GE_52";
   const minSample = normalizeNumber(firstParam(params.min_sample), 20, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 50, 10, 150);
   const query = new URLSearchParams({
     include_watch_only: String(includeWatchOnly),
     position_lock: String(positionLock),
     shadow_status: shadowStatus,
+    base_filter: baseFilter,
     min_sample: String(minSample),
     limit: String(limit)
   });
@@ -52,9 +55,9 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
   return (
     <div className="space-y-5">
       <PageHeader
-        title="MID_SHORT 1h Failure Anatomy"
+        title="MID_SHORT 1h Direction Failure Lab"
         badge="READ-ONLY RESEARCH"
-        subtitle="Bedah kenapa MID_SHORT 1h SHADOW_PASS masih kena SL: salah arah, stop dulu lalu target, hampir target lalu balik stop, regime BTC/ETH, evidence conflict, symbol, dan jam WIB. Ini tidak mengubah rule live."
+        subtitle="Mengklasifikasikan setiap SL sebagai salah arah, entry terlambat, stop terlalu dekat, target terlalu jauh, konflik regime, atau tidak ada follow-through. Diagnosis memakai jalur candle futures nyata dan tidak mengubah rule live."
         updatedAt={fmtTime(data?.generated_at_utc)}
       />
 
@@ -70,16 +73,25 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
       ) : (
         <>
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="Scope sample" value={summary?.source_count ?? 0} helper={`${summary?.closed_count ?? 0} closed`} />
+            <MetricCard label="Scope sample" value={summary?.source_count ?? 0} helper={`${summary?.closed_count ?? 0} closed / ${summary?.source_before_base_filter_count ?? 0} before base filter`} />
             <MetricCard label="TP / SL" value={`${summary?.tp_count ?? 0} / ${summary?.sl_count ?? 0}`} helper={`${summary?.open_count ?? 0} open`} />
-            <MetricCard label="SL lalu target" value={summary?.sl_then_would_tp_count ?? 0} helper="Stop dulu, setelah itu target tersentuh" tone="warn" />
-            <MetricCard label="Nyaris target lalu SL" value={summary?.tp_near_then_sl_count ?? 0} helper="MFE >= +0.75R sebelum SL" tone="warn" />
+            <MetricCard
+              label="Penyebab dominan"
+              value={labelFor(summary?.dominant_failure_cause || "MIXED_UNRESOLVED")}
+              helper={`${summary?.dominant_failure_count ?? 0} SL / ${fmtNumber(summary?.dominant_failure_share_pct)}%`}
+              tone="warn"
+            />
+            <MetricCard
+              label="SL terklasifikasi"
+              value={`${summary?.classified_sl_count ?? 0}/${summary?.sl_count ?? 0}`}
+              helper={`${summary?.unresolved_sl_count ?? 0} belum jelas`}
+            />
             <MetricCard label="Salah arah 1h" value={summary?.wrong_direction_1h_count ?? 0} helper={`${summary?.correct_direction_1h_count ?? 0} benar arah`} tone="bad" />
             <MetricCard label="Realistic R" value={`${fmtSigned(data?.baseline.realistic_total_r_closed)}R`} helper={summary?.read || "-"} tone={Number(data?.baseline.realistic_total_r_closed || 0) >= 0 ? "good" : "bad"} />
           </section>
 
           <SectionCard title="Failure controls" description="Filter ini hanya mengubah audit. Tidak mengubah Signal Factory atau scanner.">
-            <form className="grid gap-3 p-4 text-sm md:grid-cols-5">
+            <form className="grid gap-3 p-4 text-sm md:grid-cols-3 xl:grid-cols-6">
               <label className="grid gap-1">
                 <span className="font-semibold text-slate-600">Shadow status</span>
                 <select className="rounded border border-line px-3 py-2" name="shadow_status" defaultValue={shadowStatus}>
@@ -87,6 +99,13 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
                   <option value="SHADOW_FAIL">SHADOW_FAIL</option>
                   <option value="SHADOW_UNAVAILABLE">SHADOW_UNAVAILABLE</option>
                   <option value="ALL">ALL</option>
+                </select>
+              </label>
+              <label className="grid gap-1">
+                <span className="font-semibold text-slate-600">Base research scope</span>
+                <select className="rounded border border-line px-3 py-2" name="base_filter" defaultValue={baseFilter}>
+                  <option value="TAKER_SELL_GE_52">Taker sell &gt;= 52%</option>
+                  <option value="ALL">All selected shadow rows</option>
                 </select>
               </label>
               <label className="grid gap-1">
@@ -112,6 +131,13 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
                 <button className="rounded border border-line bg-white px-4 py-2 font-semibold hover:bg-field" type="submit">Apply</button>
               </div>
             </form>
+          </SectionCard>
+
+          <SectionCard
+            title="SL root-cause classification"
+            description="Setiap SL mendapat satu primary cause agar total tidak dihitung ganda. Contributor tambahan tetap disimpan pada detail signal. Label ini hipotesis riset, bukan bukti kausal final."
+          >
+            <CauseTable rows={data?.sl_failure_cause_rows || []} />
           </SectionCard>
 
           <SectionCard title="Outcome path anatomy" description="Ini menjawab apakah SL karena arah salah, stop terlalu dekat, atau harga sempat benar dulu.">
@@ -145,8 +171,8 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
           </SectionCard>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="Latest SL samples" description="Klik symbol untuk buka detail signal.">
-              <SignalTable items={data?.latest_sl_signals || []} />
+            <SectionCard title="Latest SL diagnostics" description="Primary cause, contributor, dan chart Entry/SL/TP tersedia pada detail signal.">
+              <SignalTable items={data?.latest_sl_signals || []} showFailureCause />
             </SectionCard>
             <SectionCard title="Latest TP samples" description="Pembanding signal yang target duluan.">
               <SignalTable items={data?.latest_tp_signals || []} />
@@ -202,6 +228,53 @@ function BucketTable({ rows, showDimension = false }: { rows: MidShortFailureBuc
           {!rows.length && (
             <tr>
               <td colSpan={showDimension ? 9 : 8} className="py-8 text-center text-sm text-slate-500">No rows</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CauseTable({ rows }: { rows: MidShortSlFailureCauseRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Primary cause</th>
+            <th>SL / share</th>
+            <th>MFE / MAE before SL</th>
+            <th>Median hit candle</th>
+            <th>Path evidence</th>
+            <th>Supporting flags</th>
+            <th>Next shadow research</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.cause}>
+              <td><StatusBadge value={row.cause} /></td>
+              <td className="font-semibold">{row.sl_count} / {fmtNumber(row.sl_share_pct)}%</td>
+              <td>{fmtSigned(row.median_mfe_before_sl_r)}R / {fmtSigned(row.median_mae_before_sl_r)}R</td>
+              <td>{fmtNumber(row.median_first_hit_candle_index)}</td>
+              <td>
+                <StatusBadge value={row.evidence_strength} />
+                <div className="mt-1 text-xs text-slate-500">
+                  After-SL TP {row.after_sl_target_within_4h_count}; near-TP {row.tp_near_before_sl_count}
+                </div>
+              </td>
+              <td className="text-xs text-slate-600">
+                <div>Reverse clean: {row.reverse_clean_count}</div>
+                <div>Regime conflict: {row.regime_conflict_count}</div>
+                <div>Overextended: {row.overextended_count}</div>
+              </td>
+              <td className="max-w-lg text-sm text-slate-600">{row.research_action || "-"}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr>
+              <td colSpan={7} className="py-8 text-center text-sm text-slate-500">Belum ada SL untuk diklasifikasikan.</td>
             </tr>
           )}
         </tbody>
@@ -326,7 +399,7 @@ function EvidenceTable({ rows }: { rows: SignalQualityEvidenceField[] }) {
   );
 }
 
-function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
+function SignalTable({ items, showFailureCause = false }: { items: SignalPerformanceItem[]; showFailureCause?: boolean }) {
   return (
     <div className="table-wrap">
       <table className="ops-table">
@@ -334,7 +407,7 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
           <tr>
             <th>Time WIB</th>
             <th>Symbol</th>
-            <th>Path</th>
+            <th>{showFailureCause ? "Diagnosis" : "Path"}</th>
             <th>Result</th>
             <th>Realistic R</th>
             <th>MFE / MAE</th>
@@ -349,7 +422,20 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
               <tr key={raw.signal_id}>
                 <td>{raw.signal_time_wib || fmtTime(raw.signal_timestamp)}</td>
                 <td className="font-semibold text-blue-700">{raw.symbol}</td>
-                <td><StatusBadge value={String(item.path_type || "-")} /></td>
+                <td className="max-w-md">
+                  {showFailureCause ? (
+                    <>
+                      <StatusBadge value={String(item.failure_primary_cause || "MIXED_UNRESOLVED")} />
+                      <div className="mt-1 text-xs text-slate-600">{String(item.failure_cause_reason || "-")}</div>
+                      <div className="mt-1 text-xs text-slate-500">Path: {labelFor(String(item.path_type || "-"))}</div>
+                      {Array.isArray(item.failure_contributors) && item.failure_contributors.length ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Contributors: {item.failure_contributors.map((value) => labelFor(String(value))).join(", ")}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : <StatusBadge value={String(item.path_type || "-")} />}
+                </td>
                 <td><StatusBadge value={raw.result_status} /></td>
                 <td>{fmtSigned(raw.realistic_realized_r ?? raw.realistic_unrealized_r)}R</td>
                 <td>{fmtSigned(raw.mfe_r)} / {fmtSigned(raw.mae_r)}</td>
@@ -358,7 +444,14 @@ function SignalTable({ items }: { items: SignalPerformanceItem[] }) {
                   <div>SL {fmtPrice(raw.stop_loss)}</div>
                   <div>TP {fmtPrice(raw.take_profit)}</div>
                 </td>
-                <td><Link className="font-semibold text-blue-700 hover:underline" href={`/signals/${raw.signal_id}`}>Open</Link></td>
+                <td>
+                  <Link
+                    className="font-semibold text-blue-700 hover:underline"
+                    href={`/signals/${encodeURIComponent(raw.symbol)}?timeframe=${encodeURIComponent(raw.timeframe)}&signal_id=${encodeURIComponent(raw.signal_id)}`}
+                  >
+                    Open chart
+                  </Link>
+                </td>
               </tr>
             );
           })}

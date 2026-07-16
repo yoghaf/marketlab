@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-16",
+    version: "LAB-51",
+    title: "MID_SHORT 1h Direction Failure Classification",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Memperdalam Failure Anatomy dengan satu diagnosis utama untuk setiap SL MID_SHORT 1h dan contributor evidence yang tetap dapat diaudit.",
+    changes: [
+      "Setiap SL diklasifikasikan menjadi STOP_TOO_TIGHT, TARGET_TOO_FAR, REGIME_CONFLICT, LATE_ENTRY, WRONG_DIRECTION, NO_FOLLOWTHROUGH, atau MIXED_UNRESOLVED.",
+      "Default halaman mengikuti subset riset terakhir MID_SHORT 1h SHADOW_PASS + taker sell >= 52%; seluruh SHADOW_PASS tetap tersedia sebagai pembanding.",
+      "Klasifikasi memakai urutan hit candle futures, MFE/MAE sebelum SL, target yang tercapai setelah stop dalam 4h, arah 15m/1h/2h, reverse proxy, extension entry, dan regime BTC/ETH.",
+      "Primary cause dibuat saling eksklusif agar total SL tidak dihitung ganda; contributor tambahan tetap ditampilkan pada sample signal.",
+      "Tabel root-cause menampilkan share SL, kekuatan evidence, supporting flags, dan eksperimen shadow berikutnya untuk tiap penyebab.",
+      "Tautan sample SL sekarang membuka Signal Detail yang tepat beserta chart Entry/SL/TP.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL, threshold, atau execution."
+    ],
+    impact: "Kita dapat menentukan apakah perbaikan MID_SHORT 1h harus menyentuh arah, timing entry, stop, target, regime filter, atau follow-through tanpa menebak threshold baru.",
+    links: [
+      { href: "/mid-short-failure-anatomy", label: "Direction Failure Lab" },
+      { href: "/mid-short-filter-combination-study", label: "MID_SHORT Combo Study" },
+      { href: "/signal-performance?stage=MID_SHORT&timeframe=1h", label: "MID_SHORT Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-16",
     version: "LAB-50",
     title: "Signal Entry Price Evidence Chart",
     status: "LIVE",

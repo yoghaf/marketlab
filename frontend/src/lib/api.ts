@@ -1608,6 +1608,23 @@ export type MidShortFailureImprovementCandidate = OneHourWalkForwardPerf & {
   read: string;
 };
 
+export type MidShortSlFailureCauseRow = {
+  cause: string;
+  label: string;
+  sl_count: number;
+  sl_share_pct?: string | number | null;
+  median_mfe_before_sl_r?: string | number | null;
+  median_mae_before_sl_r?: string | number | null;
+  median_first_hit_candle_index?: string | number | null;
+  after_sl_target_within_4h_count: number;
+  tp_near_before_sl_count: number;
+  reverse_clean_count: number;
+  regime_conflict_count: number;
+  overextended_count: number;
+  evidence_strength: string;
+  research_action?: string | null;
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -1617,6 +1634,7 @@ export type MidShortFailureAnatomyResponse = {
     stage: string;
     timeframe: string;
     shadow_status: string;
+    base_filter: string;
     min_sample: number;
     limit: number;
   };
@@ -1634,10 +1652,16 @@ export type MidShortFailureAnatomyResponse = {
     expression: string;
     status_meaning: string;
   };
+  base_filter: {
+    filter_id: string;
+    label: string;
+    expression: string;
+  };
   latest_evaluation_candle_time?: string | null;
   latest_futures_15m_close_time?: string | null;
   skipped_by_position_lock: Record<string, number>;
   summary: {
+    source_before_base_filter_count: number;
     source_count: number;
     closed_count: number;
     tp_count: number;
@@ -1649,9 +1673,26 @@ export type MidShortFailureAnatomyResponse = {
     sl_direct_count: number;
     wrong_direction_1h_count: number;
     correct_direction_1h_count: number;
+    classified_sl_count: number;
+    unresolved_sl_count: number;
+    dominant_failure_cause?: string | null;
+    dominant_failure_count: number;
+    dominant_failure_share_pct?: string | number | null;
     read: string;
   };
   baseline: OneHourWalkForwardPerf;
+  sl_failure_cause_summary: {
+    sl_count: number;
+    classified_sl_count: number;
+    unresolved_sl_count: number;
+    classification_coverage_pct?: string | number | null;
+    dominant_failure_cause?: string | null;
+    dominant_failure_count: number;
+    dominant_failure_share_pct?: string | number | null;
+    cause_count: number;
+    method: string;
+  };
+  sl_failure_cause_rows: MidShortSlFailureCauseRow[];
   mfe_mae_summary: Record<string, {
     sample_count: number;
     median_mfe_r?: string | number | null;

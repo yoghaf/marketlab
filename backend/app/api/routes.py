@@ -547,6 +547,7 @@ def signal_candidates_mid_short_1h_failure_anatomy(
     include_watch_only: bool = False,
     position_lock: bool = True,
     shadow_status: str = "SHADOW_PASS",
+    base_filter: str = "ALL",
     min_sample: int = 20,
     limit: int = 50,
     db: Session = Depends(get_db),
@@ -554,10 +555,14 @@ def signal_candidates_mid_short_1h_failure_anatomy(
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
     normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
+    normalized_base_filter = (base_filter or "ALL").upper()
+    if normalized_base_filter not in {"ALL", "TAKER_SELL_GE_52"}:
+        normalized_base_filter = "ALL"
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
         normalized_shadow_status,
+        normalized_base_filter,
         normalized_min_sample,
         normalized_limit,
     )
@@ -574,6 +579,7 @@ def signal_candidates_mid_short_1h_failure_anatomy(
             include_watch_only=include_watch_only,
             position_lock=position_lock,
             shadow_status=normalized_shadow_status,
+            base_filter=normalized_base_filter,
             min_sample=normalized_min_sample,
             limit=normalized_limit,
         )

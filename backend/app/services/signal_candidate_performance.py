@@ -451,6 +451,7 @@ class SignalCandidatePerformanceService:
         include_watch_only: bool = False,
         position_lock: bool = True,
         shadow_status: str = "SHADOW_PASS",
+        base_filter: str = "ALL",
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
@@ -460,11 +461,22 @@ class SignalCandidatePerformanceService:
             position_lock=position_lock,
             shadow_status=shadow_status,
         )
+        source_before_base_filter_count = len(annotated)
+        normalized_base_filter = (base_filter or "ALL").upper()
+        if normalized_base_filter == "TAKER_SELL_GE_52":
+            annotated = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        elif normalized_base_filter != "ALL":
+            normalized_base_filter = "ALL"
         baseline = _walk_forward_perf(annotated)
         closed = [item for item in annotated if item.get("result_status") in COMPLETED_OUTCOMES]
         tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
         sl_items = [item for item in closed if item.get("result_status") == "SL_HIT"]
         both_items = [item for item in closed if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"]
+        sl_failure_cause_rows = _mid_short_sl_failure_cause_rows(sl_items)
+        sl_failure_cause_summary = _mid_short_sl_failure_cause_summary(
+            sl_items,
+            rows=sl_failure_cause_rows,
+        )
         improvement_candidates = _mid_short_failure_improvement_candidates(
             annotated,
             baseline=baseline,
@@ -480,6 +492,7 @@ class SignalCandidatePerformanceService:
                 "stage": "MID_SHORT",
                 "timeframe": "1h",
                 "shadow_status": normalized_shadow_status,
+                "base_filter": normalized_base_filter,
                 "min_sample": min_sample,
                 "limit": limit,
             },
@@ -497,10 +510,16 @@ class SignalCandidatePerformanceService:
                 "expression": MID_SHORT_1H_QUALITY_SHADOW_FILTER_EXPRESSION,
                 "status_meaning": "Default scope is SHADOW_PASS, meaning logged V2 MID_SHORT 1h signals that matched the read-only quality gate.",
             },
+            "base_filter": {
+                "filter_id": normalized_base_filter,
+                "label": "Taker sell >= 52%" if normalized_base_filter == "TAKER_SELL_GE_52" else "All shadow status rows",
+                "expression": "kline_taker_sell_ratio >= 0.52" if normalized_base_filter == "TAKER_SELL_GE_52" else "no additional base filter",
+            },
             "latest_evaluation_candle_time": latest_candle_time,
             "latest_futures_15m_close_time": latest_candle_time,
             "skipped_by_position_lock": dict(skipped),
             "summary": {
+                "source_before_base_filter_count": source_before_base_filter_count,
                 "source_count": len(annotated),
                 "closed_count": len(closed),
                 "tp_count": len(tp_items),
@@ -512,9 +531,16 @@ class SignalCandidatePerformanceService:
                 "sl_direct_count": sum(1 for item in sl_items if item.get("path_type") == "SL_DIRECT"),
                 "wrong_direction_1h_count": sum(1 for item in annotated if item.get("direction_1h") == "WRONG_DIRECTION"),
                 "correct_direction_1h_count": sum(1 for item in annotated if item.get("direction_1h") == "CORRECT_DIRECTION"),
+                "classified_sl_count": sl_failure_cause_summary["classified_sl_count"],
+                "unresolved_sl_count": sl_failure_cause_summary["unresolved_sl_count"],
+                "dominant_failure_cause": sl_failure_cause_summary["dominant_failure_cause"],
+                "dominant_failure_count": sl_failure_cause_summary["dominant_failure_count"],
+                "dominant_failure_share_pct": sl_failure_cause_summary["dominant_failure_share_pct"],
                 "read": _mid_short_failure_summary_read(annotated, min_sample=min_sample),
             },
             "baseline": baseline,
+            "sl_failure_cause_summary": sl_failure_cause_summary,
+            "sl_failure_cause_rows": sl_failure_cause_rows,
             "mfe_mae_summary": _mid_short_mfe_mae_summary(annotated),
             "outcome_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
             "direction_rows": _direction_correctness_rows(annotated, baseline=baseline, min_sample=min_sample),
@@ -532,6 +558,7 @@ class SignalCandidatePerformanceService:
             "guardrails": [
                 "Failure anatomy only reads logged V2 MID_SHORT 1h signals and local futures candles.",
                 "Path labels explain why TP/SL happened; they do not change Signal Factory rules.",
+                "Primary failure causes are mutually exclusive research hypotheses, not proof of market causality.",
                 "Improvement candidates are research-only filters, not live scanner rules.",
                 "No TP/SL formula, execution, order, leverage, or position sizing is created.",
             ],
@@ -4604,12 +4631,13 @@ def _annotate_mid_short_failure_anatomy(
     for item in items:
         path = _mid_short_path_anatomy(item, candles.get(str(item.get("symbol") or ""), []))
         regime = _mid_short_regime_context(item, btc_candles=btc_candles, eth_candles=eth_candles)
-        enriched = {
+        base = {
             **item,
             **path,
             **regime,
             "wib_session": _wib_session(_parse_dt(item.get("signal_timestamp"))),
         }
+        enriched = {**base, **_mid_short_sl_failure_classification(base)}
         annotated.append(enriched)
     return annotated
 
@@ -4676,6 +4704,12 @@ def _mid_short_path_anatomy(item: dict[str, Any], candles: list[PerfCandle]) -> 
                 after_sl_tp_time = candle.close_time
                 break
 
+    after_sl_would_hit_tp_within_4h = bool(
+        after_sl_would_hit_tp
+        and after_sl_tp_time is not None
+        and after_sl_tp_time <= signal_time + timedelta(hours=4)
+    )
+
     horizon_returns = _horizon_returns(item, future)
     direction_labels = {
         f"direction_{label}": _direction_label(direction, value)
@@ -4703,6 +4737,7 @@ def _mid_short_path_anatomy(item: dict[str, Any], candles: list[PerfCandle]) -> 
         "mae_before_first_hit_r": mae_before_first_hit,
         "tp_near_before_sl": tp_near_before_sl,
         "after_sl_would_hit_tp": after_sl_would_hit_tp,
+        "after_sl_would_hit_tp_within_4h": after_sl_would_hit_tp_within_4h,
         "after_sl_tp_time_utc": after_sl_tp_time,
         "after_sl_tp_time_wib": _wib_string(after_sl_tp_time),
         **{f"return_{label}_pct": value for label, value in horizon_returns.items()},
@@ -4721,6 +4756,7 @@ def _empty_path_anatomy(reason: str) -> dict[str, Any]:
         "mae_before_first_hit_r": None,
         "tp_near_before_sl": False,
         "after_sl_would_hit_tp": False,
+        "after_sl_would_hit_tp_within_4h": False,
         "after_sl_tp_time_utc": None,
         "after_sl_tp_time_wib": None,
         "return_15m_pct": None,
@@ -4886,6 +4922,178 @@ def _mid_short_failure_summary_read(items: list[dict[str, Any]], *, min_sample: 
     if near_tp > 0:
         return "SL_OFTEN_AFTER_PARTIAL_FAVORABLE_MOVE"
     return "SL_MIXED_CAUSES"
+
+
+SL_FAILURE_RESEARCH_ACTIONS = {
+    "STOP_TOO_TIGHT": "Uji shadow stop ATR yang sedikit lebih lebar dengan target dan biaya tetap sama.",
+    "TARGET_TOO_FAR": "Uji band target atau profit-protection secara shadow; jangan mengubah TP live dulu.",
+    "REGIME_CONFLICT": "Uji filter shadow yang menahan short saat BTC atau ETH 1h bullish.",
+    "LATE_ENTRY": "Uji batas extension dan entry-delay setelah impuls turun yang sudah terlalu jauh.",
+    "WRONG_DIRECTION": "Perkuat evidence arah dan counterfactual reverse; jangan membalik signal secara otomatis.",
+    "NO_FOLLOWTHROUGH": "Minta konfirmasi sell follow-through tambahan sebelum menaikkan candidate menjadi signal.",
+    "MIXED_UNRESOLVED": "Kumpulkan sample dan bedah chart; belum ada satu penyebab dominan yang terukur.",
+}
+
+
+def _mid_short_sl_failure_classification(item: dict[str, Any]) -> dict[str, Any]:
+    if str(item.get("result_status") or "") != "SL_HIT":
+        return {
+            "failure_primary_cause": "NOT_SL",
+            "failure_cause_reason": None,
+            "failure_contributors": [],
+            "failure_evidence_strength": "NOT_APPLICABLE",
+            "failure_research_action": None,
+            "reverse_proxy_bucket": None,
+            "reverse_clean_proxy": False,
+            "entry_overextended_bucket": _entry_overextended(item),
+        }
+
+    reverse = _reverse_proxy(item)
+    entry_bucket = _entry_overextended(item)
+    direction_15m = str(item.get("direction_15m") or "")
+    direction_1h = str(item.get("direction_1h") or "")
+    direction_2h = str(item.get("direction_2h") or "")
+    first_hit_index = int(item.get("first_hit_candle_index") or 0)
+    mfe_before_hit = _decimal_or_none_any(item.get("mfe_before_first_hit_r"))
+    regime_conflict = _mid_short_btc_eth_pull_up(item)
+    persistent_wrong = direction_1h == "WRONG_DIRECTION" and direction_2h == "WRONG_DIRECTION"
+    late_entry = entry_bucket != "ENTRY_EXTENSION_OK" and (
+        first_hit_index <= 2 or direction_15m == "WRONG_DIRECTION"
+    )
+    no_followthrough = (
+        (mfe_before_hit is not None and mfe_before_hit < Decimal("0.25"))
+        or direction_15m in {"WRONG_DIRECTION", "FLAT"}
+    )
+
+    contributors: list[str] = []
+    if item.get("after_sl_would_hit_tp_within_4h"):
+        contributors.append("STOP_TOO_TIGHT")
+    if item.get("tp_near_before_sl"):
+        contributors.append("TARGET_TOO_FAR")
+    if regime_conflict:
+        contributors.append("REGIME_CONFLICT")
+    if late_entry:
+        contributors.append("LATE_ENTRY")
+    if reverse.get("reverse_clean_proxy") or persistent_wrong:
+        contributors.append("WRONG_DIRECTION")
+    if no_followthrough:
+        contributors.append("NO_FOLLOWTHROUGH")
+
+    if item.get("after_sl_would_hit_tp_within_4h"):
+        cause = "STOP_TOO_TIGHT"
+        reason = "SL tersentuh lebih dulu, tetapi target awal kemudian tersentuh dalam jalur 4h yang sama."
+        strength = "PATH_CONFIRMED"
+    elif item.get("tp_near_before_sl"):
+        cause = "TARGET_TOO_FAR"
+        reason = "Harga sempat bergerak minimal +0.75R ke arah short sebelum berbalik dan menyentuh SL."
+        strength = "PATH_CONFIRMED"
+    elif regime_conflict and direction_1h == "WRONG_DIRECTION":
+        cause = "REGIME_CONFLICT"
+        reason = "Short bergerak salah arah saat BTC atau ETH berada dalam regime bullish 1h."
+        strength = "CONTEXT_SUPPORTED"
+    elif late_entry:
+        cause = "LATE_ENTRY"
+        reason = f"Entry sudah berada pada bucket {entry_bucket} dan bergerak adverse dalam dua candle pertama."
+        strength = "EVIDENCE_SUPPORTED"
+    elif reverse.get("reverse_clean_proxy") or persistent_wrong:
+        cause = "WRONG_DIRECTION"
+        reason = "Arah 1h/2h tetap melawan short atau jalur reverse mencapai target proxy tanpa stop proxy."
+        strength = "PATH_SUPPORTED"
+    elif no_followthrough:
+        cause = "NO_FOLLOWTHROUGH"
+        reason = "Gerak favorable sebelum SL kurang dari +0.25R atau candle awal tidak melanjutkan tekanan jual."
+        strength = "PATH_SUPPORTED"
+    else:
+        cause = "MIXED_UNRESOLVED"
+        reason = "Tidak ada satu pola path, regime, extension, atau reverse yang cukup dominan."
+        strength = "UNRESOLVED"
+
+    return {
+        "failure_primary_cause": cause,
+        "failure_cause_reason": reason,
+        "failure_contributors": contributors,
+        "failure_evidence_strength": strength,
+        "failure_research_action": SL_FAILURE_RESEARCH_ACTIONS[cause],
+        "reverse_proxy_bucket": reverse["bucket"],
+        "reverse_clean_proxy": reverse["reverse_clean_proxy"],
+        "reverse_mfe_r": reverse["reverse_mfe_r"],
+        "reverse_mae_r": reverse["reverse_mae_r"],
+        "entry_overextended_bucket": entry_bucket,
+    }
+
+
+def _mid_short_sl_failure_cause_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in sl_items:
+        groups[str(item.get("failure_primary_cause") or "MIXED_UNRESOLVED")].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for cause, cause_items in groups.items():
+        mfe_values = [
+            value
+            for value in (_decimal_or_none_any(item.get("mfe_before_first_hit_r")) for item in cause_items)
+            if value is not None
+        ]
+        mae_values = [
+            value
+            for value in (_decimal_or_none_any(item.get("mae_before_first_hit_r")) for item in cause_items)
+            if value is not None
+        ]
+        hit_indexes = [
+            Decimal(str(item.get("first_hit_candle_index")))
+            for item in cause_items
+            if item.get("first_hit_candle_index") is not None
+        ]
+        rows.append(
+            {
+                "cause": cause,
+                "label": cause,
+                "sl_count": len(cause_items),
+                "sl_share_pct": _pct(len(cause_items), len(sl_items)),
+                "median_mfe_before_sl_r": _median_decimal(mfe_values),
+                "median_mae_before_sl_r": _median_decimal(mae_values),
+                "median_first_hit_candle_index": _median_decimal(hit_indexes),
+                "after_sl_target_within_4h_count": sum(
+                    1 for item in cause_items if item.get("after_sl_would_hit_tp_within_4h")
+                ),
+                "tp_near_before_sl_count": sum(1 for item in cause_items if item.get("tp_near_before_sl")),
+                "reverse_clean_count": sum(1 for item in cause_items if item.get("reverse_clean_proxy")),
+                "regime_conflict_count": sum(
+                    1 for item in cause_items if "REGIME_CONFLICT" in (item.get("failure_contributors") or [])
+                ),
+                "overextended_count": sum(
+                    1
+                    for item in cause_items
+                    if item.get("entry_overextended_bucket") != "ENTRY_EXTENSION_OK"
+                ),
+                "evidence_strength": str(cause_items[0].get("failure_evidence_strength") or "UNRESOLVED"),
+                "research_action": SL_FAILURE_RESEARCH_ACTIONS.get(cause),
+            }
+        )
+    rows.sort(key=lambda row: (int(row["sl_count"]), str(row["cause"])), reverse=True)
+    return rows
+
+
+def _mid_short_sl_failure_cause_summary(
+    items: list[dict[str, Any]],
+    *,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    unresolved = sum(1 for item in sl_items if item.get("failure_primary_cause") == "MIXED_UNRESOLVED")
+    dominant = rows[0] if rows else None
+    return {
+        "sl_count": len(sl_items),
+        "classified_sl_count": len(sl_items) - unresolved,
+        "unresolved_sl_count": unresolved,
+        "classification_coverage_pct": _pct(len(sl_items) - unresolved, len(sl_items)),
+        "dominant_failure_cause": dominant.get("cause") if dominant else None,
+        "dominant_failure_count": int(dominant.get("sl_count") or 0) if dominant else 0,
+        "dominant_failure_share_pct": dominant.get("sl_share_pct") if dominant else None,
+        "cause_count": len(rows),
+        "method": "mutually_exclusive_primary_hypothesis_with_multi_label_contributors",
+    }
 
 
 def _mid_short_mfe_mae_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
