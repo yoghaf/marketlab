@@ -14,6 +14,8 @@ from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
+    _mid_short_structure_clearance_shadow_study,
+    _mid_short_support_context,
     _mid_short_sl_failure_classification,
     mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
@@ -1345,6 +1347,104 @@ def test_mid_short_lab52_counterfactual_can_lower_target_and_protect_next_candle
     assert lower_target["status"] == "TP_HIT"
     assert protected["status"] == "BREAKEVEN_PROTECTED"
     assert protected["realistic_r"] < Decimal("0")
+
+
+def test_mid_short_lab53_support_context_excludes_future_candles() -> None:
+    signal_time = datetime(2026, 1, 2, 0, 0)
+    lows = ("97", "95", "92", "94", "96")
+    candles = [
+        PerfCandle(
+            open_time=signal_time - timedelta(hours=len(lows) - index),
+            close_time=signal_time - timedelta(hours=len(lows) - index - 1),
+            open=Decimal("100"),
+            high=Decimal("102"),
+            low=Decimal(low),
+            close=Decimal("100"),
+            source_interval="1h",
+        )
+        for index, low in enumerate(lows)
+    ]
+    candles.append(
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(hours=1),
+            open=Decimal("100"),
+            high=Decimal("101"),
+            low=Decimal("80"),
+            close=Decimal("85"),
+            source_interval="1h",
+        )
+    )
+
+    context = _mid_short_support_context(
+        entry=Decimal("100"),
+        target=Decimal("85"),
+        risk=Decimal("10"),
+        signal_time=signal_time,
+        one_hour_candles=candles,
+    )
+
+    assert context["support_price_proxy"] == Decimal("92")
+    assert context["support_before_target"] is True
+    assert context["support_method"] == "CONFIRMED_SWING_LOW_1H"
+
+
+def test_mid_short_lab53_structure_clearance_study_is_shadow_only() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+
+    def item(index: int, support: Decimal | None, result: str) -> dict:
+        realized = Decimal("1.5") if result == "TP_HIT" else Decimal("-1")
+        realistic = realized - Decimal("0.05")
+        return {
+            "signal_id": f"lab53-{index}",
+            "symbol": f"S{index}USDT",
+            "signal_timestamp": start + timedelta(hours=index),
+            "signal_time_wib": f"2026-01-01 {7 + index:02d}:00:00 WIB",
+            "entry": Decimal("100"),
+            "risk": Decimal("10"),
+            "stop_loss": Decimal("110"),
+            "take_profit": Decimal("85"),
+            "rr": Decimal("1.5"),
+            "support_price_proxy": support,
+            "support_distance_r": ((Decimal("100") - support) / Decimal("10")) if support is not None else None,
+            "support_method": "CONFIRMED_SWING_LOW_1H" if support is not None else None,
+            "result_status": result,
+            "realized_r": realized,
+            "realistic_realized_r": realistic,
+            "result_time_utc": start + timedelta(hours=index + 1),
+            "failure_primary_cause": "TARGET_TOO_FAR" if result == "SL_HIT" else None,
+            "_lab52_counterfactuals": {
+                "CONTROL_LOGGED": {
+                    "status": result,
+                    "realistic_r": realistic,
+                }
+            },
+        }
+
+    items = [
+        item(0, Decimal("80"), "TP_HIT"),
+        item(1, Decimal("92"), "SL_HIT"),
+        item(2, Decimal("80"), "SL_HIT"),
+        item(3, None, "SL_HIT"),
+        item(4, Decimal("90"), "SL_HIT"),
+        item(5, Decimal("80"), "TP_HIT"),
+    ]
+
+    study = _mid_short_structure_clearance_shadow_study(items, min_sample=1)
+
+    assert study["read_only"] is True
+    assert study["not_live_signal"] is True
+    assert study["not_execution_instruction"] is True
+    assert study["summary"]["source_count"] == 6
+    assert study["summary"]["structure_clear_count"] == 3
+    assert study["summary"]["structure_blocked_count"] == 2
+    assert study["summary"]["structure_unavailable_count"] == 1
+    assert len(study["blocked_case_rows"]) == 2
+    status_rows = {row["status"]: row for row in study["status_rows"]}
+    assert status_rows["STRUCTURE_CLEAR"]["all"]["tp_count"] == 2
+    assert status_rows["STRUCTURE_BLOCKED"]["all"]["sl_count"] == 2
+    control = next(row for row in study["exit_variant_rows"] if row["config_id"] == "CONTROL_LOGGED")
+    assert control["verdict"] == "CURRENT_CONTROL"
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:

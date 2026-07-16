@@ -1709,6 +1709,49 @@ export type MidShortTargetDistanceCase = {
   target_distance_hypotheses: string[];
 };
 
+export type MidShortStructureClearanceStatusRow = {
+  status: string;
+  sample_retention_pct?: string | number | null;
+  all: OneHourWalkForwardPerf;
+  train: OneHourWalkForwardPerf;
+  validation: OneHourWalkForwardPerf;
+  read: string;
+};
+
+export type MidShortStructureExitVariantRow = {
+  config_id: string;
+  label: string;
+  risk_scale: string | number;
+  target_rr?: string | number | null;
+  protect_at_r?: string | number | null;
+  use_logged_target: boolean;
+  clear_all: MidShortCounterfactualPerf;
+  clear_train: MidShortCounterfactualPerf;
+  clear_validation: MidShortCounterfactualPerf;
+  blocked_validation: MidShortCounterfactualPerf;
+  clear_validation_avg_delta_vs_logged?: string | number | null;
+  clear_validation_avg_delta_vs_blocked?: string | number | null;
+  verdict: string;
+};
+
+export type MidShortStructureBlockedCase = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp: string;
+  signal_time_wib?: string | null;
+  entry?: string | number | null;
+  stop_loss?: string | number | null;
+  take_profit?: string | number | null;
+  rr?: string | number | null;
+  support_price_proxy?: string | number | null;
+  support_distance_r?: string | number | null;
+  support_clearance_to_target_r?: string | number | null;
+  support_method?: string | null;
+  result_status: string;
+  realistic_r?: string | number | null;
+  failure_primary_cause?: string | null;
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -1778,6 +1821,40 @@ export type MidShortFailureAnatomyResponse = {
     method: string;
   };
   sl_failure_cause_rows: MidShortSlFailureCauseRow[];
+  structure_clearance_study: {
+    study_id: string;
+    read_only: boolean;
+    not_live_signal: boolean;
+    not_execution_instruction: boolean;
+    method: string;
+    definition: {
+      structure_clear: string;
+      structure_blocked: string;
+      structure_unavailable: string;
+      live_effect: string;
+    };
+    summary: {
+      source_count: number;
+      context_available_count: number;
+      structure_clear_count: number;
+      structure_blocked_count: number;
+      structure_unavailable_count: number;
+      clear_validation_closed_count: number;
+      blocked_validation_closed_count: number;
+      validation_cutoff_utc?: string | null;
+      verdict: string;
+      recommended_action: string;
+    };
+    baseline: {
+      all: OneHourWalkForwardPerf;
+      train: OneHourWalkForwardPerf;
+      validation: OneHourWalkForwardPerf;
+    };
+    status_rows: MidShortStructureClearanceStatusRow[];
+    exit_variant_rows: MidShortStructureExitVariantRow[];
+    blocked_case_rows: MidShortStructureBlockedCase[];
+    limitations: string[];
+  };
   target_distance_study: {
     study_id: string;
     read_only: boolean;

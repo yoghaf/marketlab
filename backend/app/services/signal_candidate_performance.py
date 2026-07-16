@@ -478,6 +478,10 @@ class SignalCandidatePerformanceService:
         elif normalized_base_filter != "ALL":
             normalized_base_filter = "ALL"
         target_distance_study = _mid_short_target_distance_study(annotated, min_sample=min_sample)
+        structure_clearance_study = _mid_short_structure_clearance_shadow_study(
+            annotated,
+            min_sample=min_sample,
+        )
         for item in annotated:
             _strip_lab52_internal_item_fields(item)
         baseline = _walk_forward_perf(annotated)
@@ -556,6 +560,7 @@ class SignalCandidatePerformanceService:
             "baseline": baseline,
             "sl_failure_cause_summary": sl_failure_cause_summary,
             "sl_failure_cause_rows": sl_failure_cause_rows,
+            "structure_clearance_study": structure_clearance_study,
             "target_distance_study": target_distance_study,
             "mfe_mae_summary": _mid_short_mfe_mae_summary(annotated),
             "outcome_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
@@ -577,6 +582,7 @@ class SignalCandidatePerformanceService:
                 "Primary failure causes are mutually exclusive research hypotheses, not proof of market causality.",
                 "LAB-52 entry diagnostics use only information closed at signal time; forward fields are outcome-only.",
                 "LAB-52 exit variants are fixed-cohort 4h simulations and do not replace the live TP/SL rule.",
+                "LAB-53 structure clearance is a read-only shadow split and does not suppress live signals.",
                 "Improvement candidates are research-only filters, not live scanner rules.",
                 "No TP/SL formula, execution, order, leverage, or position sizing is created.",
             ],
@@ -4878,6 +4884,8 @@ LAB52_ITEM_ONLY_FIELDS = frozenset(
         "target_distance_context_status",
         "target_distance_hypotheses",
         "target_distance_primary_hypothesis",
+        "structure_clearance_status",
+        "support_clearance_to_target_r",
     }
 )
 
@@ -5089,12 +5097,14 @@ def _mid_short_support_context(
         key=lambda candle: candle.close_time,
     )[-24:]
     swing_low = None
+    support_method = "CONFIRMED_SWING_LOW_1H"
     for index in range(len(closed) - 2, 0, -1):
         if closed[index].low <= closed[index - 1].low and closed[index].low <= closed[index + 1].low:
             swing_low = closed[index].low
             break
     if swing_low is None and closed:
         swing_low = min(candle.low for candle in closed)
+        support_method = "PERIOD_LOW_FALLBACK_1H"
     support_distance_r = (entry - swing_low) / risk if swing_low is not None and risk > 0 else None
     return {
         "support_price_proxy": swing_low,
@@ -5102,7 +5112,7 @@ def _mid_short_support_context(
         "support_before_target": bool(
             swing_low is not None and target < swing_low < entry and support_distance_r is not None and support_distance_r > 0
         ),
-        "support_method": "nearest confirmed 1h swing low in the latest 24 closed candles; fallback to period low",
+        "support_method": support_method,
     }
 
 
@@ -5432,6 +5442,343 @@ def _mid_short_target_distance_study(
             "Forward taker, volume, OI, dan realized range tidak boleh dipakai sebagai input entry karena baru diketahui setelah signal.",
         ],
     }
+
+
+def _mid_short_structure_clearance_shadow_study(
+    items: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> dict[str, Any]:
+    for item in items:
+        status, clearance = _lab53_structure_clearance_status(item)
+        item["structure_clearance_status"] = status
+        item["support_clearance_to_target_r"] = clearance
+
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(items)
+    available = [item for item in ordered if item.get("structure_clearance_status") != "STRUCTURE_UNAVAILABLE"]
+    train_available = [item for item in train if item.get("structure_clearance_status") != "STRUCTURE_UNAVAILABLE"]
+    validation_available = [
+        item for item in validation if item.get("structure_clearance_status") != "STRUCTURE_UNAVAILABLE"
+    ]
+    baselines = {
+        "all": _walk_forward_perf(available),
+        "train": _walk_forward_perf(train_available),
+        "validation": _walk_forward_perf(validation_available),
+    }
+    status_rows = [
+        _lab53_structure_status_row(
+            status,
+            ordered=ordered,
+            train=train,
+            validation=validation,
+            baselines=baselines,
+        )
+        for status in ("STRUCTURE_CLEAR", "STRUCTURE_BLOCKED", "STRUCTURE_UNAVAILABLE")
+    ]
+    row_by_status = {row["status"]: row for row in status_rows}
+    clear_row = row_by_status["STRUCTURE_CLEAR"]
+    blocked_row = row_by_status["STRUCTURE_BLOCKED"]
+    verdict = _lab53_structure_clearance_verdict(
+        clear=clear_row,
+        blocked=blocked_row,
+        min_sample=min_sample,
+    )
+    blocked_items = [item for item in ordered if item.get("structure_clearance_status") == "STRUCTURE_BLOCKED"]
+    return {
+        "study_id": "LAB_53_STRUCTURE_CLEARANCE_SHADOW",
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "method": (
+            "Nearest confirmed 1h swing low is computed from the latest 24 futures 1h candles closed at or before "
+            "the signal. A period-low fallback is used when no confirmed swing exists. No future candle is read."
+        ),
+        "definition": {
+            "structure_clear": "support_1h <= target OR support_1h >= entry",
+            "structure_blocked": "target < support_1h < entry for MID_SHORT",
+            "structure_unavailable": "entry, target, risk, or closed 1h support context is missing",
+            "live_effect": "none; classification is shadow-only",
+        },
+        "summary": {
+            "source_count": len(ordered),
+            "context_available_count": len(available),
+            "structure_clear_count": sum(
+                1 for item in ordered if item.get("structure_clearance_status") == "STRUCTURE_CLEAR"
+            ),
+            "structure_blocked_count": len(blocked_items),
+            "structure_unavailable_count": sum(
+                1 for item in ordered if item.get("structure_clearance_status") == "STRUCTURE_UNAVAILABLE"
+            ),
+            "clear_validation_closed_count": int(clear_row["validation"].get("closed_count") or 0),
+            "blocked_validation_closed_count": int(blocked_row["validation"].get("closed_count") or 0),
+            "validation_cutoff_utc": validation_cutoff,
+            "verdict": verdict,
+            "recommended_action": _lab53_recommended_action(verdict),
+        },
+        "baseline": baselines,
+        "status_rows": status_rows,
+        "exit_variant_rows": _lab53_structure_exit_variant_rows(
+            ordered=ordered,
+            train=train,
+            validation=validation,
+            min_sample=min_sample,
+        ),
+        "blocked_case_rows": [
+            _lab53_structure_case_row(item)
+            for item in sorted(
+                blocked_items,
+                key=lambda row: (
+                    _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                    str(row.get("symbol") or ""),
+                ),
+                reverse=True,
+            )
+        ],
+        "limitations": [
+            "Support is a candle-structure proxy, not visible resting liquidity or an order-book wall.",
+            "The period-low fallback is reported separately because it is weaker evidence than a confirmed swing low.",
+            "Train and validation use one chronological split; promotion requires additional forward checkpoints.",
+            "Exit variants keep the signal cohort fixed and do not model a new position-lock sequence.",
+            "No structure status changes Signal Factory, scanner output, TP/SL, or execution.",
+        ],
+    }
+
+
+def _lab53_structure_clearance_status(item: dict[str, Any]) -> tuple[str, Decimal | None]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    support = _decimal_or_none_any(item.get("support_price_proxy"))
+    if entry is None or target is None or risk is None or risk <= 0 or support is None:
+        return "STRUCTURE_UNAVAILABLE", None
+    clearance_to_target_r = (support - target) / risk
+    if target < support < entry:
+        return "STRUCTURE_BLOCKED", clearance_to_target_r
+    return "STRUCTURE_CLEAR", clearance_to_target_r
+
+
+def _lab53_chronological_split(
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], datetime | None]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+        ),
+    )
+    if len(ordered) < 2:
+        return ordered, ordered, [], None
+    split_index = max(1, min(len(ordered) - 1, int(len(ordered) * 0.70)))
+    cutoff = _parse_dt(ordered[split_index].get("signal_timestamp"))
+    if cutoff is None:
+        return ordered, ordered[:split_index], ordered[split_index:], None
+    train = [item for item in ordered if (_parse_dt(item.get("signal_timestamp")) or datetime.min) < cutoff]
+    validation = [item for item in ordered if (_parse_dt(item.get("signal_timestamp")) or datetime.min) >= cutoff]
+    if not train or not validation:
+        train = ordered[:split_index]
+        validation = ordered[split_index:]
+        cutoff = _parse_dt(validation[0].get("signal_timestamp")) if validation else None
+    return ordered, train, validation, cutoff
+
+
+def _lab53_structure_status_row(
+    status: str,
+    *,
+    ordered: list[dict[str, Any]],
+    train: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    baselines: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    all_items = [item for item in ordered if item.get("structure_clearance_status") == status]
+    train_items = [item for item in train if item.get("structure_clearance_status") == status]
+    validation_items = [item for item in validation if item.get("structure_clearance_status") == status]
+    comparable = status != "STRUCTURE_UNAVAILABLE"
+    return {
+        "status": status,
+        "sample_retention_pct": _retention(len(all_items), len(ordered)),
+        "all": _walk_forward_perf(all_items, baseline=baselines["all"]) if comparable else _walk_forward_perf(all_items),
+        "train": (
+            _walk_forward_perf(train_items, baseline=baselines["train"])
+            if comparable
+            else _walk_forward_perf(train_items)
+        ),
+        "validation": (
+            _walk_forward_perf(validation_items, baseline=baselines["validation"])
+            if comparable
+            else _walk_forward_perf(validation_items)
+        ),
+        "read": _lab53_structure_status_read(status),
+    }
+
+
+def _lab53_structure_clearance_verdict(
+    *,
+    clear: dict[str, Any],
+    blocked: dict[str, Any],
+    min_sample: int,
+) -> str:
+    clear_validation = clear["validation"]
+    blocked_validation = blocked["validation"]
+    required_clear = max(10, min_sample // 2)
+    if (
+        int(clear_validation.get("closed_count") or 0) < required_clear
+        or int(blocked_validation.get("closed_count") or 0) < 5
+    ):
+        return "STRUCTURE_CLEARANCE_NEEDS_MORE_SAMPLE"
+    clear_avg = _decimal_or_none_any(clear_validation.get("realistic_avg_r_closed"))
+    blocked_avg = _decimal_or_none_any(blocked_validation.get("realistic_avg_r_closed"))
+    avg_delta = _decimal_or_none_any(clear_validation.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_any(clear_validation.get("sl_share_delta_vs_baseline"))
+    drawdown_delta = _decimal_or_none_any(clear_validation.get("max_drawdown_delta_vs_baseline"))
+    if (
+        clear_avg is not None
+        and blocked_avg is not None
+        and clear_avg > blocked_avg
+        and Decimal(clear_validation.get("realistic_total_r_closed") or 0) > 0
+        and (avg_delta is None or avg_delta > 0)
+        and (sl_delta is None or sl_delta <= 0)
+        and (drawdown_delta is None or drawdown_delta >= 0)
+    ):
+        return "STRUCTURE_CLEARANCE_VALIDATION_IMPROVES"
+    if (avg_delta is not None and avg_delta > 0) or (sl_delta is not None and sl_delta < 0):
+        return "STRUCTURE_CLEARANCE_REDUCES_DAMAGE_MONITOR"
+    return "STRUCTURE_CLEARANCE_NO_CLEAR_EDGE"
+
+
+def _lab53_structure_exit_variant_rows(
+    *,
+    ordered: list[dict[str, Any]],
+    train: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    clear_all = [item for item in ordered if item.get("structure_clearance_status") == "STRUCTURE_CLEAR"]
+    clear_train = [item for item in train if item.get("structure_clearance_status") == "STRUCTURE_CLEAR"]
+    clear_validation = [
+        item for item in validation if item.get("structure_clearance_status") == "STRUCTURE_CLEAR"
+    ]
+    blocked_validation = [
+        item for item in validation if item.get("structure_clearance_status") == "STRUCTURE_BLOCKED"
+    ]
+    control_train = _lab52_counterfactual_performance(clear_train, "CONTROL_LOGGED")
+    control_validation = _lab52_counterfactual_performance(clear_validation, "CONTROL_LOGGED")
+    rows: list[dict[str, Any]] = []
+    for config_id, label, risk_scale, target_rr, protect_at_r, use_logged_target in LAB52_COUNTERFACTUAL_SPECS:
+        all_perf = _lab52_counterfactual_performance(clear_all, config_id)
+        train_perf = _lab52_counterfactual_performance(clear_train, config_id)
+        validation_perf = _lab52_counterfactual_performance(clear_validation, config_id)
+        blocked_validation_perf = _lab52_counterfactual_performance(blocked_validation, config_id)
+        rows.append(
+            {
+                "config_id": config_id,
+                "label": label,
+                "risk_scale": risk_scale,
+                "target_rr": target_rr,
+                "protect_at_r": protect_at_r,
+                "use_logged_target": use_logged_target,
+                "clear_all": all_perf,
+                "clear_train": train_perf,
+                "clear_validation": validation_perf,
+                "blocked_validation": blocked_validation_perf,
+                "clear_validation_avg_delta_vs_logged": _decimal_delta(
+                    validation_perf.get("avg_realistic_r"),
+                    control_validation.get("avg_realistic_r"),
+                ),
+                "clear_validation_avg_delta_vs_blocked": _decimal_delta(
+                    validation_perf.get("avg_realistic_r"),
+                    blocked_validation_perf.get("avg_realistic_r"),
+                ),
+                "verdict": _lab53_structure_exit_verdict(
+                    config_id=config_id,
+                    train=train_perf,
+                    validation=validation_perf,
+                    control_train=control_train,
+                    control_validation=control_validation,
+                    min_sample=min_sample,
+                ),
+            }
+        )
+    return rows
+
+
+def _lab53_structure_exit_verdict(
+    *,
+    config_id: str,
+    train: dict[str, Any],
+    validation: dict[str, Any],
+    control_train: dict[str, Any],
+    control_validation: dict[str, Any],
+    min_sample: int,
+) -> str:
+    if config_id == "CONTROL_LOGGED":
+        return "CURRENT_CONTROL"
+    if int(validation.get("sample_count") or 0) < max(10, min_sample // 2):
+        return "NEEDS_MORE_SAMPLE"
+    validation_delta = _decimal_delta(validation.get("avg_realistic_r"), control_validation.get("avg_realistic_r"))
+    train_delta = _decimal_delta(train.get("avg_realistic_r"), control_train.get("avg_realistic_r"))
+    if (
+        validation_delta is not None
+        and validation_delta > 0
+        and train_delta is not None
+        and train_delta > 0
+        and Decimal(validation.get("total_realistic_r") or 0) > 0
+    ):
+        return "VALIDATION_IMPROVES_FIXED_COHORT"
+    if validation_delta is not None and validation_delta > 0:
+        return "EXIT_GEOMETRY_IMPROVES_FIXED_COHORT_MONITOR"
+    if train_delta is not None and train_delta > 0:
+        return "TRAIN_ONLY_IMPROVEMENT"
+    return "NO_CLEAR_IMPROVEMENT"
+
+
+def _lab53_structure_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "signal_id": item.get("signal_id"),
+        "symbol": item.get("symbol"),
+        "signal_timestamp": item.get("signal_timestamp"),
+        "signal_time_wib": item.get("signal_time_wib"),
+        "entry": item.get("entry"),
+        "stop_loss": item.get("stop_loss"),
+        "take_profit": item.get("take_profit"),
+        "rr": item.get("rr"),
+        "support_price_proxy": item.get("support_price_proxy"),
+        "support_distance_r": item.get("support_distance_r"),
+        "support_clearance_to_target_r": item.get("support_clearance_to_target_r"),
+        "support_method": item.get("support_method"),
+        "result_status": item.get("result_status"),
+        "realistic_r": (
+            item.get("realistic_realized_r")
+            if item.get("result_status") in COMPLETED_OUTCOMES
+            else item.get("realistic_unrealized_r")
+        ),
+        "failure_primary_cause": item.get("failure_primary_cause"),
+    }
+
+
+def _lab53_structure_status_read(status: str) -> str:
+    return {
+        "STRUCTURE_CLEAR": "Support proxy tidak berada di antara entry dan target.",
+        "STRUCTURE_BLOCKED": "Support proxy 1h berada di jalur entry menuju target short.",
+        "STRUCTURE_UNAVAILABLE": "Candle 1h closed belum cukup untuk membentuk proxy support.",
+    }.get(status, "Status structure belum dikenal.")
+
+
+def _lab53_recommended_action(verdict: str) -> str:
+    return {
+        "STRUCTURE_CLEARANCE_VALIDATION_IMPROVES": (
+            "Continue at least one more forward checkpoint; do not promote to a live rule yet."
+        ),
+        "STRUCTURE_CLEARANCE_REDUCES_DAMAGE_MONITOR": (
+            "Monitor more samples; validation reduces some damage but is not independently positive."
+        ),
+        "STRUCTURE_CLEARANCE_NEEDS_MORE_SAMPLE": (
+            "Collect more blocked and clear validation samples before judging the filter."
+        ),
+        "STRUCTURE_CLEARANCE_NO_CLEAR_EDGE": (
+            "Do not promote the structure filter; current validation does not improve the baseline."
+        ),
+    }.get(verdict, "Keep the current live rule frozen.")
 
 
 def _lab52_data_derived_thresholds(tp_items: list[dict[str, Any]]) -> dict[str, Any]:

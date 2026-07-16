@@ -19,6 +19,28 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-16",
+    version: "LAB-53",
+    title: "MID_SHORT 1h Structure Clearance Shadow",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menguji support 1h pre-signal sebagai pemisah read-only antara MID_SHORT yang jalur targetnya clear dan yang terhalang struktur.",
+    changes: [
+      "Support dihitung dari confirmed swing low pada 24 candle futures 1h yang sudah closed sebelum signal; period-low fallback ditandai terpisah.",
+      "Setiap signal dalam cohort mendapat status STRUCTURE_CLEAR, STRUCTURE_BLOCKED, atau STRUCTURE_UNAVAILABLE tanpa membaca candle masa depan.",
+      "Cohort dibagi kronologis 70/30 tanpa memecah timestamp signal yang sama antara train dan validation.",
+      "Performance clear/blocked dibandingkan memakai entry, TP/SL, position lock, dan biaya realistis yang sama.",
+      "Exit variants 0.75R-1.5R, protection, dan risk scaling diuji ulang hanya pada fixed cohort STRUCTURE_CLEAR dengan blocked validation sebagai pembanding.",
+      "Ledger lengkap menampilkan entry, support, target, outcome, realistic R, metode support, dan tautan evidence chart.",
+      "Patch ini tidak mengubah Signal Factory, scanner, TP/SL live, threshold, outcome logic, atau execution."
+    ],
+    impact: "Kita dapat menguji apakah ruang kosong menuju target merupakan filter entry yang nyata, bukan sekadar kesimpulan setelah signal gagal.",
+    links: [
+      { href: "/mid-short-failure-anatomy", label: "Structure Clearance Study" },
+      { href: "/signal-performance?stage=MID_SHORT&timeframe=1h", label: "MID_SHORT Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-16",
     version: "LAB-52",
     title: "MID_SHORT 1h Target Distance Decomposition",
     status: "LIVE",

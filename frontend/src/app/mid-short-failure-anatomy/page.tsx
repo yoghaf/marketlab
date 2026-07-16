@@ -10,6 +10,9 @@ import {
   MidShortFailureImprovementCandidate,
   MidShortCounterfactualRow,
   MidShortSlFailureCauseRow,
+  MidShortStructureBlockedCase,
+  MidShortStructureClearanceStatusRow,
+  MidShortStructureExitVariantRow,
   MidShortTargetDistanceCase,
   MidShortTargetDistanceMetricRow,
   SignalPerformanceItem,
@@ -54,6 +57,7 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
   }
 
   const summary = data?.summary;
+  const structureStudy = data?.structure_clearance_study;
   const targetStudy = data?.target_distance_study;
 
   return (
@@ -142,6 +146,68 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
             description="Setiap SL mendapat satu primary cause agar total tidak dihitung ganda. Contributor tambahan tetap disimpan pada detail signal. Label ini hipotesis riset, bukan bukti kausal final."
           >
             <CauseTable rows={data?.sl_failure_cause_rows || []} />
+          </SectionCard>
+
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <MetricCard
+              label="Structure context"
+              value={`${structureStudy?.summary.context_available_count ?? 0}/${structureStudy?.summary.source_count ?? 0}`}
+              helper={`${structureStudy?.summary.structure_unavailable_count ?? 0} unavailable`}
+            />
+            <MetricCard
+              label="Structure clear"
+              value={structureStudy?.summary.structure_clear_count ?? 0}
+              helper="Support tidak menghalangi target"
+              tone="good"
+            />
+            <MetricCard
+              label="Structure blocked"
+              value={structureStudy?.summary.structure_blocked_count ?? 0}
+              helper="Support berada sebelum target"
+              tone="bad"
+            />
+            <MetricCard
+              label="Validation closed"
+              value={`${structureStudy?.summary.clear_validation_closed_count ?? 0} / ${structureStudy?.summary.blocked_validation_closed_count ?? 0}`}
+              helper="Clear / blocked"
+            />
+            <MetricCard
+              label="LAB-53 verdict"
+              value={labelFor(structureStudy?.summary.verdict || "-")}
+              helper="Shadow only"
+              tone="warn"
+            />
+          </section>
+
+          <SectionCard
+            title="LAB-53 Structure Clearance Shadow"
+            description="Menguji apakah MID_SHORT 1h lebih sehat ketika support 1h closed tidak berada di antara entry dan target. Signal live dan TP/SL tidak diubah."
+          >
+            <StructureStatusTable rows={structureStudy?.status_rows || []} />
+            <div className="border-t border-line p-4 text-sm text-slate-700">
+              <span className="font-semibold">Action: </span>
+              {structureStudy?.summary.recommended_action || "Belum tersedia."}
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Structure-clear exit variants"
+            description="Exit alternatif diuji hanya pada fixed cohort STRUCTURE_CLEAR. Kolom blocked validation menjadi pembanding, bukan signal baru."
+          >
+            <StructureExitTable rows={structureStudy?.exit_variant_rows || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="Full STRUCTURE_BLOCKED ledger"
+            description="Semua signal dalam scope aktif yang support proxy 1h-nya berada di jalur menuju target short."
+          >
+            <StructureBlockedTable rows={structureStudy?.blocked_case_rows || []} />
+          </SectionCard>
+
+          <SectionCard title="LAB-53 limitations" description={structureStudy?.method || "Metode belum tersedia."}>
+            <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
+              {(structureStudy?.limitations || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
+            </ul>
           </SectionCard>
 
           <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
@@ -237,6 +303,147 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function StructureStatusTable({ rows }: { rows: MidShortStructureClearanceStatusRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Structure status</th>
+            <th>All cohort</th>
+            <th>Train</th>
+            <th>Validation</th>
+            <th>Validation delta</th>
+            <th>Interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.status}>
+              <td>
+                <StatusBadge value={row.status} />
+                <div className="mt-1 text-xs text-slate-500">{fmtNumber(row.sample_retention_pct)}% retained</div>
+              </td>
+              <td><StructurePerfCell value={row.all} /></td>
+              <td><StructurePerfCell value={row.train} /></td>
+              <td><StructurePerfCell value={row.validation} /></td>
+              <td className="text-xs">
+                <div>Avg {fmtSigned(row.validation.realistic_avg_r_delta_vs_baseline)}R</div>
+                <div>SL {fmtSigned(row.validation.sl_share_delta_vs_baseline)} pp</div>
+                <div>DD {fmtSigned(row.validation.max_drawdown_delta_vs_baseline)}R</div>
+              </td>
+              <td className="max-w-md text-slate-600">{row.read}</td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={6} className="py-8 text-center text-sm text-slate-500">Structure study belum tersedia.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StructurePerfCell({ value }: { value: MidShortStructureClearanceStatusRow["all"] }) {
+  return (
+    <div className="min-w-32 text-xs">
+      <div className="font-semibold">n {value.sample_count} / closed {value.closed_count}</div>
+      <div>TP {value.tp_count} / SL {value.sl_count} / open {value.open_count}</div>
+      <div>{fmtSigned(value.realistic_total_r_closed)}R / avg {fmtSigned(value.realistic_avg_r_closed)}R</div>
+      <div>DD {fmtSigned(value.max_realistic_drawdown_r)}R</div>
+    </div>
+  );
+}
+
+function StructureExitTable({ rows }: { rows: MidShortStructureExitVariantRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Exit variant</th>
+            <th>Clear all</th>
+            <th>Clear train</th>
+            <th>Clear validation</th>
+            <th>Blocked validation</th>
+            <th>Validation delta</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.config_id}>
+              <td className="max-w-xs">
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">Risk {fmtNumber(row.risk_scale)}x</div>
+              </td>
+              <td><CounterfactualPerfCell value={row.clear_all} /></td>
+              <td><CounterfactualPerfCell value={row.clear_train} /></td>
+              <td><CounterfactualPerfCell value={row.clear_validation} /></td>
+              <td><CounterfactualPerfCell value={row.blocked_validation} /></td>
+              <td className="text-xs">
+                <div>vs logged {fmtSigned(row.clear_validation_avg_delta_vs_logged)}R</div>
+                <div>vs blocked {fmtSigned(row.clear_validation_avg_delta_vs_blocked)}R</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">Exit variant belum tersedia.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StructureBlockedTable({ rows }: { rows: MidShortStructureBlockedCase[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Signal WIB</th>
+            <th>Symbol</th>
+            <th>Entry / support / target</th>
+            <th>Support geometry</th>
+            <th>Outcome</th>
+            <th>Failure read</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.signal_id}>
+              <td className="whitespace-nowrap text-xs">{row.signal_time_wib || fmtTime(row.signal_timestamp)}</td>
+              <td className="font-semibold text-blue-700">{row.symbol}</td>
+              <td className="text-xs">
+                <div>{fmtPrice(row.entry)} / {fmtPrice(row.support_price_proxy)} / {fmtPrice(row.take_profit)}</div>
+                <div className="text-slate-500">SL {fmtPrice(row.stop_loss)}</div>
+              </td>
+              <td className="text-xs">
+                <div>{fmtNumber(row.support_distance_r)}R from entry</div>
+                <div>{fmtNumber(row.support_clearance_to_target_r)}R before target</div>
+                <div className="text-slate-500">{labelFor(row.support_method)}</div>
+              </td>
+              <td>
+                <StatusBadge value={row.result_status} />
+                <div className="mt-1 text-xs font-semibold">{fmtSigned(row.realistic_r)}R</div>
+              </td>
+              <td><StatusBadge value={row.failure_primary_cause || "UNAVAILABLE"} /></td>
+              <td>
+                <Link
+                  className="font-semibold text-blue-700 hover:underline"
+                  href={`/signals/${encodeURIComponent(row.symbol)}?timeframe=1h&signal_id=${encodeURIComponent(row.signal_id)}`}
+                >
+                  Open chart
+                </Link>
+              </td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={7} className="py-8 text-center text-sm text-slate-500">Tidak ada STRUCTURE_BLOCKED dalam scope ini.</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
