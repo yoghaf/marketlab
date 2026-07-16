@@ -825,12 +825,12 @@ def signal_candidates_misidentification_audit(
     stages: str = "MID_LONG,MID_SHORT",
     min_sample: int = 20,
     limit: int = 50,
-    max_signals_per_stage: int = 500,
+    max_signals_per_stage: int = 120,
     db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 100))
     normalized_min_sample = max(1, min(min_sample, 100))
-    normalized_max_signals = max(50, min(max_signals_per_stage, 2000))
+    normalized_max_signals = max(20, min(max_signals_per_stage, 500))
     normalized_timeframe = timeframe or "1h"
     normalized_stages = tuple(
         stage.strip().upper()

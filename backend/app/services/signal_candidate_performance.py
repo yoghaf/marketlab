@@ -1075,7 +1075,7 @@ class SignalCandidatePerformanceService:
         stages: tuple[str, ...] = ("MID_LONG", "MID_SHORT"),
         min_sample: int = 20,
         limit: int = 50,
-        max_signals_per_stage: int = 500,
+        max_signals_per_stage: int = 120,
     ) -> dict[str, Any]:
         lanes: list[dict[str, Any]] = []
         latest_times: list[datetime] = []
@@ -1157,16 +1157,18 @@ class SignalCandidatePerformanceService:
             limit_latest=max_signals,
         )
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        max_signal_time = max((_naive(row.signal_timestamp) for row in signals), default=None)
         source_symbols = {row.symbol for row in signals}
         candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
         candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
-        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
+        candle_end = max_signal_time + timedelta(hours=4) if max_signal_time is not None else None
+        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start, end_time=candle_end)
         latest_base_time = max(
             (candle.close_time for rows in base_candles.values() for candle in rows),
             default=None,
         )
         tail_start = latest_base_time or candle_start
-        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start)
+        tail_candles = self._load_1m_candles(candle_symbols, start_time=tail_start, end_time=candle_end)
         candles = _merge_candle_maps(base_candles, tail_candles)
         latest_candle_time = max(
             (candle.close_time for rows in candles.values() for candle in rows),
@@ -1905,7 +1907,13 @@ class SignalCandidatePerformanceService:
             ).all()
         )
 
-    def _load_15m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
+    def _load_15m_candles(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[PerfCandle]]:
         if not symbols:
             return {}
         query = (
@@ -1925,6 +1933,8 @@ class SignalCandidatePerformanceService:
         )
         if start_time is not None:
             query = query.where(FuturesKline15m.open_time >= start_time)
+        if end_time is not None:
+            query = query.where(FuturesKline15m.open_time <= end_time)
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
@@ -1939,7 +1949,13 @@ class SignalCandidatePerformanceService:
             )
         return dict(output)
 
-    def _load_1m_candles(self, symbols: set[str], *, start_time: datetime | None) -> dict[str, list[PerfCandle]]:
+    def _load_1m_candles(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[PerfCandle]]:
         if not symbols or start_time is None:
             return {}
         query = (
@@ -1957,6 +1973,8 @@ class SignalCandidatePerformanceService:
             )
             .order_by(asc(FuturesKline1m.symbol), asc(FuturesKline1m.open_time))
         )
+        if end_time is not None:
+            query = query.where(FuturesKline1m.open_time <= end_time)
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:

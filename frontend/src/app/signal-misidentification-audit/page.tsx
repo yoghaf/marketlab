@@ -32,7 +32,7 @@ export default async function SignalMisidentificationAuditPage({ searchParams }:
   const stages = firstParam(params.stages) || defaultStages;
   const minSample = normalizeNumber(firstParam(params.min_sample), 20, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 50, 10, 100);
-  const maxSignalsPerStage = normalizeNumber(firstParam(params.max_signals_per_stage), 500, 50, 2000);
+  const maxSignalsPerStage = normalizeNumber(firstParam(params.max_signals_per_stage), 120, 20, 500);
   const query = new URLSearchParams({
     include_watch_only: String(includeWatchOnly),
     position_lock: String(positionLock),
@@ -114,7 +114,7 @@ export default async function SignalMisidentificationAuditPage({ searchParams }:
               </label>
               <label className="grid gap-1 text-sm">
                 <span className="font-semibold text-slate-600">Max signals/stage</span>
-                <input className="rounded border border-line px-3 py-2" min={50} max={2000} name="max_signals_per_stage" type="number" defaultValue={maxSignalsPerStage} />
+                <input className="rounded border border-line px-3 py-2" min={20} max={500} name="max_signals_per_stage" type="number" defaultValue={maxSignalsPerStage} />
               </label>
               <label className="grid gap-1 text-sm">
                 <span className="font-semibold text-slate-600">Position lock</span>

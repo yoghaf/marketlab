@@ -27,7 +27,7 @@ const patches: PatchItem[] = [
     changes: [
       "Endpoint /api/signal-candidates/misidentification-audit membandingkan MID_LONG dan MID_SHORT per timeframe dengan path anatomy, direction 1h, reverse proxy, evidence correct-vs-wrong, dan latest TP/SL samples.",
       "Halaman /signal-misidentification-audit menampilkan verdict per lane: reverse layak diteliti, identifikasi arah lemah, atau entry/risk model lemah.",
-      "Audit dibatasi default ke 500 signal terbaru per stage agar cukup representatif untuk riset terbaru tanpa membebani backend.",
+      "Audit dibatasi default ke 120 signal terbaru per stage agar cukup representatif untuk riset terbaru tanpa membebani backend.",
       "Reverse proxy dibuat konservatif: hanya menandai reverse-clean kalau path candle yang sama cukup untuk target kebalikan tanpa menyentuh stop kebalikan.",
       "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL formula, outcome logic, threshold, atau execution."
     ],
