@@ -1625,6 +1625,90 @@ export type MidShortSlFailureCauseRow = {
   research_action?: string | null;
 };
 
+export type MidShortTargetDistanceDistribution = {
+  sample_count: number;
+  available_count: number;
+  q1?: string | number | null;
+  median?: string | number | null;
+  q3?: string | number | null;
+};
+
+export type MidShortTargetDistanceMetricRow = {
+  field: string;
+  label: string;
+  target_too_far: MidShortTargetDistanceDistribution;
+  tp_control: MidShortTargetDistanceDistribution;
+  other_sl: MidShortTargetDistanceDistribution;
+  median_delta_vs_tp?: string | number | null;
+};
+
+export type MidShortCounterfactualPerf = {
+  sample_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_count: number;
+  breakeven_count: number;
+  neither_count: number;
+  total_realistic_r?: string | number | null;
+  avg_realistic_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  max_drawdown_r?: string | number | null;
+  sl_share_pct?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidShortCounterfactualRow = {
+  config_id: string;
+  label: string;
+  risk_scale: string | number;
+  target_rr?: string | number | null;
+  protect_at_r?: string | number | null;
+  use_logged_target: boolean;
+  evaluation_horizon: string;
+  all: MidShortCounterfactualPerf;
+  train: MidShortCounterfactualPerf;
+  validation: MidShortCounterfactualPerf;
+  target_too_far_subset: MidShortCounterfactualPerf;
+  validation_avg_r_delta_vs_control?: string | number | null;
+  verdict: string;
+};
+
+export type MidShortTargetDistanceCase = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp: string;
+  signal_time_wib?: string | null;
+  entry?: string | number | null;
+  stop_loss?: string | number | null;
+  take_profit?: string | number | null;
+  rr?: string | number | null;
+  result_time_wib?: string | null;
+  mfe_before_first_hit_r?: string | number | null;
+  mae_before_first_hit_r?: string | number | null;
+  first_hit_candle_index?: string | number | null;
+  atr_1h_at_entry?: string | number | null;
+  atr_pct_entry?: string | number | null;
+  logged_risk_atr_ratio?: string | number | null;
+  atr_vs_30_median?: string | number | null;
+  atr_signal_inflation_ratio?: string | number | null;
+  signal_true_range_atr?: string | number | null;
+  pre_entry_1h_move_atr?: string | number | null;
+  pre_entry_4h_move_atr?: string | number | null;
+  support_distance_r?: string | number | null;
+  support_before_target: boolean;
+  forward_1h_realized_range_atr?: string | number | null;
+  entry_taker_sell_ratio?: string | number | null;
+  forward_1h_taker_sell_ratio?: string | number | null;
+  taker_sell_delta_1h?: string | number | null;
+  forward_1h_volume_vs_pre30?: string | number | null;
+  forward_1h_oi_change_pct?: string | number | null;
+  target_distance_context_status: string;
+  target_distance_primary_hypothesis: string;
+  target_distance_hypotheses: string[];
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;
@@ -1694,6 +1778,41 @@ export type MidShortFailureAnatomyResponse = {
     method: string;
   };
   sl_failure_cause_rows: MidShortSlFailureCauseRow[];
+  target_distance_study: {
+    study_id: string;
+    read_only: boolean;
+    method: string;
+    summary: {
+      target_too_far_count: number;
+      tp_control_count: number;
+      other_sl_count: number;
+      unique_symbol_count: number;
+      dominant_hypothesis: string;
+      dominant_hypothesis_count: number;
+      dominant_hypothesis_share_pct?: string | number | null;
+      complete_context_count: number;
+      verdict: string;
+    };
+    data_derived_thresholds: Record<string, {
+      field: string;
+      percentile: string | number;
+      value?: string | number | null;
+      available_count: number;
+      source: string;
+    }>;
+    hypothesis_rows: Array<{
+      hypothesis: string;
+      primary_count: number;
+      primary_share_pct?: string | number | null;
+      multi_label_count: number;
+      multi_label_share_pct?: string | number | null;
+      read: string;
+    }>;
+    metric_comparison_rows: MidShortTargetDistanceMetricRow[];
+    counterfactual_rows: MidShortCounterfactualRow[];
+    case_rows: MidShortTargetDistanceCase[];
+    limitations: string[];
+  };
   mfe_mae_summary: Record<string, {
     sample_count: number;
     median_mfe_r?: string | number | null;

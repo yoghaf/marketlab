@@ -10,7 +10,10 @@ from app.db.base import Base
 from app.models.market import FuturesKline1m, MarketlabActiveUniverse, SignalForwardReturnLog
 from app.services.signal_candidate_performance import (
     FilterStudySpec,
+    PerfCandle,
     SignalCandidatePerformanceService,
+    _mid_short_atr_context,
+    _mid_short_counterfactual_exit,
     _mid_short_sl_failure_classification,
     mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
@@ -1223,6 +1226,13 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
         }
         assert payload["summary"]["legacy_path_read"]
         assert payload["improvement_candidates"]
+        assert payload["target_distance_study"]["summary"]["target_too_far_count"] == 1
+        assert payload["target_distance_study"]["case_rows"][0]["symbol"] == "NEARUSDT"
+        assert {row["config_id"] for row in payload["target_distance_study"]["counterfactual_rows"]} >= {
+            "CONTROL_LOGGED",
+            "TP_0_75R",
+            "TP_1_5R_BE_0_75R",
+        }
 
         filtered = SignalCandidatePerformanceService(db).mid_short_1h_failure_anatomy(
             position_lock=False,
@@ -1234,6 +1244,107 @@ def test_mid_short_1h_failure_anatomy_classifies_stop_paths() -> None:
         assert filtered["summary"]["source_count"] == 2
         assert filtered["summary"]["sl_count"] == 2
         assert filtered["base_filter"]["filter_id"] == "TAKER_SELL_GE_52"
+
+
+def test_mid_short_lab52_atr_context_uses_only_closed_pre_signal_candles() -> None:
+    signal_time = datetime(2026, 1, 2, 0, 0)
+    candles = []
+    start = signal_time - timedelta(hours=15)
+    for index in range(15):
+        open_time = start + timedelta(hours=index)
+        candles.append(
+            PerfCandle(
+                open_time=open_time,
+                close_time=open_time + timedelta(hours=1),
+                open=Decimal("100"),
+                high=Decimal("101"),
+                low=Decimal("99"),
+                close=Decimal("100"),
+                source_interval="1h",
+            )
+        )
+    candles.append(
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(hours=1),
+            open=Decimal("100"),
+            high=Decimal("150"),
+            low=Decimal("50"),
+            close=Decimal("120"),
+            source_interval="1h",
+        )
+    )
+
+    context = _mid_short_atr_context(
+        entry=Decimal("100"),
+        risk=Decimal("2"),
+        signal_time=signal_time,
+        one_hour_candles=candles,
+    )
+
+    assert context["atr_closed_candle_count"] == 15
+    assert context["atr_1h_at_entry"] == Decimal("2")
+    assert context["logged_risk_atr_ratio"] == Decimal("1")
+
+
+def test_mid_short_lab52_counterfactual_can_lower_target_and_protect_next_candle() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "realistic_futures_spread_pct": Decimal("0.01"),
+    }
+    candles = [
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(minutes=15),
+            open=Decimal("100"),
+            high=Decimal("105"),
+            low=Decimal("92"),
+            close=Decimal("94"),
+        ),
+        PerfCandle(
+            open_time=signal_time + timedelta(minutes=15),
+            close_time=signal_time + timedelta(minutes=30),
+            open=Decimal("94"),
+            high=Decimal("111"),
+            low=Decimal("93"),
+            close=Decimal("105"),
+        ),
+    ]
+
+    control = _mid_short_counterfactual_exit(
+        item,
+        candles=candles,
+        risk_scale=Decimal("1"),
+        target_rr=None,
+        protect_at_r=None,
+        use_logged_target=True,
+    )
+    lower_target = _mid_short_counterfactual_exit(
+        item,
+        candles=candles,
+        risk_scale=Decimal("1"),
+        target_rr=Decimal("0.75"),
+        protect_at_r=None,
+        use_logged_target=False,
+    )
+    protected = _mid_short_counterfactual_exit(
+        item,
+        candles=candles,
+        risk_scale=Decimal("1"),
+        target_rr=Decimal("1.50"),
+        protect_at_r=Decimal("0.75"),
+        use_logged_target=False,
+    )
+
+    assert control["status"] == "SL_HIT"
+    assert lower_target["status"] == "TP_HIT"
+    assert protected["status"] == "BREAKEVEN_PROTECTED"
+    assert protected["realistic_r"] < Decimal("0")
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:

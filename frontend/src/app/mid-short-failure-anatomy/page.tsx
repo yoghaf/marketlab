@@ -8,7 +8,10 @@ import {
   MidShortFailureAnatomyResponse,
   MidShortFailureBucketRow,
   MidShortFailureImprovementCandidate,
+  MidShortCounterfactualRow,
   MidShortSlFailureCauseRow,
+  MidShortTargetDistanceCase,
+  MidShortTargetDistanceMetricRow,
   SignalPerformanceItem,
   SignalQualityEvidenceField,
   fetchJson,
@@ -51,6 +54,7 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
   }
 
   const summary = data?.summary;
+  const targetStudy = data?.target_distance_study;
 
   return (
     <div className="space-y-5">
@@ -140,6 +144,49 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
             <CauseTable rows={data?.sl_failure_cause_rows || []} />
           </SectionCard>
 
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <MetricCard label="Target too far" value={targetStudy?.summary.target_too_far_count ?? 0} helper={`${targetStudy?.summary.unique_symbol_count ?? 0} unique symbols`} tone="warn" />
+            <MetricCard label="TP control" value={targetStudy?.summary.tp_control_count ?? 0} helper="Pembanding cohort yang sama" />
+            <MetricCard label="Context lengkap" value={`${targetStudy?.summary.complete_context_count ?? 0}/${targetStudy?.summary.target_too_far_count ?? 0}`} helper="ATR + structure + flow + OI" />
+            <MetricCard label="Hipotesis dominan" value={labelFor(targetStudy?.summary.dominant_hypothesis || "-")} helper={`${targetStudy?.summary.dominant_hypothesis_count ?? 0} primary cases`} tone="warn" />
+            <MetricCard label="Exit variants" value={targetStudy?.counterfactual_rows.length ?? 0} helper="Fixed cohort, horizon 4h" />
+            <MetricCard label="LAB-52 verdict" value={labelFor(targetStudy?.summary.verdict || "-")} helper="Read-only, bukan rule live" tone="warn" />
+          </section>
+
+          <SectionCard
+            title="LAB-52 Target distance decomposition"
+            description="Membedah apakah target gagal karena ATR membesar, entry terlambat, range menyusut, momentum melemah, support menghalangi, atau murni geometri RR. Threshold berasal dari kuartil TP control pada cohort yang sama."
+          >
+            <HypothesisTable rows={targetStudy?.hypothesis_rows || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="TARGET_TOO_FAR vs TP control"
+            description="Angka sebelum entry dan outcome diagnostics ditampilkan terpisah. Forward range, taker, volume, dan OI tidak boleh dipakai sebagai input signal karena baru diketahui setelah entry."
+          >
+            <TargetMetricTable rows={targetStudy?.metric_comparison_rows || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="Exit geometry counterfactual"
+            description="Signal cohort tetap, futures candle nyata, biaya realistis, horizon 4h, dan same-candle dihitung konservatif. Validation harus membaik sebelum sebuah variasi layak dipantau lebih jauh."
+          >
+            <CounterfactualTable rows={targetStudy?.counterfactual_rows || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="Full TARGET_TOO_FAR case ledger"
+            description="Seluruh kasus dalam scope aktif, bukan contoh terpilih. Waktu WIB dan angka aktual dapat dibuka ke chart signal masing-masing."
+          >
+            <TargetCaseLedger rows={targetStudy?.case_rows || []} />
+          </SectionCard>
+
+          <SectionCard title="LAB-52 limitations" description={targetStudy?.method || "Metode belum tersedia."}>
+            <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
+              {(targetStudy?.limitations || []).map((item) => <li key={item} className="rounded border border-line bg-field/40 p-3">{item}</li>)}
+            </ul>
+          </SectionCard>
+
           <SectionCard title="Outcome path anatomy" description="Ini menjawab apakah SL karena arah salah, stop terlalu dekat, atau harga sempat benar dulu.">
             <BucketTable rows={data?.outcome_path_rows || []} />
           </SectionCard>
@@ -192,6 +239,185 @@ export default async function MidShortFailureAnatomyPage({ searchParams }: { sea
       )}
     </div>
   );
+}
+
+function HypothesisTable({ rows }: { rows: MidShortFailureAnatomyResponse["target_distance_study"]["hypothesis_rows"] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Primary hypothesis</th>
+            <th>Primary cases</th>
+            <th>Multi-label cases</th>
+            <th>Interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.hypothesis}>
+              <td><StatusBadge value={row.hypothesis} /></td>
+              <td className="font-semibold">{row.primary_count} / {fmtNumber(row.primary_share_pct)}%</td>
+              <td>{row.multi_label_count} / {fmtNumber(row.multi_label_share_pct)}%</td>
+              <td className="max-w-3xl text-slate-600">{row.read}</td>
+            </tr>
+          ))}
+          {!rows.length && <tr><td colSpan={4} className="py-8 text-center text-sm text-slate-500">Belum ada TARGET_TOO_FAR pada filter ini.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TargetMetricTable({ rows }: { rows: MidShortTargetDistanceMetricRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>TARGET_TOO_FAR Q1 / median / Q3</th>
+            <th>TP control Q1 / median / Q3</th>
+            <th>Other SL Q1 / median / Q3</th>
+            <th>Median delta vs TP</th>
+            <th>Coverage target</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td>{distributionText(row.target_too_far)}</td>
+              <td>{distributionText(row.tp_control)}</td>
+              <td>{distributionText(row.other_sl)}</td>
+              <td className="font-semibold">{fmtSigned(row.median_delta_vs_tp)}</td>
+              <td>{row.target_too_far.available_count}/{row.target_too_far.sample_count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CounterfactualTable({ rows }: { rows: MidShortCounterfactualRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Exit variant</th>
+            <th>All cohort</th>
+            <th>Train</th>
+            <th>Validation</th>
+            <th>Validation delta</th>
+            <th>Target subset</th>
+            <th>Max DD / concentration</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.config_id}>
+              <td className="max-w-xs">
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.evaluation_horizon}</div>
+              </td>
+              <td><CounterfactualPerfCell value={row.all} /></td>
+              <td><CounterfactualPerfCell value={row.train} /></td>
+              <td><CounterfactualPerfCell value={row.validation} /></td>
+              <td className="font-semibold">{fmtSigned(row.validation_avg_r_delta_vs_control)}R avg</td>
+              <td><CounterfactualPerfCell value={row.target_too_far_subset} /></td>
+              <td className="text-xs">
+                <div>{fmtSigned(row.all.max_drawdown_r)}R DD</div>
+                <div>{row.all.top_symbol || "-"} {fmtNumber(row.all.top_symbol_share_pct)}%</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CounterfactualPerfCell({ value }: { value: MidShortCounterfactualRow["all"] }) {
+  return (
+    <div className="min-w-36 text-xs">
+      <div className="font-semibold">n {value.sample_count} / {fmtSigned(value.total_realistic_r)}R</div>
+      <div>TP {value.tp_count} / SL {value.sl_count} / BE {value.breakeven_count}</div>
+      <div>Both {value.both_count} / Neither {value.neither_count}</div>
+      <div>Avg {fmtSigned(value.avg_realistic_r)}R</div>
+    </div>
+  );
+}
+
+function TargetCaseLedger({ rows }: { rows: MidShortTargetDistanceCase[] }) {
+  return (
+    <div className="grid gap-3 p-4 xl:grid-cols-2">
+      {rows.map((row) => (
+        <article className="rounded border border-line bg-white p-4" key={row.signal_id}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-base font-bold text-blue-700">{row.symbol}</div>
+              <div className="text-xs text-slate-500">{row.signal_time_wib || fmtTime(row.signal_timestamp)}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge value={row.target_distance_primary_hypothesis || "RR_GEOMETRY_MISMATCH"} />
+              <StatusBadge value={row.target_distance_context_status || "CONTEXT_PARTIAL"} />
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <CaseMetric label="Entry / SL / TP" value={`${fmtPrice(row.entry)} / ${fmtPrice(row.stop_loss)} / ${fmtPrice(row.take_profit)}`} />
+            <CaseMetric label="ATR 1h / risk" value={`${fmtPrice(row.atr_1h_at_entry)} / ${fmtNumber(row.logged_risk_atr_ratio)}x`} helper={`${fmtNumber(row.atr_pct_entry)}% of entry`} />
+            <CaseMetric label="ATR vs history" value={`${fmtNumber(row.atr_vs_30_median)}x`} helper={`signal/prior ${fmtNumber(row.atr_signal_inflation_ratio)}x`} />
+            <CaseMetric label="Signal TR / ATR" value={`${fmtNumber(row.signal_true_range_atr)}x`} helper={`RR ${fmtNumber(row.rr)}R`} />
+            <CaseMetric label="Pre-entry move" value={`1h ${fmtSigned(row.pre_entry_1h_move_atr)} / 4h ${fmtSigned(row.pre_entry_4h_move_atr)} ATR`} />
+            <CaseMetric label="Path before SL" value={`MFE ${fmtSigned(row.mfe_before_first_hit_r)}R`} helper={`MAE ${fmtSigned(row.mae_before_first_hit_r)}R / candle ${fmtNumber(row.first_hit_candle_index)}`} />
+            <CaseMetric label="Forward 1h range" value={`${fmtNumber(row.forward_1h_realized_range_atr)} ATR`} helper={`Volume ${fmtNumber(row.forward_1h_volume_vs_pre30)}x`} />
+            <CaseMetric label="Taker sell" value={`${fmtFractionPct(row.entry_taker_sell_ratio)} -> ${fmtFractionPct(row.forward_1h_taker_sell_ratio)}`} helper={`delta ${fmtSigned(row.taker_sell_delta_1h)}`} />
+            <CaseMetric label="Forward OI" value={`${fmtSigned(row.forward_1h_oi_change_pct)}%`} />
+            <CaseMetric label="Support proxy" value={`${fmtNumber(row.support_distance_r)}R`} helper={row.support_before_target ? "Support berada sebelum target" : "Tidak berada sebelum target"} />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3 text-xs text-slate-600">
+            <div>{(row.target_distance_hypotheses || []).map((value) => labelFor(value)).join("; ") || "No hypothesis"}</div>
+            <Link
+              className="font-semibold text-blue-700 hover:underline"
+              href={`/signals/${encodeURIComponent(row.symbol)}?timeframe=1h&signal_id=${encodeURIComponent(row.signal_id)}`}
+            >
+              Open evidence chart
+            </Link>
+          </div>
+        </article>
+      ))}
+      {!rows.length && <div className="py-8 text-center text-sm text-slate-500 xl:col-span-2">Belum ada case dalam scope aktif.</div>}
+    </div>
+  );
+}
+
+function CaseMetric({ label, value, helper }: { label: string; value: string; helper?: string }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
+      <div className="mt-1 font-semibold text-ink">{value}</div>
+      {helper ? <div className="mt-1 text-xs text-slate-500">{helper}</div> : null}
+    </div>
+  );
+}
+
+function distributionText(value: MidShortTargetDistanceMetricRow["target_too_far"]): string {
+  return `${fmtNumber(value.q1)} / ${fmtNumber(value.median)} / ${fmtNumber(value.q3)}`;
+}
+
+function fmtFractionPct(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const number = Number(value);
+  return Number.isFinite(number) ? `${fmtNumber(number * 100)}%` : String(value);
 }
 
 function BucketTable({ rows, showDimension = false }: { rows: MidShortFailureBucketRow[]; showDimension?: boolean }) {

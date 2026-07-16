@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-16",
+    version: "LAB-52",
+    title: "MID_SHORT 1h Target Distance Decomposition",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Membedah seluruh TARGET_TOO_FAR MID_SHORT 1h dengan ATR 1h historis, entry extension, struktur, forward flow, dan fixed-cohort exit simulation.",
+    changes: [
+      "ATR signal dihitung dari 14 candle futures 1h yang sudah closed; ATR dibandingkan dengan median 30 ATR sebelumnya dan ATR satu candle sebelumnya tanpa future leak.",
+      "Setiap TARGET_TOO_FAR mendapat hipotesis ATR inflated, late-entry extension, volatility contraction, structure block, momentum decay, atau RR geometry mismatch.",
+      "Forward taker, volume, OI, realized range, dan time-to-level ditampilkan sebagai outcome diagnostics saja, bukan input entry.",
+      "Exit geometry 0.75R, 1R, 1.25R, 1.5R, protect-after-0.75R, serta risk 0.75x/1.25x diuji pada fixed cohort 4h dengan biaya realistis dan train/validation split.",
+      "Ledger lengkap menampilkan semua kasus aktif beserta angka aktual WIB dan tautan evidence chart.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner decision, TP/SL live, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset dapat membedakan apakah target terlalu jauh disebabkan ATR, timing, struktur, momentum, atau geometri exit sebelum mengusulkan shadow rule baru.",
+    links: [
+      { href: "/mid-short-failure-anatomy", label: "Direction Failure Lab" },
+      { href: "/signal-performance?stage=MID_SHORT&timeframe=1h", label: "MID_SHORT Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-16",
     version: "LAB-51",
     title: "MID_SHORT 1h Direction Failure Classification",
     status: "LIVE",

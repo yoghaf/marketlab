@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -12,7 +12,14 @@ from typing import Any, Callable
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.market import FuturesKline1m, FuturesKline15m, MarketlabActiveUniverse, SignalForwardReturnLog
+from app.models.market import (
+    FuturesKline1h,
+    FuturesKline1m,
+    FuturesKline15m,
+    FuturesOpenInterestHistory,
+    MarketlabActiveUniverse,
+    SignalForwardReturnLog,
+)
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.utils import utcnow
 
@@ -77,6 +84,8 @@ class PerfCandle:
     low: Decimal
     close: Decimal
     volume: Decimal | None = None
+    taker_buy_base_volume: Decimal | None = None
+    taker_sell_base_volume: Decimal | None = None
     source_interval: str = "15m"
 
 
@@ -467,6 +476,9 @@ class SignalCandidatePerformanceService:
             annotated = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
         elif normalized_base_filter != "ALL":
             normalized_base_filter = "ALL"
+        target_distance_study = _mid_short_target_distance_study(annotated, min_sample=min_sample)
+        for item in annotated:
+            item.pop("_lab52_counterfactuals", None)
         baseline = _walk_forward_perf(annotated)
         closed = [item for item in annotated if item.get("result_status") in COMPLETED_OUTCOMES]
         tp_items = [item for item in closed if item.get("result_status") == "TP_HIT"]
@@ -543,6 +555,7 @@ class SignalCandidatePerformanceService:
             "baseline": baseline,
             "sl_failure_cause_summary": sl_failure_cause_summary,
             "sl_failure_cause_rows": sl_failure_cause_rows,
+            "target_distance_study": target_distance_study,
             "mfe_mae_summary": _mid_short_mfe_mae_summary(annotated),
             "outcome_path_rows": _anatomy_bucket_rows(annotated, key="path_type", min_sample=min_sample, baseline=baseline),
             "direction_rows": _direction_correctness_rows(annotated, baseline=baseline, min_sample=min_sample),
@@ -561,6 +574,8 @@ class SignalCandidatePerformanceService:
                 "Failure anatomy only reads logged V2 MID_SHORT 1h signals and local futures candles.",
                 "Path labels explain why TP/SL happened; they do not change Signal Factory rules.",
                 "Primary failure causes are mutually exclusive research hypotheses, not proof of market causality.",
+                "LAB-52 entry diagnostics use only information closed at signal time; forward fields are outcome-only.",
+                "LAB-52 exit variants are fixed-cohort 4h simulations and do not replace the live TP/SL rule.",
                 "Improvement candidates are research-only filters, not live scanner rules.",
                 "No TP/SL formula, execution, order, leverage, or position sizing is created.",
             ],
@@ -1254,9 +1269,10 @@ class SignalCandidatePerformanceService:
             signal_id=None,
         )
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
+        max_signal_time = max((_naive(row.signal_timestamp) for row in signals), default=None)
         source_symbols = {row.symbol for row in signals}
         candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
-        candle_start = min_signal_time - timedelta(hours=5) if min_signal_time is not None else None
+        candle_start = min_signal_time - timedelta(hours=10) if min_signal_time is not None else None
         base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
         latest_base_time = max(
             (candle.close_time for rows in base_candles.values() for candle in rows),
@@ -1276,6 +1292,16 @@ class SignalCandidatePerformanceService:
             global_latest_candle_time=self._global_latest_candle_time() or latest_candle_time,
         )
         self._apply_universe_context(evaluated, source_symbols)
+        one_hour_candles = self._load_1h_candles(
+            source_symbols,
+            start_time=min_signal_time - timedelta(hours=72) if min_signal_time is not None else None,
+            end_time=max_signal_time + timedelta(hours=4) if max_signal_time is not None else None,
+        )
+        oi_history = self._load_oi_history(
+            source_symbols,
+            start_time=min_signal_time - timedelta(minutes=15) if min_signal_time is not None else None,
+            end_time=max_signal_time + timedelta(hours=1, minutes=15) if max_signal_time is not None else None,
+        )
         normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
         if normalized_shadow_status != "ALL":
             evaluated = [
@@ -1283,7 +1309,17 @@ class SignalCandidatePerformanceService:
                 for item in evaluated
                 if str(item.get("quality_shadow_status") or "").upper() == normalized_shadow_status
             ]
-        return _annotate_mid_short_failure_anatomy(evaluated, candles), skipped, latest_candle_time, normalized_shadow_status
+        return (
+            _annotate_mid_short_failure_anatomy(
+                evaluated,
+                candles,
+                one_hour_candles=one_hour_candles,
+                oi_history=oi_history,
+            ),
+            skipped,
+            latest_candle_time,
+            normalized_shadow_status,
+        )
 
     def forward_integrity(
         self,
@@ -1980,6 +2016,8 @@ class SignalCandidatePerformanceService:
                 FuturesKline15m.low,
                 FuturesKline15m.close,
                 FuturesKline15m.volume,
+                FuturesKline15m.taker_buy_base_volume,
+                FuturesKline15m.taker_sell_base_volume,
             )
             .where(
                 FuturesKline15m.symbol.in_(symbols),
@@ -2003,9 +2041,103 @@ class SignalCandidatePerformanceService:
                     low=Decimal(row.low),
                     close=Decimal(row.close),
                     volume=Decimal(row.volume) if row.volume is not None else None,
+                    taker_buy_base_volume=(
+                        Decimal(row.taker_buy_base_volume) if row.taker_buy_base_volume is not None else None
+                    ),
+                    taker_sell_base_volume=(
+                        Decimal(row.taker_sell_base_volume) if row.taker_sell_base_volume is not None else None
+                    ),
                     source_interval="15m",
                 )
             )
+        return dict(output)
+
+    def _load_1h_candles(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[PerfCandle]]:
+        if not symbols:
+            return {}
+        query = (
+            select(
+                FuturesKline1h.symbol,
+                FuturesKline1h.open_time,
+                FuturesKline1h.close_time,
+                FuturesKline1h.open,
+                FuturesKline1h.high,
+                FuturesKline1h.low,
+                FuturesKline1h.close,
+                FuturesKline1h.volume,
+                FuturesKline1h.taker_buy_base_volume,
+                FuturesKline1h.taker_sell_base_volume,
+            )
+            .where(
+                FuturesKline1h.symbol.in_(symbols),
+                FuturesKline1h.aggregation_status == "AGG_READY",
+            )
+            .order_by(asc(FuturesKline1h.symbol), asc(FuturesKline1h.open_time))
+        )
+        if start_time is not None:
+            query = query.where(FuturesKline1h.open_time >= start_time)
+        if end_time is not None:
+            query = query.where(FuturesKline1h.open_time <= end_time)
+        rows = self.db.execute(query).all()
+        output: dict[str, list[PerfCandle]] = defaultdict(list)
+        for row in rows:
+            output[row.symbol].append(
+                PerfCandle(
+                    open_time=_naive(row.open_time),
+                    close_time=_naive(row.close_time),
+                    open=Decimal(row.open),
+                    high=Decimal(row.high),
+                    low=Decimal(row.low),
+                    close=Decimal(row.close),
+                    volume=Decimal(row.volume) if row.volume is not None else None,
+                    taker_buy_base_volume=(
+                        Decimal(row.taker_buy_base_volume) if row.taker_buy_base_volume is not None else None
+                    ),
+                    taker_sell_base_volume=(
+                        Decimal(row.taker_sell_base_volume) if row.taker_sell_base_volume is not None else None
+                    ),
+                    source_interval="1h",
+                )
+            )
+        return dict(output)
+
+    def _load_oi_history(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[tuple[datetime, Decimal]]]:
+        if not symbols or start_time is None:
+            return {}
+        query = (
+            select(
+                FuturesOpenInterestHistory.symbol,
+                FuturesOpenInterestHistory.timestamp,
+                FuturesOpenInterestHistory.sum_open_interest,
+            )
+            .where(
+                FuturesOpenInterestHistory.symbol.in_(symbols),
+                FuturesOpenInterestHistory.period == "5m",
+                FuturesOpenInterestHistory.timestamp >= start_time,
+                FuturesOpenInterestHistory.sum_open_interest.is_not(None),
+            )
+            .order_by(
+                asc(FuturesOpenInterestHistory.symbol),
+                asc(FuturesOpenInterestHistory.timestamp),
+            )
+        )
+        if end_time is not None:
+            query = query.where(FuturesOpenInterestHistory.timestamp <= end_time)
+        output: dict[str, list[tuple[datetime, Decimal]]] = defaultdict(list)
+        for row in self.db.execute(query).all():
+            output[row.symbol].append((_naive(row.timestamp), Decimal(row.sum_open_interest)))
         return dict(output)
 
     def _load_1m_candles(
@@ -2027,6 +2159,7 @@ class SignalCandidatePerformanceService:
                 FuturesKline1m.low_price,
                 FuturesKline1m.close_price,
                 FuturesKline1m.volume,
+                FuturesKline1m.taker_buy_base_volume,
             )
             .where(
                 FuturesKline1m.symbol.in_(symbols),
@@ -2039,6 +2172,8 @@ class SignalCandidatePerformanceService:
         rows = self.db.execute(query).all()
         output: dict[str, list[PerfCandle]] = defaultdict(list)
         for row in rows:
+            volume = Decimal(row.volume) if row.volume is not None else None
+            taker_buy = Decimal(row.taker_buy_base_volume) if row.taker_buy_base_volume is not None else None
             output[row.symbol].append(
                 PerfCandle(
                     open_time=_naive(row.open_time),
@@ -2047,7 +2182,9 @@ class SignalCandidatePerformanceService:
                     high=Decimal(row.high_price),
                     low=Decimal(row.low_price),
                     close=Decimal(row.close_price),
-                    volume=Decimal(row.volume) if row.volume is not None else None,
+                    volume=volume,
+                    taker_buy_base_volume=taker_buy,
+                    taker_sell_base_volume=(volume - taker_buy) if volume is not None and taker_buy is not None else None,
                     source_interval="1m",
                 )
             )
@@ -4626,22 +4763,852 @@ def _quality_shadow_forward_read(
 def _annotate_mid_short_failure_anatomy(
     items: list[dict[str, Any]],
     candles: dict[str, list[PerfCandle]],
+    *,
+    one_hour_candles: dict[str, list[PerfCandle]] | None = None,
+    oi_history: dict[str, list[tuple[datetime, Decimal]]] | None = None,
 ) -> list[dict[str, Any]]:
+    one_hour_candles = one_hour_candles or {}
+    oi_history = oi_history or {}
     btc_candles = candles.get("BTCUSDT", [])
     eth_candles = candles.get("ETHUSDT", [])
     annotated: list[dict[str, Any]] = []
     for item in items:
-        path = _mid_short_path_anatomy(item, candles.get(str(item.get("symbol") or ""), []))
+        symbol = str(item.get("symbol") or "")
+        symbol_candles = candles.get(symbol, [])
+        path = _mid_short_path_anatomy(item, symbol_candles)
         regime = _mid_short_regime_context(item, btc_candles=btc_candles, eth_candles=eth_candles)
+        target_context = _mid_short_target_distance_context(
+            item,
+            candles=symbol_candles,
+            one_hour_candles=one_hour_candles.get(symbol, []),
+            oi_rows=oi_history.get(symbol, []),
+        )
         base = {
             **item,
             **path,
             **regime,
+            **target_context,
             "wib_session": _wib_session(_parse_dt(item.get("signal_timestamp"))),
         }
         enriched = {**base, **_mid_short_sl_failure_classification(base)}
         annotated.append(enriched)
     return annotated
+
+
+LAB52_COUNTERFACTUAL_SPECS = (
+    ("CONTROL_LOGGED", "Logged SL / TP", Decimal("1"), None, None, True),
+    ("TP_0_75R", "Target 0.75R", Decimal("1"), Decimal("0.75"), None, False),
+    ("TP_1_0R", "Target 1.00R", Decimal("1"), Decimal("1.00"), None, False),
+    ("TP_1_25R", "Target 1.25R", Decimal("1"), Decimal("1.25"), None, False),
+    ("TP_1_5R", "Target 1.50R", Decimal("1"), Decimal("1.50"), None, False),
+    ("TP_1_5R_BE_0_75R", "Target 1.50R + protect entry after 0.75R", Decimal("1"), Decimal("1.50"), Decimal("0.75"), False),
+    ("ATR_RISK_0_75X_RR_1_5", "Risk 0.75x logged + target 1.50R", Decimal("0.75"), Decimal("1.50"), None, False),
+    ("ATR_RISK_1_25X_RR_1_5", "Risk 1.25x logged + target 1.50R", Decimal("1.25"), Decimal("1.50"), None, False),
+)
+
+
+def _mid_short_target_distance_context(
+    item: dict[str, Any],
+    *,
+    candles: list[PerfCandle],
+    one_hour_candles: list[PerfCandle],
+    oi_rows: list[tuple[datetime, Decimal]],
+) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    if entry is None or risk is None or risk <= 0 or target is None or signal_time is None:
+        return _empty_mid_short_target_distance_context()
+
+    atr_context = _mid_short_atr_context(
+        entry=entry,
+        risk=risk,
+        signal_time=signal_time,
+        one_hour_candles=one_hour_candles,
+    )
+    forward_context = _mid_short_forward_context(
+        item,
+        candles=candles,
+        signal_time=signal_time,
+        entry=entry,
+        risk=risk,
+        atr_1h=_decimal_or_none_any(atr_context.get("atr_1h_at_entry")),
+    )
+    support_context = _mid_short_support_context(
+        entry=entry,
+        target=target,
+        risk=risk,
+        signal_time=signal_time,
+        one_hour_candles=one_hour_candles,
+    )
+    oi_context = _mid_short_oi_context(signal_time=signal_time, oi_rows=oi_rows)
+    evidence = item.get("evidence_snapshot") if isinstance(item.get("evidence_snapshot"), dict) else {}
+    entry_taker_sell = _decimal_or_none_any(evidence.get("kline_taker_sell_ratio"))
+    entry_volume_ratio = _decimal_or_none_any(evidence.get("volume_ratio_vs_lookback"))
+    entry_oi_change = _decimal_or_none_any(evidence.get("oi_change_pct"))
+    forward_taker_sell = _decimal_or_none_any(forward_context.get("forward_1h_taker_sell_ratio"))
+    forward_oi_change = _decimal_or_none_any(oi_context.get("forward_1h_oi_change_pct"))
+    data_points = {
+        "atr": atr_context.get("atr_1h_at_entry"),
+        "structure": support_context.get("support_price_proxy"),
+        "forward_range": forward_context.get("forward_1h_realized_range_atr"),
+        "taker": forward_taker_sell,
+        "volume": forward_context.get("forward_1h_volume_vs_pre30"),
+        "oi": forward_oi_change,
+    }
+    available_count = sum(value is not None for value in data_points.values())
+    return {
+        **atr_context,
+        **forward_context,
+        **support_context,
+        **oi_context,
+        "entry_taker_sell_ratio": entry_taker_sell,
+        "entry_volume_ratio": entry_volume_ratio,
+        "entry_oi_change_pct": entry_oi_change,
+        "taker_sell_delta_1h": (
+            forward_taker_sell - entry_taker_sell
+            if forward_taker_sell is not None and entry_taker_sell is not None
+            else None
+        ),
+        "oi_change_delta_1h": (
+            forward_oi_change - entry_oi_change
+            if forward_oi_change is not None and entry_oi_change is not None
+            else None
+        ),
+        "target_distance_context_available": available_count,
+        "target_distance_context_total": len(data_points),
+        "target_distance_context_status": (
+            "CONTEXT_COMPLETE" if available_count == len(data_points) else "CONTEXT_PARTIAL"
+        ),
+        "_lab52_counterfactuals": {
+            config_id: _mid_short_counterfactual_exit(
+                item,
+                candles=candles,
+                risk_scale=risk_scale,
+                target_rr=target_rr,
+                protect_at_r=protect_at_r,
+                use_logged_target=use_logged_target,
+            )
+            for config_id, _label, risk_scale, target_rr, protect_at_r, use_logged_target in LAB52_COUNTERFACTUAL_SPECS
+        },
+    }
+
+
+def _empty_mid_short_target_distance_context() -> dict[str, Any]:
+    return {
+        "atr_1h_at_entry": None,
+        "atr_pct_entry": None,
+        "logged_risk_atr_ratio": None,
+        "atr_30_median": None,
+        "atr_vs_30_median": None,
+        "atr_prior_value": None,
+        "atr_signal_inflation_ratio": None,
+        "signal_true_range_atr": None,
+        "signal_tr_contribution_pct": None,
+        "pre_entry_1h_move_atr": None,
+        "pre_entry_4h_move_atr": None,
+        "support_price_proxy": None,
+        "support_distance_r": None,
+        "support_before_target": False,
+        "forward_1h_realized_range_atr": None,
+        "forward_1h_mfe_r": None,
+        "forward_1h_mae_r": None,
+        "forward_2h_mfe_r": None,
+        "forward_2h_mae_r": None,
+        "forward_4h_mfe_r": None,
+        "forward_4h_mae_r": None,
+        "forward_1h_taker_sell_ratio": None,
+        "forward_1h_volume_vs_pre30": None,
+        "forward_1h_oi_change_pct": None,
+        "entry_taker_sell_ratio": None,
+        "entry_volume_ratio": None,
+        "entry_oi_change_pct": None,
+        "taker_sell_delta_1h": None,
+        "oi_change_delta_1h": None,
+        "target_distance_context_available": 0,
+        "target_distance_context_total": 6,
+        "target_distance_context_status": "CONTEXT_MISSING",
+        "_lab52_counterfactuals": {},
+    }
+
+
+def _mid_short_atr_context(
+    *,
+    entry: Decimal,
+    risk: Decimal,
+    signal_time: datetime,
+    one_hour_candles: list[PerfCandle],
+) -> dict[str, Any]:
+    closed = sorted(
+        (candle for candle in one_hour_candles if candle.close_time <= signal_time),
+        key=lambda candle: candle.close_time,
+    )
+    true_ranges = _candle_true_ranges(closed)
+    atr_series: list[tuple[datetime, Decimal]] = []
+    for index in range(13, len(true_ranges)):
+        atr_series.append(
+            (
+                closed[index].close_time,
+                sum(true_ranges[index - 13 : index + 1], Decimal("0")) / Decimal("14"),
+            )
+        )
+    atr = atr_series[-1][1] if atr_series else None
+    prior_atr = atr_series[-2][1] if len(atr_series) >= 2 else None
+    historical_atrs = [value for _time, value in atr_series[-31:-1]]
+    atr_30_median = _percentile_decimal(historical_atrs, Decimal("0.5"))
+    current_tr = true_ranges[-1] if true_ranges else None
+    prior_close_1h = closed[-2].close if len(closed) >= 2 else None
+    prior_close_4h = closed[-5].close if len(closed) >= 5 else None
+    return {
+        "atr_1h_at_entry": atr,
+        "atr_pct_entry": (atr / entry * Decimal("100")) if atr is not None and entry > 0 else None,
+        "logged_risk_atr_ratio": (risk / atr) if atr is not None and atr > 0 else None,
+        "atr_30_median": atr_30_median,
+        "atr_vs_30_median": (atr / atr_30_median) if atr is not None and atr_30_median not in (None, Decimal("0")) else None,
+        "atr_prior_value": prior_atr,
+        "atr_signal_inflation_ratio": (atr / prior_atr) if atr is not None and prior_atr not in (None, Decimal("0")) else None,
+        "signal_true_range_atr": (current_tr / atr) if current_tr is not None and atr not in (None, Decimal("0")) else None,
+        "signal_tr_contribution_pct": (current_tr / (atr * Decimal("14")) * Decimal("100")) if current_tr is not None and atr not in (None, Decimal("0")) else None,
+        "pre_entry_1h_move_atr": ((prior_close_1h - entry) / atr) if prior_close_1h is not None and atr not in (None, Decimal("0")) else None,
+        "pre_entry_4h_move_atr": ((prior_close_4h - entry) / atr) if prior_close_4h is not None and atr not in (None, Decimal("0")) else None,
+        "atr_closed_candle_count": len(closed),
+    }
+
+
+def _candle_true_ranges(candles: list[PerfCandle]) -> list[Decimal]:
+    output: list[Decimal] = []
+    previous_close: Decimal | None = None
+    for candle in candles:
+        values = [candle.high - candle.low]
+        if previous_close is not None:
+            values.extend((abs(candle.high - previous_close), abs(candle.low - previous_close)))
+        output.append(max(values))
+        previous_close = candle.close
+    return output
+
+
+def _mid_short_support_context(
+    *,
+    entry: Decimal,
+    target: Decimal,
+    risk: Decimal,
+    signal_time: datetime,
+    one_hour_candles: list[PerfCandle],
+) -> dict[str, Any]:
+    closed = sorted(
+        (candle for candle in one_hour_candles if candle.close_time <= signal_time),
+        key=lambda candle: candle.close_time,
+    )[-24:]
+    swing_low = None
+    for index in range(len(closed) - 2, 0, -1):
+        if closed[index].low <= closed[index - 1].low and closed[index].low <= closed[index + 1].low:
+            swing_low = closed[index].low
+            break
+    if swing_low is None and closed:
+        swing_low = min(candle.low for candle in closed)
+    support_distance_r = (entry - swing_low) / risk if swing_low is not None and risk > 0 else None
+    return {
+        "support_price_proxy": swing_low,
+        "support_distance_r": support_distance_r,
+        "support_before_target": bool(
+            swing_low is not None and target < swing_low < entry and support_distance_r is not None and support_distance_r > 0
+        ),
+        "support_method": "nearest confirmed 1h swing low in the latest 24 closed candles; fallback to period low",
+    }
+
+
+def _mid_short_forward_context(
+    item: dict[str, Any],
+    *,
+    candles: list[PerfCandle],
+    signal_time: datetime,
+    entry: Decimal,
+    risk: Decimal,
+    atr_1h: Decimal | None,
+) -> dict[str, Any]:
+    ordered = sorted(candles, key=lambda candle: candle.open_time)
+    open_times = [candle.open_time for candle in ordered]
+    future = ordered[bisect_left(open_times, signal_time):]
+    future_4h = [candle for candle in future if candle.close_time <= signal_time + timedelta(hours=4)]
+    pre_15m = [
+        candle
+        for candle in ordered
+        if candle.source_interval == "15m" and candle.close_time <= signal_time and candle.volume is not None
+    ][-30:]
+    mean_pre_volume = _avg_decimal([Decimal(candle.volume) for candle in pre_15m if candle.volume is not None])
+    output: dict[str, Any] = {}
+    for label, minutes in (("1h", 60), ("2h", 120), ("4h", 240)):
+        rows = [candle for candle in future if candle.close_time <= signal_time + timedelta(minutes=minutes)]
+        if not rows:
+            output[f"forward_{label}_mfe_r"] = None
+            output[f"forward_{label}_mae_r"] = None
+            if label == "1h":
+                output["forward_1h_realized_range_atr"] = None
+            continue
+        output[f"forward_{label}_mfe_r"] = max((entry - candle.low) / risk for candle in rows)
+        output[f"forward_{label}_mae_r"] = min((entry - candle.high) / risk for candle in rows)
+        if label == "1h":
+            realized_range = max(candle.high for candle in rows) - min(candle.low for candle in rows)
+            output["forward_1h_realized_range_atr"] = (
+                realized_range / atr_1h if atr_1h not in (None, Decimal("0")) else None
+            )
+            buy = sum(
+                (Decimal(candle.taker_buy_base_volume) for candle in rows if candle.taker_buy_base_volume is not None),
+                Decimal("0"),
+            )
+            sell = sum(
+                (Decimal(candle.taker_sell_base_volume) for candle in rows if candle.taker_sell_base_volume is not None),
+                Decimal("0"),
+            )
+            output["forward_1h_taker_sell_ratio"] = sell / (buy + sell) if buy + sell > 0 else None
+            forward_volume = sum(
+                (Decimal(candle.volume) for candle in rows if candle.volume is not None),
+                Decimal("0"),
+            )
+            expected_volume = mean_pre_volume * Decimal("4") if mean_pre_volume is not None else None
+            output["forward_1h_volume_vs_pre30"] = (
+                forward_volume / expected_volume if expected_volume not in (None, Decimal("0")) else None
+            )
+
+    level_times: dict[str, Decimal | None] = {}
+    for level in (Decimal("0.25"), Decimal("0.50"), Decimal("0.75"), Decimal("1.00"), Decimal("1.25"), Decimal("1.50")):
+        hit = next((candle for candle in future_4h if candle.low <= entry - (risk * level)), None)
+        key = str(level).replace(".", "_")
+        level_times[f"time_to_{key}r_minutes"] = (
+            Decimal((hit.close_time - signal_time).total_seconds()) / Decimal("60") if hit else None
+        )
+    mfe_candle = min(future_4h, key=lambda candle: candle.low) if future_4h else None
+    return {
+        **output,
+        **level_times,
+        "time_to_mfe_minutes": (
+            Decimal((mfe_candle.close_time - signal_time).total_seconds()) / Decimal("60") if mfe_candle else None
+        ),
+        "volume_baseline_candle_count": len(pre_15m),
+    }
+
+
+def _mid_short_oi_context(
+    *,
+    signal_time: datetime,
+    oi_rows: list[tuple[datetime, Decimal]],
+) -> dict[str, Any]:
+    ordered = sorted(oi_rows, key=lambda row: row[0])
+    timestamps = [row[0] for row in ordered]
+
+    def point_at_or_before(cutoff: datetime) -> tuple[datetime, Decimal] | None:
+        index = bisect_right(timestamps, cutoff) - 1
+        if index < 0:
+            return None
+        point = ordered[index]
+        return point if cutoff - point[0] <= timedelta(minutes=10) else None
+
+    start = point_at_or_before(signal_time)
+    end = point_at_or_before(signal_time + timedelta(hours=1))
+    change = None
+    if start is not None and end is not None and start[1] > 0:
+        change = (end[1] - start[1]) / start[1] * Decimal("100")
+    return {
+        "forward_1h_oi_change_pct": change,
+        "oi_entry_timestamp": start[0] if start else None,
+        "oi_forward_1h_timestamp": end[0] if end else None,
+    }
+
+
+def _mid_short_counterfactual_exit(
+    item: dict[str, Any],
+    *,
+    candles: list[PerfCandle],
+    risk_scale: Decimal,
+    target_rr: Decimal | None,
+    protect_at_r: Decimal | None,
+    use_logged_target: bool,
+) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    logged_risk = _decimal_or_none_any(item.get("risk"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    if entry is None or logged_risk is None or logged_risk <= 0 or signal_time is None:
+        return {"status": "MISSING_CONTEXT", "realistic_r": None}
+    risk = logged_risk * risk_scale
+    stop = _decimal_or_none_any(item.get("stop_loss")) if use_logged_target else entry + risk
+    target = _decimal_or_none_any(item.get("take_profit")) if use_logged_target else (
+        entry - (risk * target_rr) if target_rr is not None else None
+    )
+    if stop is None or target is None:
+        return {"status": "MISSING_CONTEXT", "realistic_r": None}
+    ordered = sorted(candles, key=lambda candle: candle.open_time)
+    future = [
+        candle
+        for candle in ordered[bisect_left([candle.open_time for candle in ordered], signal_time):]
+        if candle.close_time <= signal_time + timedelta(hours=4)
+    ]
+    if not future:
+        return {"status": "MISSING_CONTEXT", "realistic_r": None}
+    protected = False
+    mfe = Decimal("0")
+    mae = Decimal("0")
+    for candle in future:
+        active_stop = entry if protected else stop
+        tp_hit = candle.low <= target
+        sl_hit = candle.high >= active_stop
+        mfe = max(mfe, (entry - candle.low) / risk)
+        mae = min(mae, (entry - candle.high) / risk)
+        if tp_hit or sl_hit:
+            if tp_hit and sl_hit:
+                status = "BOTH_HIT_SAME_CANDLE"
+                exit_reference = active_stop
+                ideal_r = Decimal("0") if not protected else Decimal("0")
+                conservative_status = "SL_HIT_CONSERVATIVE"
+            elif tp_hit:
+                status = "TP_HIT"
+                exit_reference = target
+                ideal_r = (entry - target) / risk
+                conservative_status = None
+            elif protected:
+                status = "BREAKEVEN_PROTECTED"
+                exit_reference = entry
+                ideal_r = Decimal("0")
+                conservative_status = None
+            else:
+                status = "SL_HIT"
+                exit_reference = stop
+                ideal_r = Decimal("-1")
+                conservative_status = None
+            realistic = _realistic_result_fields(
+                item,
+                entry=entry,
+                exit_reference=exit_reference,
+                risk=risk,
+                direction="SHORT",
+                ideal_status=status,
+                ideal_r=ideal_r,
+                conservative_status=conservative_status,
+            )
+            return {
+                "status": status,
+                "result_time_utc": candle.close_time,
+                "ideal_r": ideal_r,
+                "realistic_r": realistic.get("realistic_realized_r"),
+                "entry": entry,
+                "stop": stop,
+                "target": target,
+                "risk": risk,
+                "mfe_r": mfe,
+                "mae_r": mae,
+            }
+        if protect_at_r is not None and not protected and candle.low <= entry - (risk * protect_at_r):
+            protected = True
+    last = future[-1]
+    ideal_r = (entry - last.close) / risk
+    realistic = _realistic_result_fields(
+        item,
+        entry=entry,
+        exit_reference=last.close,
+        risk=risk,
+        direction="SHORT",
+        ideal_status="NEITHER_4H",
+        ideal_r=ideal_r,
+        realized=False,
+    )
+    return {
+        "status": "NEITHER_4H",
+        "result_time_utc": last.close_time,
+        "ideal_r": ideal_r,
+        "realistic_r": realistic.get("realistic_unrealized_r"),
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "risk": risk,
+        "mfe_r": mfe,
+        "mae_r": mae,
+    }
+
+
+LAB52_METRICS = (
+    ("atr_pct_entry", "ATR 1h / entry %"),
+    ("logged_risk_atr_ratio", "Logged risk / ATR 1h"),
+    ("atr_vs_30_median", "ATR / median 30 ATR"),
+    ("atr_signal_inflation_ratio", "ATR signal / prior ATR"),
+    ("signal_true_range_atr", "Signal true range / ATR"),
+    ("pre_entry_1h_move_atr", "Pre-entry 1h move / ATR"),
+    ("pre_entry_4h_move_atr", "Pre-entry 4h move / ATR"),
+    ("support_distance_r", "Nearest support distance R"),
+    ("forward_1h_realized_range_atr", "Forward 1h realized range / ATR"),
+    ("forward_1h_taker_sell_ratio", "Forward 1h taker sell ratio"),
+    ("taker_sell_delta_1h", "Forward vs entry taker-sell delta"),
+    ("forward_1h_volume_vs_pre30", "Forward 1h volume / 30-candle baseline"),
+    ("forward_1h_oi_change_pct", "Forward 1h OI change %"),
+    ("mfe_before_first_hit_r", "MFE before first hit R"),
+    ("first_hit_candle_index", "First hit candle index"),
+)
+
+
+def _mid_short_target_distance_study(
+    items: list[dict[str, Any]],
+    *,
+    min_sample: int,
+) -> dict[str, Any]:
+    closed = [item for item in items if item.get("result_status") in COMPLETED_OUTCOMES]
+    target_items = [item for item in closed if item.get("failure_primary_cause") == "TARGET_TOO_FAR"]
+    tp_control = [item for item in closed if item.get("result_status") == "TP_HIT"]
+    other_sl = [
+        item
+        for item in closed
+        if item.get("result_status") == "SL_HIT" and item.get("failure_primary_cause") != "TARGET_TOO_FAR"
+    ]
+    thresholds = _lab52_data_derived_thresholds(tp_control)
+    hypothesis_counter: Counter[str] = Counter()
+    multi_counter: Counter[str] = Counter()
+    for item in target_items:
+        flags = _lab52_hypothesis_flags(item, thresholds=thresholds)
+        primary = _lab52_primary_hypothesis(flags)
+        item["target_distance_hypotheses"] = flags
+        item["target_distance_primary_hypothesis"] = primary
+        hypothesis_counter[primary] += 1
+        multi_counter.update(flags)
+
+    metric_rows = [
+        _lab52_metric_comparison_row(
+            field=field,
+            label=label,
+            target_items=target_items,
+            tp_items=tp_control,
+            other_sl_items=other_sl,
+        )
+        for field, label in LAB52_METRICS
+    ]
+    config_rows = _lab52_counterfactual_rows(closed, target_items=target_items, min_sample=min_sample)
+    dominant = hypothesis_counter.most_common(1)[0] if hypothesis_counter else ("NO_TARGET_TOO_FAR_SAMPLE", 0)
+    case_rows = [
+        _lab52_case_row(item)
+        for item in sorted(
+            target_items,
+            key=lambda row: (_parse_dt(row.get("signal_timestamp")) or datetime.min, str(row.get("symbol") or "")),
+            reverse=True,
+        )
+    ]
+    return {
+        "study_id": "LAB_52_TARGET_TOO_FAR_DECOMPOSITION",
+        "read_only": True,
+        "method": (
+            "Entry diagnostics use only closed candles and OI known at or before the signal. "
+            "Post-entry range, taker, volume, OI, and level timing are outcome diagnostics only."
+        ),
+        "summary": {
+            "target_too_far_count": len(target_items),
+            "tp_control_count": len(tp_control),
+            "other_sl_count": len(other_sl),
+            "unique_symbol_count": len({str(item.get('symbol') or '') for item in target_items}),
+            "dominant_hypothesis": dominant[0],
+            "dominant_hypothesis_count": dominant[1],
+            "dominant_hypothesis_share_pct": (
+                Decimal(dominant[1]) / Decimal(len(target_items)) * Decimal("100") if target_items else None
+            ),
+            "complete_context_count": sum(
+                1 for item in target_items if item.get("target_distance_context_status") == "CONTEXT_COMPLETE"
+            ),
+            "verdict": _lab52_study_verdict(
+                target_count=len(target_items),
+                dominant_count=dominant[1],
+                counterfactual_rows=config_rows,
+                min_sample=min_sample,
+            ),
+        },
+        "data_derived_thresholds": thresholds,
+        "hypothesis_rows": [
+            {
+                "hypothesis": hypothesis,
+                "primary_count": count,
+                "primary_share_pct": Decimal(count) / Decimal(len(target_items)) * Decimal("100") if target_items else None,
+                "multi_label_count": multi_counter.get(hypothesis, 0),
+                "multi_label_share_pct": (
+                    Decimal(multi_counter.get(hypothesis, 0)) / Decimal(len(target_items)) * Decimal("100")
+                    if target_items
+                    else None
+                ),
+                "read": _lab52_hypothesis_read(hypothesis),
+            }
+            for hypothesis, count in hypothesis_counter.most_common()
+        ],
+        "metric_comparison_rows": metric_rows,
+        "counterfactual_rows": config_rows,
+        "case_rows": case_rows,
+        "limitations": [
+            "Threshold diagnostic berasal dari kuartil TP control pada cohort yang sama; bukan threshold live baru.",
+            "Counterfactual memakai cohort signal yang tetap dan horizon 4h; position lock tidak dihitung ulang.",
+            "Candle OHLC tidak dapat menentukan urutan intrabar saat target dan stop tersentuh pada candle yang sama, sehingga stop dipilih konservatif.",
+            "Support adalah proxy swing-low 1h, bukan order-book liquidity wall.",
+            "Forward taker, volume, OI, dan realized range tidak boleh dipakai sebagai input entry karena baru diketahui setelah signal.",
+        ],
+    }
+
+
+def _lab52_data_derived_thresholds(tp_items: list[dict[str, Any]]) -> dict[str, Any]:
+    specs = {
+        "atr_inflated_q75": ("atr_vs_30_median", Decimal("0.75")),
+        "late_entry_q75": ("pre_entry_4h_move_atr", Decimal("0.75")),
+        "forward_range_q25": ("forward_1h_realized_range_atr", Decimal("0.25")),
+        "taker_delta_q25": ("taker_sell_delta_1h", Decimal("0.25")),
+        "forward_volume_q25": ("forward_1h_volume_vs_pre30", Decimal("0.25")),
+        "forward_oi_q25": ("forward_1h_oi_change_pct", Decimal("0.25")),
+    }
+    output: dict[str, Any] = {}
+    for name, (field, percentile) in specs.items():
+        values = [value for item in tp_items if (value := _decimal_or_none_any(item.get(field))) is not None]
+        output[name] = {
+            "field": field,
+            "percentile": percentile,
+            "value": _percentile_decimal(values, percentile),
+            "available_count": len(values),
+            "source": "TP_HIT control cohort in the current page filters",
+        }
+    return output
+
+
+def _lab52_hypothesis_flags(item: dict[str, Any], *, thresholds: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+
+    def threshold(name: str) -> Decimal | None:
+        row = thresholds.get(name) if isinstance(thresholds.get(name), dict) else {}
+        return _decimal_or_none_any(row.get("value"))
+
+    atr_ratio = _decimal_or_none_any(item.get("atr_vs_30_median"))
+    atr_limit = threshold("atr_inflated_q75")
+    if atr_ratio is not None and atr_limit is not None and atr_ratio >= atr_limit and atr_ratio > Decimal("1"):
+        flags.append("ATR_INFLATED")
+
+    pre_move = _decimal_or_none_any(item.get("pre_entry_4h_move_atr"))
+    late_limit = threshold("late_entry_q75")
+    if pre_move is not None and late_limit is not None and pre_move > 0 and pre_move >= max(Decimal("0"), late_limit):
+        flags.append("LATE_ENTRY_EXTENSION")
+
+    forward_range = _decimal_or_none_any(item.get("forward_1h_realized_range_atr"))
+    range_limit = threshold("forward_range_q25")
+    if forward_range is not None and range_limit is not None and forward_range <= range_limit:
+        flags.append("VOLATILITY_CONTRACTION")
+
+    if bool(item.get("support_before_target")):
+        flags.append("STRUCTURE_BLOCK")
+
+    momentum_checks = (
+        ("taker_sell_delta_1h", "taker_delta_q25"),
+        ("forward_1h_volume_vs_pre30", "forward_volume_q25"),
+        ("forward_1h_oi_change_pct", "forward_oi_q25"),
+    )
+    available = 0
+    weak = 0
+    for field, threshold_name in momentum_checks:
+        value = _decimal_or_none_any(item.get(field))
+        limit = threshold(threshold_name)
+        if value is None or limit is None:
+            continue
+        available += 1
+        weak += int(value <= limit)
+    if available >= 2 and weak >= 2:
+        flags.append("MOMENTUM_DECAY")
+
+    if not flags:
+        flags.append("RR_GEOMETRY_MISMATCH")
+    return flags
+
+
+def _lab52_primary_hypothesis(flags: list[str]) -> str:
+    precedence = (
+        "STRUCTURE_BLOCK",
+        "ATR_INFLATED",
+        "LATE_ENTRY_EXTENSION",
+        "VOLATILITY_CONTRACTION",
+        "MOMENTUM_DECAY",
+        "RR_GEOMETRY_MISMATCH",
+    )
+    return next((value for value in precedence if value in flags), "RR_GEOMETRY_MISMATCH")
+
+
+def _lab52_metric_comparison_row(
+    *,
+    field: str,
+    label: str,
+    target_items: list[dict[str, Any]],
+    tp_items: list[dict[str, Any]],
+    other_sl_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    target = _lab52_distribution(target_items, field)
+    tp = _lab52_distribution(tp_items, field)
+    other_sl = _lab52_distribution(other_sl_items, field)
+    return {
+        "field": field,
+        "label": label,
+        "target_too_far": target,
+        "tp_control": tp,
+        "other_sl": other_sl,
+        "median_delta_vs_tp": _decimal_delta(target.get("median"), tp.get("median")),
+    }
+
+
+def _lab52_distribution(items: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    values = [value for item in items if (value := _decimal_or_none_any(item.get(field))) is not None]
+    return {
+        "sample_count": len(items),
+        "available_count": len(values),
+        "q1": _percentile_decimal(values, Decimal("0.25")),
+        "median": _percentile_decimal(values, Decimal("0.50")),
+        "q3": _percentile_decimal(values, Decimal("0.75")),
+    }
+
+
+def _lab52_counterfactual_rows(
+    closed: list[dict[str, Any]],
+    *,
+    target_items: list[dict[str, Any]],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    ordered = sorted(closed, key=lambda item: (_parse_dt(item.get("signal_timestamp")) or datetime.min, str(item.get("symbol") or "")))
+    split_index = max(1, min(len(ordered), int(len(ordered) * 0.70))) if ordered else 0
+    train = ordered[:split_index]
+    validation = ordered[split_index:]
+    control_validation = _lab52_counterfactual_performance(validation, "CONTROL_LOGGED")
+    rows: list[dict[str, Any]] = []
+    for config_id, label, risk_scale, target_rr, protect_at_r, use_logged_target in LAB52_COUNTERFACTUAL_SPECS:
+        all_perf = _lab52_counterfactual_performance(ordered, config_id)
+        train_perf = _lab52_counterfactual_performance(train, config_id)
+        validation_perf = _lab52_counterfactual_performance(validation, config_id)
+        target_perf = _lab52_counterfactual_performance(target_items, config_id)
+        rows.append(
+            {
+                "config_id": config_id,
+                "label": label,
+                "risk_scale": risk_scale,
+                "target_rr": target_rr,
+                "protect_at_r": protect_at_r,
+                "use_logged_target": use_logged_target,
+                "evaluation_horizon": "4h fixed cohort",
+                "all": all_perf,
+                "train": train_perf,
+                "validation": validation_perf,
+                "target_too_far_subset": target_perf,
+                "validation_avg_r_delta_vs_control": _decimal_delta(
+                    validation_perf.get("avg_realistic_r"),
+                    control_validation.get("avg_realistic_r"),
+                ),
+                "verdict": _lab52_counterfactual_verdict(
+                    config_id=config_id,
+                    train=train_perf,
+                    validation=validation_perf,
+                    control_validation=control_validation,
+                    min_sample=min_sample,
+                ),
+            }
+        )
+    return rows
+
+
+def _lab52_counterfactual_performance(items: list[dict[str, Any]], config_id: str) -> dict[str, Any]:
+    rows = []
+    for item in items:
+        configs = item.get("_lab52_counterfactuals") if isinstance(item.get("_lab52_counterfactuals"), dict) else {}
+        result = configs.get(config_id) if isinstance(configs.get(config_id), dict) else None
+        if result and result.get("realistic_r") is not None:
+            rows.append((item, result))
+    status_counts = Counter(str(result.get("status") or "UNKNOWN") for _item, result in rows)
+    values = [Decimal(result["realistic_r"]) for _item, result in rows]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    symbol_counts = Counter(str(item.get("symbol") or "") for item, _result in rows)
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    return {
+        "sample_count": len(rows),
+        "tp_count": status_counts.get("TP_HIT", 0),
+        "sl_count": status_counts.get("SL_HIT", 0),
+        "both_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
+        "breakeven_count": status_counts.get("BREAKEVEN_PROTECTED", 0),
+        "neither_count": status_counts.get("NEITHER_4H", 0),
+        "total_realistic_r": sum(values, Decimal("0")),
+        "avg_realistic_r": _avg_decimal(values),
+        "median_realistic_r": _percentile_decimal(values, Decimal("0.50")),
+        "max_drawdown_r": max_drawdown,
+        "sl_share_pct": (
+            Decimal(status_counts.get("SL_HIT", 0) + status_counts.get("BOTH_HIT_SAME_CANDLE", 0))
+            / Decimal(len(rows))
+            * Decimal("100")
+            if rows
+            else None
+        ),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(rows)) * Decimal("100") if rows else None,
+    }
+
+
+def _lab52_counterfactual_verdict(
+    *,
+    config_id: str,
+    train: dict[str, Any],
+    validation: dict[str, Any],
+    control_validation: dict[str, Any],
+    min_sample: int,
+) -> str:
+    if config_id == "CONTROL_LOGGED":
+        return "CURRENT_CONTROL"
+    if int(validation.get("sample_count") or 0) < max(10, min_sample // 2):
+        return "NEEDS_MORE_SAMPLE"
+    validation_delta = _decimal_delta(validation.get("avg_realistic_r"), control_validation.get("avg_realistic_r"))
+    train_delta = _decimal_delta(train.get("avg_realistic_r"), Decimal("0"))
+    if validation_delta is not None and validation_delta > 0 and Decimal(validation.get("total_realistic_r") or 0) > 0:
+        return "VALIDATION_IMPROVES_FIXED_COHORT"
+    if train_delta is not None and train_delta > 0:
+        return "TRAIN_ONLY_IMPROVEMENT"
+    return "NO_CLEAR_IMPROVEMENT"
+
+
+def _lab52_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "signal_id", "symbol", "signal_timestamp", "signal_time_wib", "entry", "stop_loss", "take_profit", "rr",
+        "result_time_wib", "mfe_before_first_hit_r", "mae_before_first_hit_r", "first_hit_candle_index",
+        "atr_1h_at_entry", "atr_pct_entry", "logged_risk_atr_ratio", "atr_30_median", "atr_vs_30_median",
+        "atr_signal_inflation_ratio", "signal_true_range_atr", "signal_tr_contribution_pct",
+        "pre_entry_1h_move_atr", "pre_entry_4h_move_atr", "support_price_proxy", "support_distance_r",
+        "support_before_target", "forward_1h_realized_range_atr", "forward_1h_mfe_r", "forward_1h_mae_r",
+        "entry_taker_sell_ratio", "forward_1h_taker_sell_ratio", "taker_sell_delta_1h", "entry_volume_ratio",
+        "forward_1h_volume_vs_pre30", "entry_oi_change_pct", "forward_1h_oi_change_pct", "oi_change_delta_1h",
+        "time_to_0_25r_minutes", "time_to_0_50r_minutes", "time_to_0_75r_minutes", "time_to_1_00r_minutes",
+        "time_to_1_25r_minutes", "time_to_1_50r_minutes", "target_distance_context_status",
+        "target_distance_primary_hypothesis", "target_distance_hypotheses",
+    )
+    return {field: item.get(field) for field in fields}
+
+
+def _lab52_hypothesis_read(hypothesis: str) -> str:
+    return {
+        "ATR_INFLATED": "ATR signal berada di tail atas TP control, sehingga jarak target ikut membesar.",
+        "LATE_ENTRY_EXTENSION": "Harga sudah bergerak jauh sebelum entry relatif ATR; ruang lanjutan mengecil.",
+        "VOLATILITY_CONTRACTION": "Range 1h setelah entry berada di tail bawah TP control.",
+        "STRUCTURE_BLOCK": "Proxy support 1h berada di antara entry dan target.",
+        "MOMENTUM_DECAY": "Minimal dua dari taker, volume, dan OI forward lebih lemah dari TP control.",
+        "RR_GEOMETRY_MISMATCH": "Tidak ada blocker tunggal; target 1.5R tetap lebih jauh daripada gerak yang tersedia.",
+    }.get(hypothesis, "Hipotesis belum tersedia.")
+
+
+def _lab52_study_verdict(
+    *,
+    target_count: int,
+    dominant_count: int,
+    counterfactual_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> str:
+    if target_count < min_sample:
+        return "TARGET_DISTANCE_NEEDS_MORE_SAMPLE"
+    improved = [row for row in counterfactual_rows if row.get("verdict") == "VALIDATION_IMPROVES_FIXED_COHORT"]
+    if improved and dominant_count >= max(3, target_count // 3):
+        return "TARGET_DISTANCE_HAS_TESTABLE_HYPOTHESIS"
+    if improved:
+        return "EXIT_GEOMETRY_IMPROVES_FIXED_COHORT_MONITOR"
+    return "TARGET_DISTANCE_NO_CLEAN_FIX_YET"
 
 
 def _mid_short_path_anatomy(item: dict[str, Any], candles: list[PerfCandle]) -> dict[str, Any]:
