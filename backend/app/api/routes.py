@@ -59,6 +59,7 @@ router = APIRouter()
 
 _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
 _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS = 900.0
+_MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS = 3600.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
@@ -873,7 +874,7 @@ def signal_candidates_mid_short_1h_v21_structure_interaction_study(
     now = monotonic()
     with _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_LOCK:
         cached = _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE.get(cache_key)
-        if cached and now - cached[0] <= _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS:
+        if cached and now - cached[0] <= _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS:
             payload = dict(cached[1])
             payload["case_rows"] = list(payload.get("case_rows") or [])[:normalized_limit]
             payload["filters"] = {
@@ -882,7 +883,7 @@ def signal_candidates_mid_short_1h_v21_structure_interaction_study(
             }
             payload["cache"] = {
                 "hit": True,
-                "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
+                "ttl_seconds": _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS,
             }
             return payload
 
@@ -904,7 +905,7 @@ def signal_candidates_mid_short_1h_v21_structure_interaction_study(
     }
     payload["cache"] = {
         "hit": False,
-        "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
+        "ttl_seconds": _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS,
     }
     return payload
 
