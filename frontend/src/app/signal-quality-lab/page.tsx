@@ -68,28 +68,30 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   let filterStudyError: string | null = null;
   let marketRegimeError: string | null = null;
   let v21StructureError: string | null = null;
-  try {
-    data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Signal Quality Lab API failed";
-  }
-  const studyQuery = new URLSearchParams({
-    include_watch_only: String(includeWatchOnly),
-    position_lock: String(positionLock),
-    stage: stage || "MID_SHORT",
-    timeframe: timeframe || "1h",
-    min_sample: String(minSample),
-    limit: String(limit)
-  });
-  try {
-    filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 120 });
-  } catch (err) {
-    filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
-  }
-  try {
-    marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 300 });
-  } catch (err) {
-    marketRegimeError = err instanceof Error ? err.message : "Market Regime Study API failed";
+  if (!showV21Structure) {
+    try {
+      data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Signal Quality Lab API failed";
+    }
+    const studyQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      stage: stage || "MID_SHORT",
+      timeframe: timeframe || "1h",
+      min_sample: String(minSample),
+      limit: String(limit)
+    });
+    try {
+      filterStudy = await fetchJson<SignalFilterStudyResponse>(`/api/signal-candidates/filter-study?${studyQuery.toString()}`, { revalidateSeconds: 120 });
+    } catch (err) {
+      filterStudyError = err instanceof Error ? err.message : "Signal Filter Study API failed";
+    }
+    try {
+      marketRegimeStudy = await fetchJson<MarketRegimeStudyResponse>("/api/signal-candidates/market-regime-study", { revalidateSeconds: 300 });
+    } catch (err) {
+      marketRegimeError = err instanceof Error ? err.message : "Market Regime Study API failed";
+    }
   }
   if (showV21Structure) {
     const structureQuery = new URLSearchParams({
@@ -106,6 +108,26 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
     } catch (err) {
       v21StructureError = err instanceof Error ? err.message : "V2.1 Structure Interaction API failed";
     }
+  }
+
+  if (showV21Structure) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          title="Signal Quality Lab / LAB-59"
+          badge="READ-ONLY V2.1 STUDY"
+          subtitle="Fixed-cohort MID_SHORT 1h SHADOW_PASS + taker sell >= 52%. Halaman fokus ini tidak memuat studi lama yang berat dan tidak mengubah rule produksi."
+          updatedAt={fmtTime(v21StructureStudy?.generated_at_utc)}
+        />
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-structure-zone-study">Open LAB-56 Zone Evidence</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
+        </div>
+        <V21StructureInteractionPanel data={v21StructureStudy} error={v21StructureError} />
+      </div>
+    );
   }
 
   const aggregate = data?.aggregate;
