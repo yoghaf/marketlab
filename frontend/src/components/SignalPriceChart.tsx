@@ -378,7 +378,13 @@ function candleTimeAtOrAfter(candles: CandlestickData<UTCTimestamp>[], value: st
 }
 
 function toTimestamp(value: string): UTCTimestamp {
-  return Math.floor(new Date(value).getTime() / 1000) as UTCTimestamp;
+  return Math.floor(parseUtcDate(value).getTime() / 1000) as UTCTimestamp;
+}
+
+function parseUtcDate(value: string): Date {
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const hasTimeZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  return new Date(hasTimeZone ? normalized : `${normalized}Z`);
 }
 
 function chartPriceFormat(values: number[]) {

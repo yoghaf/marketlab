@@ -238,7 +238,7 @@ function CaseLedger({ rows, query, selectedSignalId }: { rows: MidShortStructure
               <Td>{row.signal_time_wib || fmtTime(row.signal_timestamp)}</Td>
               <Td><strong>{row.symbol}</strong><Link className="mt-2 block font-semibold text-blue-700 hover:underline" href={`/mid-short-structure-zone-study?${next.toString()}`}>View zones</Link></Td>
               <Td><StatusBadge value={row.structure_state} /><span className="mt-1 block text-slate-500">{row.structure_reason}</span></Td>
-              <Td>Entry {fmtPrice(row.entry)}<span className="block text-slate-500">S {fmtPrice(row.nearest_support?.center)} ({fmtFixed(row.nearest_support_distance_atr, 2)} ATR)</span><span className="block text-slate-500">R {fmtPrice(row.nearest_resistance?.center)} ({fmtFixed(row.nearest_resistance_distance_atr, 2)} ATR)</span></Td>
+              <Td>Entry {fmtPrice(row.entry)}<span className="block text-slate-500">S {fmtPrice(row.nearest_support?.center)} ({fmtAtrDistance(row.nearest_support_distance_atr)})</span><span className="block text-slate-500">R {fmtPrice(row.nearest_resistance?.center)} ({fmtAtrDistance(row.nearest_resistance_distance_atr)})</span></Td>
               <Td><StatusBadge value={row.four_hour_confluence_status} /><span className="mt-1 block text-slate-500">{row.four_hour_confluence_reason}</span></Td>
               <Td><StatusBadge value={row.result_status} /><span className="mt-1 block font-semibold">{fmtSigned(row.realistic_realized_r)}R</span></Td>
               <Td>{row.zone_count_1h} zones<span className="block text-slate-500">ATR {fmtPrice(row.atr_1h_at_signal)}</span><span className="block text-slate-500">Taker sell {fmtPercentRatio(row.taker_sell_ratio)}</span><Link className="mt-2 block font-semibold text-blue-700 hover:underline" href={row.detail_href}>Signal detail</Link></Td>
@@ -261,9 +261,10 @@ function Fact({ label, value }: { label: string; value: string | number }) {
 function Th({ children }: { children: ReactNode }) { return <th className="px-3 py-2 font-semibold">{children}</th>; }
 function Td({ children }: { children: ReactNode }) { return <td className="break-words px-3 py-3">{children}</td>; }
 function Empty({ text }: { text: string }) { return <div className="p-6 text-center text-sm text-slate-500">{text}</div>; }
-function fmtSigned(value: string | number | null | undefined): string { const number = Number(value); return Number.isFinite(number) ? `${number >= 0 ? "+" : ""}${fmtFixed(number, 3)}` : "-"; }
-function fmtPercentRatio(value: string | number | null | undefined): string { const number = Number(value); return Number.isFinite(number) ? `${fmtFixed(number * 100, 1)}%` : "-"; }
-function fmtFixed(value: string | number | null | undefined, digits: number): string { const number = Number(value); return Number.isFinite(number) ? number.toFixed(digits).replace(/\.0+$/, "") : "-"; }
+function fmtSigned(value: string | number | null | undefined): string { if (value === null || value === undefined || value === "") return "-"; const number = Number(value); return Number.isFinite(number) ? `${number >= 0 ? "+" : ""}${fmtFixed(number, 3)}` : "-"; }
+function fmtPercentRatio(value: string | number | null | undefined): string { if (value === null || value === undefined || value === "") return "-"; const number = Number(value); return Number.isFinite(number) ? `${fmtFixed(number * 100, 1)}%` : "-"; }
+function fmtFixed(value: string | number | null | undefined, digits: number): string { if (value === null || value === undefined || value === "") return "-"; const number = Number(value); return Number.isFinite(number) ? number.toFixed(digits).replace(/\.0+$/, "") : "-"; }
+function fmtAtrDistance(value: string | number | null | undefined): string { const formatted = fmtFixed(value, 2); return formatted === "-" ? formatted : `${formatted} ATR`; }
 function shortConfig(value?: string | null): string { if (!value) return "-"; return value.replace("_168H_030ATR", "").replace("_96H_020ATR", "").replace("_240H_040ATR", ""); }
 function firstParam(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 function normalizeNumber(value: string | undefined, fallback: number, min: number, max: number): number { const parsed = Number(value); return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.trunc(parsed))) : fallback; }
