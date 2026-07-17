@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-17",
+    version: "LAB-60",
+    title: "MID_SHORT V2.1 Structure-aware Exit Path Study",
+    status: "RESEARCH",
+    area: "V2.1 fixed-cohort exit diagnostics",
+    summary: "Menguji apakah return MID_SHORT V2.1 dapat diperbaiki lewat geometry target/stop dan urutan jalur harga, tanpa membuang signal atau mengubah rule live.",
+    changes: [
+      "Cohort tetap sama dengan LAB-59: MID_SHORT 1h, SHADOW_PASS, taker sell minimal 52%, dan position lock identik.",
+      "Sembilan geometry dibandingkan: control, target 1R/1.25R/1.5R, target di depan support, stop 0.75x/1.25x, stop di belakang resistance, dan kombinasi structure.",
+      "Target short di depan support ditempatkan di atas upper edge support +0.10 ATR; target tidak pernah diletakkan di bawah support.",
+      "Replay memakai candle futures closed yang sama, model fee Binance + spread + slippage yang sudah ada, serta penanganan konservatif jika TP dan SL berada pada candle yang sama.",
+      "Path sequencing menghitung TP-first, SL-first, ambiguity satu candle, dan kasus yang sempat mencapai +0.50R/+1.00R sebelum kemudian menyentuh stop.",
+      "Hasil dipisah all/train/chronological validation; geometry unavailable fallback ke logged geometry dan dihitung eksplisit.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, logged SL/TP, outcome evaluator, atau execution."
+    ],
+    impact: "Kita sekarang dapat membedakan apakah masalah return berasal dari target terlalu jauh, stop geometry, reversal setelah favorable move, atau sekadar noise intrabar sebelum merancang checkpoint forward-only.",
+    links: [
+      { href: "/signal-quality-lab?lab=exit-v21", label: "Open LAB-60" },
+      { href: "/signal-quality-lab?lab=structure-v21", label: "LAB-59 Structure" },
+      { href: "/mid-short-filter-combination-study", label: "V2.1 Decision" }
+    ]
+  },
+  {
+    date: "2026-07-17",
     version: "LAB-59",
     title: "MID_SHORT V2.1 Structure Interaction Study",
     status: "RESEARCH",

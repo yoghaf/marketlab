@@ -1297,6 +1297,89 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_v21_structure_exit_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status, forward_candles = (
+            self._mid_short_1h_anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                shadow_status="SHADOW_PASS",
+                include_failure_anatomy=False,
+            )
+        )
+        fixed_cohort = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        signal_times = [
+            value
+            for value in (_parse_dt(item.get("signal_timestamp")) for item in fixed_cohort)
+            if value is not None
+        ]
+        symbols = {str(item.get("symbol") or "") for item in fixed_cohort if item.get("symbol")}
+        min_signal_time = min(signal_times, default=None)
+        max_signal_time = max(signal_times, default=None)
+        one_hour_candles = self._load_1h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(hours=264)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        study = _mid_short_v21_structure_exit_study(
+            fixed_cohort,
+            one_hour_candles=one_hour_candles,
+            forward_candles=forward_candles,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_v21_structure_exit_study",
+            "study_scope": "read_only_mid_short_1h_v21_shadow_pass_structure_exit",
+            "source_table": (
+                "signal_forward_return_logs + futures_klines_15m + futures_klines_1m + futures_klines_1h"
+            ),
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": (
+                    "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS "
+                    "AND kline_taker_sell_ratio >= 0.52"
+                ),
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            **study,
+            "guardrails": [
+                "LAB-60 reads only the fixed V2.1 SHADOW_PASS plus taker-sell cohort.",
+                "Repeated zones use only futures 1h candles closed before the signal.",
+                "All exit variants use the same four-hour closed futures path and conservative same-candle handling.",
+                "Unavailable structure falls back to logged geometry and is counted explicitly.",
+                "No Signal Factory rule, scanner decision, threshold, logged TP/SL, outcome logic, or execution path is changed.",
+            ],
+        }
+
     def mid_short_1h_structure_zone_case(
         self,
         *,
@@ -7706,6 +7789,719 @@ def _lab59_case_row(item: dict[str, Any]) -> dict[str, Any]:
                 "TARGET_PATH_CLEAR",
                 "ALIGNED_AND_CLEAR",
             )
+        },
+    }
+
+
+LAB60_EXIT_VARIANTS = (
+    ("CONTROL_LOGGED", "Logged V2.1 TP/SL", "Existing V2.1 logged target and stop."),
+    ("TARGET_1_00R", "Fixed target 1.00R", "Keep the logged stop and place target at 1.00 logged R."),
+    ("TARGET_1_25R", "Fixed target 1.25R", "Keep the logged stop and place target at 1.25 logged R."),
+    ("TARGET_1_50R", "Fixed target 1.50R", "Keep the logged stop and place target at 1.50 logged R."),
+    (
+        "SUPPORT_FRONT_0_10ATR",
+        "Target before support +0.10 ATR",
+        "For a short, move the target above the upper edge of blocking support plus 0.10 ATR; otherwise keep logged target.",
+    ),
+    ("STOP_0_75X", "Stop risk 0.75x", "Use 75% of logged price risk while keeping the logged target."),
+    ("STOP_1_25X", "Stop risk 1.25x", "Use 125% of logged price risk while keeping the logged target."),
+    (
+        "RESISTANCE_BACK_0_10ATR",
+        "Stop behind resistance +0.10 ATR",
+        "Place stop above the upper edge of nearest repeated resistance plus 0.10 ATR; otherwise keep logged stop.",
+    ),
+    (
+        "ZONE_ADAPTIVE_BOTH",
+        "Structure target + stop",
+        "Combine target before blocking support with stop behind repeated resistance; unavailable sides keep logged geometry.",
+    ),
+)
+
+
+def _mid_short_v21_structure_exit_study(
+    items: list[dict[str, Any]],
+    *,
+    one_hour_candles: dict[str, list[PerfCandle]],
+    forward_candles: dict[str, list[PerfCandle]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    primary_config = next(
+        config for config in LAB56_ZONE_CONFIGS if config.config_id == LAB56_PRIMARY_CONFIG_ID
+    )
+    sorted_one_hour = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in one_hour_candles.items()
+    }
+    sorted_forward = {
+        symbol: sorted(rows, key=lambda candle: candle.open_time)
+        for symbol, rows in forward_candles.items()
+    }
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        symbol = str(item.get("symbol") or "")
+        signal_time = _parse_dt(item.get("signal_timestamp"))
+        structure = _lab56_structure_context(
+            item,
+            one_hour_candles=sorted_one_hour.get(symbol, []),
+            four_hour_candles=[],
+            config=primary_config,
+            include_four_hour_confluence=False,
+        )
+        with_structure = {**item, **structure}
+        with_path = {**with_structure, **_lab59_target_path_context(with_structure)}
+        future = _lab60_future_four_hours(
+            sorted_forward.get(symbol, []),
+            signal_time=signal_time,
+        )
+        results = {
+            variant_id: _lab60_evaluate_variant(
+                with_path,
+                variant_id=variant_id,
+                prepared_future_4h=future,
+            )
+            for variant_id, _label, _method in LAB60_EXIT_VARIANTS
+        }
+        enriched.append(
+            {
+                **with_path,
+                "_lab60_exit_results": results,
+                "_lab60_path_sequence": _lab60_path_sequence(with_path, future),
+            }
+        )
+
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(enriched)
+    split_items = {"all": ordered, "train": train, "validation": validation}
+    control_perf = {
+        split: _lab60_exit_performance(rows, "CONTROL_LOGGED")
+        for split, rows in split_items.items()
+    }
+    variant_rows = [
+        _lab60_exit_variant_row(
+            variant_id=variant_id,
+            label=label,
+            method=method,
+            split_items=split_items,
+            control_perf=control_perf,
+            min_sample=min_sample,
+        )
+        for variant_id, label, method in LAB60_EXIT_VARIANTS
+    ]
+    eligible_variants = [
+        row
+        for row in variant_rows
+        if row["variant_id"] != "CONTROL_LOGGED"
+        and row["validation"].get("avg_realistic_r_delta_vs_control") is not None
+    ]
+    ranked = sorted(
+        eligible_variants,
+        key=lambda row: (
+            _decimal_or_zero(row["validation"].get("avg_realistic_r_delta_vs_control")),
+            _decimal_or_zero(row["validation"].get("max_drawdown_delta_vs_control")),
+            int(row["validation"].get("evaluated_count") or 0),
+        ),
+        reverse=True,
+    )
+    best_variant = ranked[0] if ranked else None
+    original_closed = sum(1 for item in ordered if item.get("result_status") in COMPLETED_OUTCOMES)
+    validation_original_closed = sum(
+        1 for item in validation if item.get("result_status") in COMPLETED_OUTCOMES
+    )
+    readiness_status = (
+        "READY_FOR_READ_ONLY_COMPARISON"
+        if original_closed >= 120 and validation_original_closed >= max(12, min_sample)
+        else "MONITOR_MORE"
+    )
+    path_summary = _lab60_path_summary(ordered)
+    case_rows = [
+        _lab60_case_row(item)
+        for item in sorted(
+            ordered,
+            key=lambda row: (
+                _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                str(row.get("symbol") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+    ]
+    return {
+        "study_id": "LAB_60_MID_SHORT_1H_V21_STRUCTURE_EXIT_PATH",
+        "method": (
+            "LAB-60 keeps the LAB-59 V2.1 cohort fixed, reconstructs causal repeated 1h zones, "
+            "and replays nine predefined target/stop geometries over the same closed futures path. "
+            "Every variant uses the existing Binance-fee, spread, and slippage model, conservative "
+            "same-candle handling, and one chronological 70/30 split."
+        ),
+        "definitions": {
+            "fixed_cohort": "MID_SHORT 1h + SHADOW_PASS + taker sell >= 52%",
+            "evaluation_horizon": "Four hours after signal close using merged closed futures 15m plus latest 1m tail",
+            "support_front_target": (
+                "Short target is placed above support upper edge plus 0.10 ATR, never below support."
+            ),
+            "resistance_back_stop": "Short stop is placed above resistance upper edge plus 0.10 ATR.",
+            "same_candle_rule": "If target and stop occur in one candle, the stop-side conservative result is used.",
+            "fixed_cohort_accounting": "All exit variants evaluate the same rows; no signal is filtered out.",
+        },
+        "summary": {
+            "fixed_cohort_count": len(ordered),
+            "fixed_cohort_closed_count": original_closed,
+            "train_count": len(train),
+            "validation_count": len(validation),
+            "validation_closed_count": validation_original_closed,
+            "validation_cutoff_utc": validation_cutoff,
+            "zone_available_count": sum(
+                1 for item in ordered if item.get("structure_state") != "1H_ZONE_UNAVAILABLE"
+            ),
+            "path_complete_count": path_summary.get("path_complete_count", 0),
+            "path_waiting_count": path_summary.get("waiting_4h_count", 0),
+            "readiness_target_closed": 120,
+            "readiness_status": readiness_status,
+            "best_validation_variant_id": best_variant.get("variant_id") if best_variant else None,
+            "best_validation_verdict": best_variant.get("verdict") if best_variant else None,
+            "best_validation_avg_r_delta": (
+                best_variant["validation"].get("avg_realistic_r_delta_vs_control")
+                if best_variant
+                else None
+            ),
+            "study_verdict": _lab60_study_verdict(readiness_status, best_variant),
+            "recommended_action": _lab60_recommended_action(readiness_status, best_variant),
+        },
+        "control": control_perf,
+        "variant_rows": variant_rows,
+        "path_summary": path_summary,
+        "case_rows": case_rows,
+        "research_answers": {
+            "does_logged_target_fail_after_partial_progress": (
+                f"{path_summary.get('sl_after_0_50r_count', 0)} stop-first paths reached +0.50R in an earlier candle; "
+                f"{path_summary.get('sl_after_1_00r_count', 0)} reached +1.00R before later stopping."
+            ),
+            "is_same_candle_order_known": (
+                f"No. {path_summary.get('both_same_candle_count', 0)} paths are ambiguous and treated conservatively."
+            ),
+            "does_structure_geometry_change_live_signals": (
+                "No. All geometry is replayed read-only; logged V2.1 entry, target, and stop remain untouched."
+            ),
+        },
+        "limitations": [
+            "Candle OHLC cannot prove intrabar order when target and stop are both inside one candle.",
+            "Repeated pivot zones approximate structure and are not visible resting liquidity.",
+            "Close-at-horizon R is descriptive and is not a final exit instruction.",
+            "A validation improvement remains a research candidate until a later forward-only checkpoint.",
+        ],
+    }
+
+
+def _lab60_future_four_hours(
+    candles: list[PerfCandle],
+    *,
+    signal_time: datetime | None,
+) -> list[PerfCandle]:
+    if signal_time is None or not candles:
+        return []
+    open_times = [candle.open_time for candle in candles]
+    return [
+        candle
+        for candle in candles[bisect_left(open_times, signal_time):]
+        if candle.close_time <= signal_time + timedelta(hours=4)
+    ]
+
+
+def _lab60_variant_geometry(item: dict[str, Any], variant_id: str) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    logged_risk = _decimal_or_none_any(item.get("risk"))
+    logged_stop = _decimal_or_none_any(item.get("stop_loss"))
+    logged_target = _decimal_or_none_any(item.get("take_profit"))
+    atr = _decimal_or_none_any(item.get("atr_1h_at_signal"))
+    if (
+        entry is None
+        or logged_risk is None
+        or logged_risk <= 0
+        or logged_stop is None
+        or logged_target is None
+    ):
+        return {
+            "geometry_status": "MISSING_LOGGED_GEOMETRY",
+            "geometry_reason": "Entry, risk, stop, or target is unavailable.",
+            "entry": entry,
+            "stop": logged_stop,
+            "target": logged_target,
+            "risk": logged_risk,
+            "adjusted": False,
+        }
+
+    stop = logged_stop
+    target = logged_target
+    status = "CONTROL_LOGGED"
+    reason = "Existing V2.1 target and stop are retained."
+    if variant_id == "TARGET_1_00R":
+        target = entry - logged_risk
+        status = "FIXED_TARGET"
+        reason = "Target is fixed at 1.00 logged R."
+    elif variant_id == "TARGET_1_25R":
+        target = entry - (logged_risk * Decimal("1.25"))
+        status = "FIXED_TARGET"
+        reason = "Target is fixed at 1.25 logged R."
+    elif variant_id == "TARGET_1_50R":
+        target = entry - (logged_risk * Decimal("1.50"))
+        status = "FIXED_TARGET"
+        reason = "Target is fixed at 1.50 logged R."
+    elif variant_id == "STOP_0_75X":
+        stop = entry + (logged_risk * Decimal("0.75"))
+        status = "FIXED_STOP"
+        reason = "Stop risk is 0.75x logged risk."
+    elif variant_id == "STOP_1_25X":
+        stop = entry + (logged_risk * Decimal("1.25"))
+        status = "FIXED_STOP"
+        reason = "Stop risk is 1.25x logged risk."
+    elif variant_id in {"SUPPORT_FRONT_0_10ATR", "ZONE_ADAPTIVE_BOTH"}:
+        target, target_status, target_reason = _lab60_support_front_target(
+            entry=entry,
+            logged_target=logged_target,
+            atr=atr,
+            support=item.get("nearest_support"),
+        )
+        status = target_status
+        reason = target_reason
+    if variant_id in {"RESISTANCE_BACK_0_10ATR", "ZONE_ADAPTIVE_BOTH"}:
+        stop, stop_status, stop_reason = _lab60_resistance_back_stop(
+            entry=entry,
+            logged_stop=logged_stop,
+            atr=atr,
+            resistance=item.get("nearest_resistance"),
+        )
+        if variant_id == "ZONE_ADAPTIVE_BOTH":
+            status = f"TARGET_{status}__STOP_{stop_status}"
+            reason = f"{reason} {stop_reason}"
+        else:
+            status = stop_status
+            reason = stop_reason
+
+    risk = stop - entry
+    valid = target > 0 and target < entry and stop > entry and risk > 0
+    if not valid:
+        stop = logged_stop
+        target = logged_target
+        risk = logged_risk
+        status = "INVALID_STRUCTURE_FALLBACK_LOGGED"
+        reason = "Derived geometry was invalid, so the logged target and stop were retained."
+    adjusted = stop != logged_stop or target != logged_target
+    return {
+        "geometry_status": status,
+        "geometry_reason": reason,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "risk": risk,
+        "risk_scale": risk / logged_risk,
+        "target_rr": (entry - target) / risk if risk > 0 else None,
+        "stop_risk_multiple": risk / logged_risk,
+        "adjusted": adjusted,
+    }
+
+
+def _lab60_support_front_target(
+    *,
+    entry: Decimal,
+    logged_target: Decimal,
+    atr: Decimal | None,
+    support: Any,
+) -> tuple[Decimal, str, str]:
+    zone = support if isinstance(support, dict) else None
+    upper = _decimal_or_none_any(zone.get("upper")) if zone else None
+    if atr is None or atr <= 0 or upper is None:
+        return logged_target, "SUPPORT_UNAVAILABLE_FALLBACK", "Support or ATR is unavailable; logged target is retained."
+    if not logged_target < upper < entry:
+        return logged_target, "SUPPORT_NOT_BLOCKING", "Repeated support does not block the logged short target."
+    candidate = upper + (atr * Decimal("0.10"))
+    if candidate >= entry:
+        return logged_target, "SUPPORT_BUFFER_INVALID_FALLBACK", "Buffered support target would not be below entry."
+    return max(logged_target, candidate), "SUPPORT_FRONT_ADJUSTED", "Target is above blocking support upper edge plus 0.10 ATR."
+
+
+def _lab60_resistance_back_stop(
+    *,
+    entry: Decimal,
+    logged_stop: Decimal,
+    atr: Decimal | None,
+    resistance: Any,
+) -> tuple[Decimal, str, str]:
+    zone = resistance if isinstance(resistance, dict) else None
+    upper = _decimal_or_none_any(zone.get("upper")) if zone else None
+    if atr is None or atr <= 0 or upper is None:
+        return logged_stop, "RESISTANCE_UNAVAILABLE_FALLBACK", "Resistance or ATR is unavailable; logged stop is retained."
+    candidate = upper + (atr * Decimal("0.10"))
+    if candidate <= entry:
+        return logged_stop, "RESISTANCE_BUFFER_INVALID_FALLBACK", "Buffered resistance stop would not be above entry."
+    return candidate, "RESISTANCE_BACK_ADJUSTED", "Stop is above resistance upper edge plus 0.10 ATR."
+
+
+def _lab60_evaluate_variant(
+    item: dict[str, Any],
+    *,
+    variant_id: str,
+    prepared_future_4h: list[PerfCandle],
+) -> dict[str, Any]:
+    geometry = _lab60_variant_geometry(item, variant_id)
+    risk = _decimal_or_none_any(geometry.get("risk"))
+    logged_risk = _decimal_or_none_any(item.get("risk"))
+    target = _decimal_or_none_any(geometry.get("target"))
+    stop = _decimal_or_none_any(geometry.get("stop"))
+    logged_stop = _decimal_or_none_any(item.get("stop_loss"))
+    if risk is None or risk <= 0 or logged_risk is None or logged_risk <= 0 or target is None:
+        return {**geometry, "status": "MISSING_CONTEXT", "realistic_r": None}
+    result = _mid_short_counterfactual_exit(
+        item,
+        candles=[],
+        risk_scale=risk / logged_risk,
+        target_rr=None,
+        protect_at_r=None,
+        use_logged_target=stop == logged_stop,
+        prepared_future_4h=prepared_future_4h,
+        target_override=target,
+        require_complete_horizon_for_neither=True,
+    )
+    return {
+        **geometry,
+        **result,
+        "target_rr": (entry - target) / risk
+        if (entry := _decimal_or_none_any(geometry.get("entry"))) is not None
+        else None,
+    }
+
+
+def _lab60_exit_performance(items: list[dict[str, Any]], variant_id: str) -> dict[str, Any]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+        ),
+    )
+    rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    statuses: Counter[str] = Counter()
+    geometry_statuses: Counter[str] = Counter()
+    for item in ordered:
+        results = item.get("_lab60_exit_results")
+        result = results.get(variant_id) if isinstance(results, dict) else None
+        if not isinstance(result, dict):
+            statuses["MISSING_CONTEXT"] += 1
+            continue
+        status = str(result.get("status") or "MISSING_CONTEXT")
+        statuses[status] += 1
+        geometry_statuses[str(result.get("geometry_status") or "UNKNOWN")] += 1
+        if result.get("realistic_r") is not None:
+            rows.append((item, result))
+    values = [Decimal(result["realistic_r"]) for _item, result in rows]
+    target_rr_values = [
+        Decimal(result["target_rr"])
+        for _item, result in rows
+        if result.get("target_rr") is not None
+    ]
+    stop_multiple_values = [
+        Decimal(result["stop_risk_multiple"])
+        for _item, result in rows
+        if result.get("stop_risk_multiple") is not None
+    ]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    symbol_counts = Counter(str(item.get("symbol") or "") for item, _result in rows)
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    closed_count = statuses["TP_HIT"] + statuses["SL_HIT"] + statuses["BOTH_HIT_SAME_CANDLE"]
+    return {
+        "source_count": len(ordered),
+        "evaluated_count": len(rows),
+        "waiting_count": statuses["WAITING_4H"],
+        "missing_count": statuses["MISSING_CONTEXT"] + statuses["INVALID_TARGET_GEOMETRY"],
+        "closed_count": closed_count,
+        "tp_count": statuses["TP_HIT"],
+        "sl_count": statuses["SL_HIT"],
+        "both_count": statuses["BOTH_HIT_SAME_CANDLE"],
+        "neither_count": statuses["NEITHER_4H"],
+        "total_realistic_r": sum(values, Decimal("0")),
+        "avg_realistic_r": _avg_decimal(values),
+        "median_realistic_r": _percentile_decimal(values, Decimal("0.50")),
+        "max_drawdown_r": max_drawdown,
+        "tp_share_pct_closed": Decimal(statuses["TP_HIT"]) / Decimal(closed_count) * Decimal("100") if closed_count else None,
+        "loss_share_pct_closed": Decimal(statuses["SL_HIT"] + statuses["BOTH_HIT_SAME_CANDLE"]) / Decimal(closed_count) * Decimal("100") if closed_count else None,
+        "target_rr_q1": _percentile_decimal(target_rr_values, Decimal("0.25")),
+        "target_rr_median": _percentile_decimal(target_rr_values, Decimal("0.50")),
+        "target_rr_q3": _percentile_decimal(target_rr_values, Decimal("0.75")),
+        "stop_multiple_q1": _percentile_decimal(stop_multiple_values, Decimal("0.25")),
+        "stop_multiple_median": _percentile_decimal(stop_multiple_values, Decimal("0.50")),
+        "stop_multiple_q3": _percentile_decimal(stop_multiple_values, Decimal("0.75")),
+        "geometry_adjusted_count": sum(1 for _item, result in rows if result.get("adjusted")),
+        "geometry_fallback_count": sum(
+            count for status, count in geometry_statuses.items() if "FALLBACK" in status or "UNAVAILABLE" in status
+        ),
+        "geometry_status_counts": dict(geometry_statuses),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(rows)) * Decimal("100") if rows else None,
+    }
+
+
+def _lab60_exit_variant_row(
+    *,
+    variant_id: str,
+    label: str,
+    method: str,
+    split_items: dict[str, list[dict[str, Any]]],
+    control_perf: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    performance = {
+        split: _lab60_exit_performance(rows, variant_id)
+        for split, rows in split_items.items()
+    }
+    for split in ("all", "train", "validation"):
+        current = performance[split]
+        control = control_perf[split]
+        current["total_realistic_r_delta_vs_control"] = _decimal_delta(
+            current.get("total_realistic_r"), control.get("total_realistic_r")
+        )
+        current["avg_realistic_r_delta_vs_control"] = _decimal_delta(
+            current.get("avg_realistic_r"), control.get("avg_realistic_r")
+        )
+        current["max_drawdown_delta_vs_control"] = _decimal_delta(
+            current.get("max_drawdown_r"), control.get("max_drawdown_r")
+        )
+        current.update(_lab60_transition_counts(split_items[split], variant_id))
+    row = {
+        "variant_id": variant_id,
+        "label": label,
+        "method": method,
+        **performance,
+    }
+    row["verdict"] = _lab60_variant_verdict(row, min_sample=min_sample)
+    return row
+
+
+def _lab60_transition_counts(items: list[dict[str, Any]], variant_id: str) -> dict[str, int]:
+    output = Counter()
+    loss_statuses = {"SL_HIT", "BOTH_HIT_SAME_CANDLE"}
+    for item in items:
+        results = item.get("_lab60_exit_results")
+        if not isinstance(results, dict):
+            continue
+        control = results.get("CONTROL_LOGGED")
+        variant = results.get(variant_id)
+        if not isinstance(control, dict) or not isinstance(variant, dict):
+            continue
+        control_status = str(control.get("status") or "")
+        variant_status = str(variant.get("status") or "")
+        if control_status == "TP_HIT" and variant_status != "TP_HIT":
+            output["tp_lost_count"] += 1
+        if control_status != "TP_HIT" and variant_status == "TP_HIT":
+            output["tp_gained_count"] += 1
+        if control_status in loss_statuses and variant_status not in loss_statuses:
+            output["sl_avoided_count"] += 1
+        if control_status not in loss_statuses and variant_status in loss_statuses:
+            output["sl_added_count"] += 1
+    return {
+        "tp_lost_count": output["tp_lost_count"],
+        "tp_gained_count": output["tp_gained_count"],
+        "sl_avoided_count": output["sl_avoided_count"],
+        "sl_added_count": output["sl_added_count"],
+    }
+
+
+def _lab60_variant_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if row.get("variant_id") == "CONTROL_LOGGED":
+        return "CURRENT_CONTROL"
+    all_perf = row["all"]
+    validation = row["validation"]
+    if (
+        int(all_perf.get("evaluated_count") or 0) < 120
+        or int(validation.get("evaluated_count") or 0) < max(12, min_sample)
+    ):
+        return "MONITOR_MORE"
+    train_delta = _decimal_or_none_any(row["train"].get("avg_realistic_r_delta_vs_control"))
+    validation_delta = _decimal_or_none_any(validation.get("avg_realistic_r_delta_vs_control"))
+    validation_total = _decimal_or_none_any(validation.get("total_realistic_r"))
+    drawdown_delta = _decimal_or_none_any(validation.get("max_drawdown_delta_vs_control"))
+    if (
+        train_delta is not None
+        and train_delta > 0
+        and validation_delta is not None
+        and validation_delta > 0
+        and validation_total is not None
+        and validation_total > 0
+        and drawdown_delta is not None
+        and drawdown_delta >= 0
+    ):
+        return "VALIDATION_IMPROVES_RESEARCH_ONLY"
+    if validation_delta is not None and validation_delta > 0:
+        return "VALIDATION_ONLY_MONITOR"
+    if train_delta is not None and train_delta > 0:
+        return "TRAIN_ONLY"
+    return "NO_CLEAR_GAIN"
+
+
+def _lab60_study_verdict(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "V21_EXIT_GEOMETRY_MONITOR_MORE"
+    if best_variant and best_variant.get("verdict") == "VALIDATION_IMPROVES_RESEARCH_ONLY":
+        return "FORWARD_ONLY_CHECKPOINT_REQUIRED"
+    return "NO_EXIT_GEOMETRY_PROMOTION"
+
+
+def _lab60_recommended_action(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "Collect at least 120 closed fixed-cohort outcomes; keep V2.1 target and stop unchanged."
+    if best_variant and best_variant.get("verdict") == "VALIDATION_IMPROVES_RESEARCH_ONLY":
+        return "Track this geometry in a new forward-only shadow checkpoint before any rule proposal."
+    return "Keep logged V2.1 exits; no predefined structure geometry has survived validation cleanly."
+
+
+def _lab60_path_sequence(
+    item: dict[str, Any],
+    future: list[PerfCandle],
+) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    stop = _decimal_or_none_any(item.get("stop_loss"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    if entry is None or risk is None or risk <= 0 or stop is None or target is None or signal_time is None or not future:
+        return {"path_status": "MISSING_CONTEXT", "path_complete": False}
+
+    levels = {
+        "0_50r": entry - (risk * Decimal("0.50")),
+        "1_00r": entry - risk,
+        "1_25r": entry - (risk * Decimal("1.25")),
+        "1_50r": entry - (risk * Decimal("1.50")),
+    }
+    level_indices: dict[str, int | None] = {
+        name: next((index for index, candle in enumerate(future) if candle.low <= price), None)
+        for name, price in levels.items()
+    }
+    tp_index = next((index for index, candle in enumerate(future) if candle.low <= target), None)
+    sl_index = next((index for index, candle in enumerate(future) if candle.high >= stop), None)
+    if tp_index is not None and sl_index is not None and tp_index == sl_index:
+        path_status = "BOTH_SAME_CANDLE"
+        terminal_index = tp_index
+    elif tp_index is not None and (sl_index is None or tp_index < sl_index):
+        path_status = "TP_FIRST"
+        terminal_index = tp_index
+    elif sl_index is not None:
+        path_status = "SL_FIRST"
+        terminal_index = sl_index
+    else:
+        complete = future[-1].close_time >= signal_time + timedelta(hours=4) - timedelta(milliseconds=1)
+        path_status = "NEITHER_4H" if complete else "WAITING_4H"
+        terminal_index = len(future) - 1
+    observed = future[: terminal_index + 1]
+    mfe_r = max(((entry - candle.low) / risk for candle in observed), default=Decimal("0"))
+    mae_r = min(((entry - candle.high) / risk for candle in observed), default=Decimal("0"))
+    return {
+        "path_status": path_status,
+        "path_complete": path_status != "WAITING_4H",
+        "terminal_candle_index": terminal_index,
+        "terminal_time_utc": future[terminal_index].close_time,
+        "mfe_r_to_terminal": mfe_r,
+        "mae_r_to_terminal": mae_r,
+        "tp_candle_index": tp_index,
+        "sl_candle_index": sl_index,
+        "first_level_candle_index": level_indices,
+        "reached_0_50r_before_sl": (
+            path_status == "SL_FIRST"
+            and level_indices["0_50r"] is not None
+            and level_indices["0_50r"] < terminal_index
+        ),
+        "reached_1_00r_before_sl": (
+            path_status == "SL_FIRST"
+            and level_indices["1_00r"] is not None
+            and level_indices["1_00r"] < terminal_index
+        ),
+        "reached_1_25r_before_sl": (
+            path_status == "SL_FIRST"
+            and level_indices["1_25r"] is not None
+            and level_indices["1_25r"] < terminal_index
+        ),
+        "reached_1_50r_before_sl": (
+            path_status == "SL_FIRST"
+            and level_indices["1_50r"] is not None
+            and level_indices["1_50r"] < terminal_index
+        ),
+        "time_to_0_50r_minutes": _lab60_time_to_index(future, signal_time, level_indices["0_50r"]),
+        "time_to_1_00r_minutes": _lab60_time_to_index(future, signal_time, level_indices["1_00r"]),
+        "time_to_tp_minutes": _lab60_time_to_index(future, signal_time, tp_index),
+        "time_to_sl_minutes": _lab60_time_to_index(future, signal_time, sl_index),
+    }
+
+
+def _lab60_time_to_index(
+    candles: list[PerfCandle],
+    signal_time: datetime,
+    index: int | None,
+) -> Decimal | None:
+    if index is None:
+        return None
+    return Decimal((candles[index].close_time - signal_time).total_seconds()) / Decimal("60")
+
+
+def _lab60_path_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    paths = [item.get("_lab60_path_sequence") for item in items]
+    rows = [path for path in paths if isinstance(path, dict)]
+    counts = Counter(str(path.get("path_status") or "MISSING_CONTEXT") for path in rows)
+    tp_rows = [path for path in rows if path.get("path_status") == "TP_FIRST"]
+    sl_rows = [path for path in rows if path.get("path_status") == "SL_FIRST"]
+    tp_mae = [_decimal_or_zero(path.get("mae_r_to_terminal")) for path in tp_rows]
+    sl_mfe = [_decimal_or_zero(path.get("mfe_r_to_terminal")) for path in sl_rows]
+    return {
+        "source_count": len(items),
+        "path_complete_count": sum(1 for path in rows if path.get("path_complete")),
+        "tp_first_count": counts["TP_FIRST"],
+        "sl_first_count": counts["SL_FIRST"],
+        "both_same_candle_count": counts["BOTH_SAME_CANDLE"],
+        "neither_4h_count": counts["NEITHER_4H"],
+        "waiting_4h_count": counts["WAITING_4H"],
+        "missing_context_count": counts["MISSING_CONTEXT"],
+        "sl_after_0_50r_count": sum(1 for path in sl_rows if path.get("reached_0_50r_before_sl")),
+        "sl_after_1_00r_count": sum(1 for path in sl_rows if path.get("reached_1_00r_before_sl")),
+        "sl_after_1_25r_count": sum(1 for path in sl_rows if path.get("reached_1_25r_before_sl")),
+        "sl_after_1_50r_count": sum(1 for path in sl_rows if path.get("reached_1_50r_before_sl")),
+        "tp_mae_r_median": _percentile_decimal(tp_mae, Decimal("0.50")),
+        "tp_mae_r_q3": _percentile_decimal(tp_mae, Decimal("0.75")),
+        "tp_mae_r_q90": _percentile_decimal(tp_mae, Decimal("0.90")),
+        "sl_mfe_r_median": _percentile_decimal(sl_mfe, Decimal("0.50")),
+        "sl_mfe_r_q3": _percentile_decimal(sl_mfe, Decimal("0.75")),
+        "sl_mfe_r_q90": _percentile_decimal(sl_mfe, Decimal("0.90")),
+        "time_to_tp_minutes_median": _percentile_decimal(
+            [_decimal_or_zero(path.get("time_to_tp_minutes")) for path in tp_rows if path.get("time_to_tp_minutes") is not None],
+            Decimal("0.50"),
+        ),
+        "time_to_sl_minutes_median": _percentile_decimal(
+            [_decimal_or_zero(path.get("time_to_sl_minutes")) for path in sl_rows if path.get("time_to_sl_minutes") is not None],
+            Decimal("0.50"),
+        ),
+    }
+
+
+def _lab60_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    base = _lab59_case_row(item)
+    results = item.get("_lab60_exit_results") if isinstance(item.get("_lab60_exit_results"), dict) else {}
+    return {
+        **base,
+        "path_sequence": item.get("_lab60_path_sequence"),
+        "exit_results": {
+            variant_id: {
+                "status": result.get("status"),
+                "realistic_r": result.get("realistic_r"),
+                "target": result.get("target"),
+                "stop": result.get("stop"),
+                "target_rr": result.get("target_rr"),
+                "stop_risk_multiple": result.get("stop_risk_multiple"),
+                "geometry_status": result.get("geometry_status"),
+                "adjusted": bool(result.get("adjusted")),
+            }
+            for variant_id, result in results.items()
+            if isinstance(result, dict)
         },
     }
 

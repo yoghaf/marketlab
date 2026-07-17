@@ -20,7 +20,12 @@ from app.services.signal_candidate_performance import (
     _lab56_structure_context,
     _lab59_target_path_context,
     _lab59_variant_selected,
+    _lab60_evaluate_variant,
+    _lab60_path_sequence,
+    _lab60_resistance_back_stop,
+    _lab60_support_front_target,
     _mid_short_v21_structure_interaction_study,
+    _mid_short_v21_structure_exit_study,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
     _lab55_evaluate_confirmation_config,
@@ -2139,6 +2144,165 @@ def test_lab59_fixed_v21_variants_do_not_use_four_hour_context_as_gate() -> None
     break_case = next(row for row in study["case_rows"] if row["signal_id"] == "BREAK")
     assert break_case["four_hour_confluence_status"] == "CONFLICT_WITH_4H_SUPPORT"
     assert break_case["variant_membership"]["ALIGNED_AND_CLEAR"] is True
+
+
+def test_lab60_short_target_is_placed_in_front_of_support_not_below_it() -> None:
+    target, status, _reason = _lab60_support_front_target(
+        entry=Decimal("100"),
+        logged_target=Decimal("85"),
+        atr=Decimal("10"),
+        support={"upper": Decimal("90")},
+    )
+
+    assert status == "SUPPORT_FRONT_ADJUSTED"
+    assert target == Decimal("91")
+    assert target > Decimal("90")
+    assert target < Decimal("100")
+
+
+def test_lab60_resistance_stop_and_counterfactual_keep_directional_rules_unchanged() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    stop, status, _reason = _lab60_resistance_back_stop(
+        entry=Decimal("100"),
+        logged_stop=Decimal("110"),
+        atr=Decimal("10"),
+        resistance={"upper": Decimal("108")},
+    )
+    item = {
+        "signal_id": "LAB60",
+        "symbol": "AAAUSDT",
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "atr_1h_at_signal": Decimal("10"),
+        "nearest_support": {"upper": Decimal("90")},
+        "nearest_resistance": {"upper": Decimal("108")},
+        "realistic_futures_spread_pct": Decimal("0"),
+    }
+    future = [
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(minutes=15),
+            open=Decimal("100"),
+            high=Decimal("105"),
+            low=Decimal("90"),
+            close=Decimal("92"),
+        )
+    ]
+    result = _lab60_evaluate_variant(
+        item,
+        variant_id="SUPPORT_FRONT_0_10ATR",
+        prepared_future_4h=future,
+    )
+
+    assert status == "RESISTANCE_BACK_ADJUSTED"
+    assert stop == Decimal("109")
+    assert result["status"] == "TP_HIT"
+    assert result["target"] == Decimal("91")
+    assert result["stop"] == Decimal("110")
+
+
+def test_lab60_path_sequence_requires_favorable_level_in_an_earlier_candle() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+    }
+    reversal = _lab60_path_sequence(
+        item,
+        [
+            PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("100"), Decimal("102"), Decimal("94"), Decimal("96")),
+            PerfCandle(signal_time + timedelta(minutes=15), signal_time + timedelta(minutes=30), Decimal("96"), Decimal("111"), Decimal("95"), Decimal("110")),
+        ],
+    )
+    ambiguous = _lab60_path_sequence(
+        item,
+        [
+            PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("100"), Decimal("111"), Decimal("84"), Decimal("100")),
+        ],
+    )
+
+    assert reversal["path_status"] == "SL_FIRST"
+    assert reversal["reached_0_50r_before_sl"] is True
+    assert reversal["reached_1_00r_before_sl"] is False
+    assert ambiguous["path_status"] == "BOTH_SAME_CANDLE"
+    assert ambiguous["reached_0_50r_before_sl"] is False
+
+
+def test_lab60_structure_exit_study_keeps_one_fixed_cohort_for_every_variant() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+    source = []
+    forward: dict[str, list[PerfCandle]] = {}
+    for index in range(4):
+        signal_time = start + timedelta(hours=index * 5)
+        symbol = f"L{index}USDT"
+        source.append(
+            {
+                "signal_id": f"L{index}",
+                "symbol": symbol,
+                "signal_timestamp": signal_time,
+                "signal_time_wib": "controlled",
+                "result_time_utc": signal_time + timedelta(hours=1),
+                "result_status": "TP_HIT" if index % 2 == 0 else "SL_HIT",
+                "entry": Decimal("100"),
+                "risk": Decimal("10"),
+                "stop_loss": Decimal("110"),
+                "take_profit": Decimal("85"),
+                "realistic_realized_r": Decimal("1.4") if index % 2 == 0 else Decimal("-1.05"),
+                "realistic_futures_spread_pct": Decimal("0"),
+                "evidence_snapshot": {"kline_taker_sell_ratio": Decimal("0.55")},
+            }
+        )
+        forward[symbol] = [
+            PerfCandle(
+                open_time=signal_time,
+                close_time=signal_time + timedelta(hours=4),
+                open=Decimal("100"),
+                high=Decimal("111") if index % 2 else Decimal("105"),
+                low=Decimal("84") if index % 2 == 0 else Decimal("95"),
+                close=Decimal("90"),
+            )
+        ]
+
+    def context(_row: dict, **_kwargs) -> dict:
+        return {
+            "structure_state": "AT_1H_SUPPORT",
+            "structure_reason": "controlled",
+            "atr_1h_at_signal": Decimal("10"),
+            "one_hour_history_count": 100,
+            "zone_count_1h": 2,
+            "nearest_support": {"center": Decimal("89"), "lower": Decimal("88"), "upper": Decimal("90")},
+            "nearest_resistance": {"center": Decimal("107"), "lower": Decimal("106"), "upper": Decimal("108")},
+            "nearest_support_distance_atr": Decimal("1"),
+            "nearest_resistance_distance_atr": Decimal("0.7"),
+            "state_zone": None,
+            "four_hour_confluence_status": "FOUR_H_CONTEXT_NOT_EVALUATED",
+            "four_hour_confluence_reason": "controlled",
+            "_lab56_zones": [],
+        }
+
+    with patch("app.services.signal_candidate_performance._lab56_structure_context", side_effect=context):
+        study = _mid_short_v21_structure_exit_study(
+            source,
+            one_hour_candles={},
+            forward_candles=forward,
+            min_sample=1,
+            limit=10,
+        )
+
+    assert study["summary"]["fixed_cohort_count"] == 4
+    assert study["summary"]["readiness_status"] == "MONITOR_MORE"
+    assert len(study["variant_rows"]) == 9
+    assert {row["all"]["source_count"] for row in study["variant_rows"]} == {4}
+    support_variant = next(row for row in study["variant_rows"] if row["variant_id"] == "SUPPORT_FRONT_0_10ATR")
+    assert support_variant["all"]["geometry_adjusted_count"] == 4
+    assert study["path_summary"]["tp_first_count"] == 2
+    assert study["path_summary"]["sl_first_count"] == 2
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:

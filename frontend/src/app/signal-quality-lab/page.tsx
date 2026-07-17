@@ -10,7 +10,9 @@ import {
   MarketRegimeStudyBucket,
   MarketRegimeStudyResponse,
   MidShortStructureStateRow,
+  MidShortV21ExitVariant,
   MidShortV21StructureInteractionResponse,
+  MidShortV21StructureExitResponse,
   MidShortV21StructureVariant,
   SignalCalibrationCandidate,
   SignalCalibrationLabResponse,
@@ -49,6 +51,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   const showArchive = firstParam(params.show_archive) === "true";
   const activeLab = firstParam(params.lab);
   const showV21Structure = activeLab === "structure-v21";
+  const showV21Exit = activeLab === "exit-v21";
+  const focusedLab = showV21Structure || showV21Exit;
   const minSample = normalizeNumber(firstParam(params.min_sample), 5, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 25, 5, 100);
   const query = new URLSearchParams({
@@ -64,11 +68,13 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   let filterStudy: SignalFilterStudyResponse | null = null;
   let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
   let v21StructureStudy: MidShortV21StructureInteractionResponse | null = null;
+  let v21ExitStudy: MidShortV21StructureExitResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
   let marketRegimeError: string | null = null;
   let v21StructureError: string | null = null;
-  if (!showV21Structure) {
+  let v21ExitError: string | null = null;
+  if (!focusedLab) {
     try {
       data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
     } catch (err) {
@@ -109,6 +115,42 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       v21StructureError = err instanceof Error ? err.message : "V2.1 Structure Interaction API failed";
     }
   }
+  if (showV21Exit) {
+    const exitQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      min_sample: String(Math.max(20, minSample)),
+      limit: String(limit)
+    });
+    try {
+      v21ExitStudy = await fetchJson<MidShortV21StructureExitResponse>(
+        `/api/signal-candidates/mid-short-1h-v2-1-structure-exit-study?${exitQuery.toString()}`,
+        { revalidateSeconds: 300 }
+      );
+    } catch (err) {
+      v21ExitError = err instanceof Error ? err.message : "V2.1 Structure Exit API failed";
+    }
+  }
+
+  if (showV21Exit) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          title="Signal Quality Lab / LAB-60"
+          badge="READ-ONLY EXIT STUDY"
+          subtitle="Fixed-cohort MID_SHORT 1h V2.1: membandingkan target, stop, dan urutan jalur harga tanpa mengubah Signal live atau geometry yang sudah tercatat."
+          updatedAt={fmtTime(v21ExitStudy?.generated_at_utc)}
+        />
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=structure-v21">Open LAB-59 Structure</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
+        </div>
+        <V21StructureExitPanel data={v21ExitStudy} error={v21ExitError} />
+      </div>
+    );
+  }
 
   if (showV21Structure) {
     return (
@@ -122,6 +164,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=exit-v21">Open LAB-60 Exit Path</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-structure-zone-study">Open LAB-56 Zone Evidence</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
         </div>
@@ -148,6 +191,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Open Signal History</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-misidentification-audit">Open Misidentification Audit</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=exit-v21">Open LAB-60 Exit Path</Link>
         <Link
           className={`rounded-md border px-3 py-2 font-semibold ${showV21Structure ? "border-primary bg-primary text-white" : "border-line bg-white hover:bg-field"}`}
           href={showV21Structure ? "/signal-quality-lab" : "/signal-quality-lab?lab=structure-v21"}
@@ -515,6 +559,210 @@ function V21StructureInteractionPanel({
           </table>
         </div>
       </CollapsiblePanel>
+    </div>
+  );
+}
+
+function V21StructureExitPanel({
+  data,
+  error
+}: {
+  data: MidShortV21StructureExitResponse | null;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <SectionCard title="LAB-60 Structure-aware Exit Path" description="Studi fixed-cohort gagal dimuat.">
+        <div className="p-4 text-sm text-stale">{error}</div>
+      </SectionCard>
+    );
+  }
+  if (!data) {
+    return (
+      <SectionCard title="LAB-60 Structure-aware Exit Path" description="Menunggu payload studi read-only.">
+        <EmptyState title="No LAB-60 data" detail="Buka ulang setelah endpoint studi tersedia." />
+      </SectionCard>
+    );
+  }
+
+  const summary = data.summary;
+  const path = data.path_summary;
+  return (
+    <div className="space-y-4" id="v21-structure-exit-study">
+      <section className="rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-ink">LAB-60 V2.1 Exit Geometry + Price Path</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Sembilan geometry diuji pada signal yang sama. Tidak ada signal dibuang, dan target short structure selalu ditempatkan di atas support.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <StatusBadge value={summary.readiness_status} />
+              <StatusBadge value={summary.study_verdict} />
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-px bg-line sm:grid-cols-2 xl:grid-cols-6">
+          <LabMetric label="Fixed cohort" value={String(summary.fixed_cohort_count)} detail={`${summary.fixed_cohort_closed_count} original closed`} />
+          <LabMetric label="Train / validation" value={`${summary.train_count} / ${summary.validation_count}`} detail={`${summary.validation_closed_count} validation closed`} />
+          <LabMetric label="Structure available" value={`${summary.zone_available_count}/${summary.fixed_cohort_count}`} detail="Causal 1h zones" />
+          <LabMetric label="Complete paths" value={String(summary.path_complete_count)} detail={`${summary.path_waiting_count} waiting 4h`} />
+          <LabMetric label="Best validation" value={summary.best_validation_variant_id || "-"} detail={`${fmtSigned(summary.best_validation_avg_r_delta)}R vs control`} />
+          <LabMetric label="Readiness target" value={`${summary.fixed_cohort_closed_count}/${summary.readiness_target_closed}`} detail={summary.best_validation_verdict || "No comparable variant"} />
+        </div>
+        <div className="border-t border-line p-4 text-sm">
+          <div className="font-semibold text-ink">Keputusan riset</div>
+          <p className="mt-1 text-slate-700">{summary.recommended_action}</p>
+          <p className="mt-2 text-xs text-slate-500">Geometry hasil studi tidak mengganti entry, target, stop, atau keputusan Signal live.</p>
+        </div>
+      </section>
+
+      <CollapsiblePanel
+        title="Exit geometry comparison"
+        description="All/train/validation memakai signal yang sama. Delta positif belum berarti promosi; perhatikan drawdown, TP yang hilang, dan SL yang bertambah."
+        defaultOpen
+      >
+        <V21ExitVariantTable rows={data.variant_rows} />
+      </CollapsiblePanel>
+
+      <section className="rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="font-bold text-ink">Logged path sequence</h2>
+          <p className="mt-1 text-sm text-slate-600">Membedakan target lebih dulu, stop lebih dulu, reversal setelah sempat profit, dan ambiguity pada candle yang sama.</p>
+        </div>
+        <div className="grid gap-px bg-line sm:grid-cols-2 xl:grid-cols-6">
+          <LabMetric label="TP first" value={String(path.tp_first_count)} detail={`Median ${fmtNumber(path.time_to_tp_minutes_median)}m`} />
+          <LabMetric label="SL first" value={String(path.sl_first_count)} detail={`Median ${fmtNumber(path.time_to_sl_minutes_median)}m`} />
+          <LabMetric label="Both same candle" value={String(path.both_same_candle_count)} detail="Conservative loss-side" />
+          <LabMetric label="SL after +0.50R" value={String(path.sl_after_0_50r_count)} detail={`${path.sl_after_1_00r_count} reached +1R first`} />
+          <LabMetric label="TP adverse median" value={`${fmtSigned(path.tp_mae_r_median)}R`} detail={`Q90 ${fmtSigned(path.tp_mae_r_q90)}R`} />
+          <LabMetric label="SL favorable median" value={`${fmtSigned(path.sl_mfe_r_median)}R`} detail={`Q90 ${fmtSigned(path.sl_mfe_r_q90)}R`} />
+        </div>
+        <div className="grid gap-3 border-t border-line p-4 lg:grid-cols-3">
+          {Object.entries(data.research_answers).map(([key, value]) => (
+            <div className="rounded border border-line bg-field/40 p-3" key={key}>
+              <div className="text-xs font-semibold uppercase text-slate-500">{key.replaceAll("_", " ")}</div>
+              <div className="mt-1 text-sm text-slate-700">{value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <CollapsiblePanel
+        title="Latest fixed-cohort path evidence"
+        description="Control dan geometry structure ditampilkan per signal agar hasil agregat dapat dilacak kembali ke symbol dan waktu nyata."
+      >
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Time WIB</th>
+                <th>Symbol</th>
+                <th>Logged result</th>
+                <th>Path</th>
+                <th>MFE / MAE</th>
+                <th>Control</th>
+                <th>Support target</th>
+                <th>Resistance stop</th>
+                <th>Structure both</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.case_rows.map((row) => {
+                const control = row.exit_results.CONTROL_LOGGED;
+                const support = row.exit_results.SUPPORT_FRONT_0_10ATR;
+                const resistance = row.exit_results.RESISTANCE_BACK_0_10ATR;
+                const combined = row.exit_results.ZONE_ADAPTIVE_BOTH;
+                return (
+                  <tr key={row.signal_id}>
+                    <td>{row.signal_time_wib || fmtTime(row.signal_timestamp)}</td>
+                    <td className="font-semibold">{row.symbol}</td>
+                    <td><StatusBadge value={row.result_status} /></td>
+                    <td>
+                      <StatusBadge value={row.path_sequence?.path_status || "MISSING_CONTEXT"} />
+                      {row.path_sequence?.reached_0_50r_before_sl ? <div className="mt-1 text-xs text-slate-500">Reached +0.50R before later stop</div> : null}
+                    </td>
+                    <td>{fmtSigned(row.path_sequence?.mfe_r_to_terminal)} / {fmtSigned(row.path_sequence?.mae_r_to_terminal)}</td>
+                    <td><ExitCaseRead result={control} /></td>
+                    <td><ExitCaseRead result={support} /></td>
+                    <td><ExitCaseRead result={resistance} /></td>
+                    <td><ExitCaseRead result={combined} /></td>
+                    <td><Link className="font-semibold text-primary hover:underline" href={row.detail_href}>Open</Link></td>
+                  </tr>
+                );
+              })}
+              {!data.case_rows.length ? (
+                <tr><td colSpan={10}><EmptyState title="No V2.1 cases" detail="Belum ada fixed-cohort signal untuk ditampilkan." /></td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </CollapsiblePanel>
+
+      <SectionCard title="Study limits" description="Batas interpretasi yang wajib dibaca sebelum memakai hasil.">
+        <div className="grid gap-2 p-4 md:grid-cols-2">
+          {data.limitations.map((item) => <div className="rounded border border-line bg-field/40 p-3 text-sm text-slate-700" key={item}>{item}</div>)}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function V21ExitVariantTable({ rows }: { rows: MidShortV21ExitVariant[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th>Verdict</th>
+            <th>All TP / SL / Both / Neither</th>
+            <th>All R / avg / DD</th>
+            <th>Validation n</th>
+            <th>Validation TP / SL</th>
+            <th>Validation R / avg delta</th>
+            <th>Validation DD / delta</th>
+            <th>TP lost/gained</th>
+            <th>SL avoided/added</th>
+            <th>Geometry use</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.variant_id}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="mt-1 text-xs text-slate-500">{row.method}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.all.tp_count} / {row.all.sl_count} / {row.all.both_count} / {row.all.neither_count}</td>
+              <td>{fmtSigned(row.all.total_realistic_r)}R / {fmtSigned(row.all.avg_realistic_r)}R / {fmtSigned(row.all.max_drawdown_r)}R</td>
+              <td>{row.validation.evaluated_count}/{row.validation.source_count}</td>
+              <td>{row.validation.tp_count} / {row.validation.sl_count + row.validation.both_count}</td>
+              <td>{fmtSigned(row.validation.total_realistic_r)}R / {fmtSigned(row.validation.avg_realistic_r_delta_vs_control)}R</td>
+              <td>{fmtSigned(row.validation.max_drawdown_r)}R / {fmtSigned(row.validation.max_drawdown_delta_vs_control)}R</td>
+              <td>{row.validation.tp_lost_count} / {row.validation.tp_gained_count}</td>
+              <td>{row.validation.sl_avoided_count} / {row.validation.sl_added_count}</td>
+              <td>{row.all.geometry_adjusted_count} adjusted / {row.all.geometry_fallback_count} fallback</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ExitCaseRead({ result }: { result?: { status: string; realistic_r?: string | number | null; target?: string | number | null; stop?: string | number | null; geometry_status: string } }) {
+  if (!result) return <span className="text-slate-500">-</span>;
+  return (
+    <div className="min-w-32 text-xs">
+      <StatusBadge value={result.status} />
+      <div className="mt-1 font-semibold">{fmtSigned(result.realistic_r)}R</div>
+      <div className="mt-1 text-slate-500">TP {fmtNumber(result.target)} / SL {fmtNumber(result.stop)}</div>
+      <div className="mt-1 text-slate-500">{result.geometry_status.replaceAll("_", " ")}</div>
     </div>
   );
 }

@@ -60,6 +60,7 @@ router = APIRouter()
 _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
 _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS = 900.0
 _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS = 3600.0
+_MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS = 3600.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
@@ -86,6 +87,8 @@ _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK = Lock()
 _MID_SHORT_STRUCTURE_ZONE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_LOCK = Lock()
 _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_MID_SHORT_V21_STRUCTURE_EXIT_CACHE_LOCK = Lock()
+_MID_SHORT_V21_STRUCTURE_EXIT_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_VOLUME_SAFE_CACHE_LOCK = Lock()
 _MID_SHORT_VOLUME_SAFE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_FILTER_COMBO_CACHE_LOCK = Lock()
@@ -906,6 +909,60 @@ def signal_candidates_mid_short_1h_v21_structure_interaction_study(
     payload["cache"] = {
         "hit": False,
         "ttl_seconds": _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS,
+    }
+    return payload
+
+
+@router.get("/api/signal-candidates/mid-short-1h-v2-1-structure-exit-study")
+def signal_candidates_mid_short_1h_v21_structure_exit_study(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    min_sample: int = 20,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 150))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_min_sample,
+    )
+    now = monotonic()
+    with _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_LOCK:
+        cached = _MID_SHORT_V21_STRUCTURE_EXIT_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["case_rows"] = list(payload.get("case_rows") or [])[:normalized_limit]
+            payload["filters"] = {
+                **dict(payload.get("filters") or {}),
+                "limit": normalized_limit,
+            }
+            payload["cache"] = {
+                "hit": True,
+                "ttl_seconds": _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS,
+            }
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).mid_short_1h_v21_structure_exit_study(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=normalized_min_sample,
+            limit=150,
+        )
+    )
+    with _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_LOCK:
+        _MID_SHORT_V21_STRUCTURE_EXIT_CACHE[cache_key] = (monotonic(), payload)
+    payload = dict(payload)
+    payload["case_rows"] = list(payload.get("case_rows") or [])[:normalized_limit]
+    payload["filters"] = {
+        **dict(payload.get("filters") or {}),
+        "limit": normalized_limit,
+    }
+    payload["cache"] = {
+        "hit": False,
+        "ttl_seconds": _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS,
     }
     return payload
 
