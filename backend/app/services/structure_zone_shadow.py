@@ -507,6 +507,10 @@ def structure_zone_chart_zones(
 ) -> list[dict[str, Any]]:
     primary = snapshot.get("primary") if isinstance(snapshot, dict) else None
     zones = primary.get("zones") if isinstance(primary, dict) else None
+    primary_timeframe = str(snapshot.get("primary_timeframe") or "") if isinstance(snapshot, dict) else ""
+    primary_state = str(primary.get("state") or "") if isinstance(primary, dict) else ""
+    state_zone = primary.get("state_zone") if isinstance(primary, dict) else None
+    state_zone_center = _decimal(state_zone.get("center")) if isinstance(state_zone, dict) else None
     if not isinstance(zones, list):
         return []
     visible: list[dict[str, Any]] = []
@@ -521,6 +525,9 @@ def structure_zone_chart_zones(
         visible.append(
             {
                 **zone,
+                "source_timeframe": primary_timeframe,
+                "signal_state": primary_state if state_zone_center is not None and lower <= state_zone_center <= upper else None,
+                "is_signal_zone": state_zone_center is not None and lower <= state_zone_center <= upper,
                 "start_time": max(_naive(first_touch), _naive(chart_start)),
                 "end_time": _naive(chart_end),
             }

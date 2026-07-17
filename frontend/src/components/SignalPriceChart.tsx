@@ -26,6 +26,18 @@ type HoverCandle = {
   close: number;
 };
 
+type NormalizedStructureZone = {
+  lower: number;
+  upper: number;
+  originRole: string;
+  touchCount: number;
+  sourceTimeframe?: string | null;
+  signalState?: string | null;
+  isSignalZone: boolean;
+  startTime: UTCTimestamp;
+  endTime: UTCTimestamp;
+};
+
 export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<HoverCandle | null>(null);
@@ -161,11 +173,12 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
     const rewardBox = zoneElement("rgba(5, 150, 105, 0.10)", "rgba(5, 150, 105, 0.35)", "TARGET ZONE");
     const riskBox = zoneElement("rgba(220, 38, 38, 0.09)", "rgba(220, 38, 38, 0.30)", "RISK ZONE");
     const structureBoxes = normalized.structureZones.map((zone) => {
-      const colors = structureZoneColors(zone.originRole);
+      const colors = structureZoneColors(zone.originRole, zone.isSignalZone);
       const element = zoneElement(
         colors.background,
         colors.border,
-        `${zone.originRole.replaceAll("_", " ")} | ${zone.touchCount} touches`
+        structureZoneLabel(zone),
+        zone.isSignalZone
       );
       container.append(element);
       return { element, zone };
@@ -327,6 +340,9 @@ function normalizeChartData(chartData?: SignalChartPayload) {
       upper: Number(zone.upper),
       originRole: zone.origin_role,
       touchCount: Number(zone.touch_count),
+      sourceTimeframe: zone.source_timeframe,
+      signalState: zone.signal_state,
+      isSignalZone: Boolean(zone.is_signal_zone),
       startTime: candleTimeAtOrAfter(candles, zone.start_time),
       endTime: candleTimeAtOrBefore(candles, zone.end_time)
     }))
@@ -440,17 +456,36 @@ function resultMarkerText(status: string): string {
   return "RESULT";
 }
 
-function structureZoneColors(role: string): { background: string; border: string } {
+function structureZoneColors(role: string, active = false): { background: string; border: string } {
   if (role === "SUPPORT_ORIGIN") {
-    return { background: "rgba(14, 116, 144, 0.08)", border: "rgba(14, 116, 144, 0.38)" };
+    return {
+      background: active ? "rgba(8, 145, 178, 0.22)" : "rgba(8, 145, 178, 0.14)",
+      border: active ? "rgba(8, 145, 178, 0.95)" : "rgba(8, 145, 178, 0.70)"
+    };
   }
   if (role === "RESISTANCE_ORIGIN") {
-    return { background: "rgba(217, 119, 6, 0.08)", border: "rgba(217, 119, 6, 0.40)" };
+    return {
+      background: active ? "rgba(217, 119, 6, 0.22)" : "rgba(217, 119, 6, 0.14)",
+      border: active ? "rgba(180, 83, 9, 0.95)" : "rgba(217, 119, 6, 0.72)"
+    };
   }
-  return { background: "rgba(124, 58, 237, 0.07)", border: "rgba(124, 58, 237, 0.34)" };
+  return {
+    background: active ? "rgba(124, 58, 237, 0.20)" : "rgba(124, 58, 237, 0.12)",
+    border: active ? "rgba(109, 40, 217, 0.95)" : "rgba(124, 58, 237, 0.68)"
+  };
 }
 
-function zoneElement(background: string, border: string, label: string): HTMLDivElement {
+function structureZoneLabel(zone: NormalizedStructureZone): string {
+  const role = zone.originRole === "SUPPORT_ORIGIN"
+    ? "SUPPORT"
+    : zone.originRole === "RESISTANCE_ORIGIN"
+      ? "RESISTANCE"
+      : "S/R FLIP";
+  const active = zone.isSignalZone ? `ACTIVE ${zone.signalState?.replaceAll("_", " ") || role}` : role;
+  return `${zone.sourceTimeframe?.toUpperCase() || "TF"} ${active} | ${zone.touchCount} touches`;
+}
+
+function zoneElement(background: string, border: string, label: string, active = false): HTMLDivElement {
   const element = document.createElement("div");
   Object.assign(element.style, {
     position: "absolute",
@@ -458,7 +493,7 @@ function zoneElement(background: string, border: string, label: string): HTMLDiv
     pointerEvents: "none",
     zIndex: "10",
     background,
-    border: `1px solid ${border}`,
+    border: `${active ? 2 : 1}px solid ${border}`,
     color: border,
     fontSize: "10px",
     fontWeight: "700",

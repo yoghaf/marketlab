@@ -193,6 +193,7 @@ export default async function SignalDetailPage({
           <DetailItem label="Primary zone state" value={`${item.structure_zone_primary_timeframe || "-"} ${item.structure_zone_primary_state || "-"}`} />
           <DetailItem label="Higher-TF zone state" value={`${item.structure_zone_context_timeframe || "-"} ${item.structure_zone_context_state || item.structure_zone_context_status || "-"}`} />
           <DetailItem label="Zone snapshot time" value={fmtTime(item.structure_zone_snapshot_time)} />
+          <DetailItem label="Zone snapshot source" value={item.structure_zone_snapshot_source || "-"} />
           <DetailItem label="Signal time WIB" value={item.signal_time_wib || fmtTime(item.signal_timestamp)} />
           <DetailItem label="Window open" value={fmtTime(data.raw_signal.window_open_time)} />
           <DetailItem label="Window close" value={fmtTime(data.raw_signal.window_close_time)} />

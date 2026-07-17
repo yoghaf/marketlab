@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-17",
+    version: "LAB-58",
+    title: "Historical Signal Zone Detail Recovery",
+    status: "LIVE",
+    area: "Signal Detail chart integrity",
+    summary: "Signal lama yang belum memiliki snapshot struktur tersimpan kini menghitung ulang zona secara causal saat detail dibuka, sehingga support/resistance tidak lagi salah ditampilkan sebagai unavailable.",
+    changes: [
+      "Fallback hanya membaca candle closed yang tersedia sebelum atau tepat pada waktu Signal; candle masa depan tidak dipakai untuk membentuk zona.",
+      "Signal Detail menandai sumber snapshot sebagai PERSISTED, ON_DEMAND_CAUSAL, atau UNAVAILABLE agar provenance dapat diaudit.",
+      "Chart menampilkan box SUPPORT, RESISTANCE, dan S/R FLIP dengan zona yang memicu state Signal diberi garis lebih tegas.",
+      "Snapshot on-demand hanya dipakai untuk response detail dan tidak mengubah history, hasil TP/SL, atau database melalui request GET.",
+      "Patch ini tidak mengubah Signal Factory, arah Signal, threshold, entry, SL/TP, outcome evaluator, atau execution."
+    ],
+    impact: "Detail Signal historis tetap memperlihatkan struktur pasar yang benar meskipun row tersebut dibuat sebelum snapshot zona mulai dipersist, tanpa look-ahead dan tanpa backfill berat.",
+    links: [
+      { href: "/scanner", label: "Live Radar" },
+      { href: "/structure-zone-shadow-study", label: "Zone Shadow Study" },
+      { href: "/signal-performance", label: "Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-17",
     version: "LAB-57",
     title: "All-Signal Structure Zone Shadow",
     status: "LIVE",

@@ -269,6 +269,7 @@ export type LiveScannerItem = {
   structure_zone_context_state?: string | null;
   structure_zone_context_reason?: string | null;
   structure_zone_snapshot_time?: string | null;
+  structure_zone_snapshot_source?: string | null;
   structure_zone_read_only?: boolean;
   structure_zone_not_signal_gate?: boolean;
   confidence: string;
@@ -777,6 +778,7 @@ export type SignalPerformanceItem = {
   structure_zone_context_state?: string | null;
   structure_zone_context_reason?: string | null;
   structure_zone_snapshot_time?: string | null;
+  structure_zone_snapshot_source?: string | null;
   confidence_tier?: string | null;
   execution_flag?: string | null;
   core_score?: string | number | null;
@@ -1429,6 +1431,9 @@ export type SignalStructureZone = {
   last_touch_time: string;
   start_time: string;
   end_time: string;
+  source_timeframe?: string | null;
+  signal_state?: string | null;
+  is_signal_zone?: boolean;
 };
 
 export type SignalQualityBucket = SignalPerformanceBucket & {

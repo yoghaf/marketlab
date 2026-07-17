@@ -22,7 +22,7 @@ from app.models.market import (
     SignalForwardReturnLog,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
-from app.services.structure_zone_shadow import structure_zone_chart_zones
+from app.services.structure_zone_shadow import StructureZoneShadowService, structure_zone_chart_zones
 from app.services.utils import utcnow
 
 
@@ -247,6 +247,26 @@ class SignalCandidatePerformanceService:
                 ),
             )
         )
+        persisted_zone_snapshot = _structure_zone_snapshot(signal)
+        zone_snapshot = persisted_zone_snapshot
+        zone_snapshot_source = "PERSISTED"
+        if zone_snapshot is None:
+            zone_snapshot = StructureZoneShadowService(self.db).snapshots_for_signals(
+                [
+                    {
+                        "signal_id": signal.signal_id,
+                        "symbol": signal.symbol,
+                        "timeframe": signal.timeframe,
+                        "signal_timestamp": signal.signal_timestamp,
+                        "direction": signal.direction,
+                        "price_at_signal": signal.price_at_signal,
+                    }
+                ]
+            ).get(signal.signal_id)
+            zone_snapshot_source = "ON_DEMAND_CAUSAL" if zone_snapshot else "UNAVAILABLE"
+        if zone_snapshot:
+            item.update(_structure_zone_result_fields(zone_snapshot))
+        item["structure_zone_snapshot_source"] = zone_snapshot_source
         chart_start_time = signal_time - timedelta(hours=24)
         chart_result_time = _parse_dt(item.get("result_time_utc"))
         chart_end_time = chart_result_time + timedelta(hours=2) if chart_result_time else None
@@ -266,7 +286,6 @@ class SignalCandidatePerformanceService:
         )
         chart_candles = _merge_candle_maps(chart_base_candles, chart_tail_candles).get(signal.symbol, [])
         chart_payload = _signal_chart_payload(signal, item, chart_candles)
-        zone_snapshot = _structure_zone_snapshot(signal)
         if chart_payload and zone_snapshot and chart_candles:
             chart_payload["structure_zones"] = structure_zone_chart_zones(
                 zone_snapshot,
@@ -275,6 +294,9 @@ class SignalCandidatePerformanceService:
                 min_price=min(candle.low for candle in chart_candles),
                 max_price=max(candle.high for candle in chart_candles),
             )
+        response_evidence = dict(signal.evidence or {})
+        if zone_snapshot and persisted_zone_snapshot is None:
+            response_evidence["structure_zone_shadow"] = zone_snapshot
         return {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
@@ -311,7 +333,7 @@ class SignalCandidatePerformanceService:
                 "updated_at": signal.updated_at,
             },
             "chart": chart_payload,
-            "evidence": signal.evidence or {},
+            "evidence": response_evidence,
         }
 
     def quality_lab(
