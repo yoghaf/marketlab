@@ -9,7 +9,7 @@ from decimal import Decimal
 from time import monotonic
 from typing import Any, Callable
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.market import (
@@ -1013,6 +1013,7 @@ class SignalCandidatePerformanceService:
                 include_watch_only=include_watch_only,
                 position_lock=position_lock,
                 shadow_status="SHADOW_PASS",
+                include_failure_anatomy=False,
             )
         )
         signal_times = [
@@ -1075,6 +1076,83 @@ class SignalCandidatePerformanceService:
                 "Filtered rows remain in the fixed cohort as zero-R no-entry observations when tradeoff metrics are calculated.",
                 "No Signal Factory rule, scanner decision, TP/SL formula, threshold, outcome logger, or execution path is changed.",
             ],
+        }
+
+    def mid_short_1h_structure_zone_case(
+        self,
+        *,
+        signal_id: str,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+    ) -> dict[str, Any]:
+        signals = self._load_signals(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage="MID_SHORT",
+            timeframe="1h",
+            symbol=None,
+            signal_id=signal_id,
+        )
+        if not signals:
+            return {"selected_case": None, "selected_chart": None}
+
+        signal = signals[0]
+        signal_time = _naive(signal.signal_timestamp)
+        symbols = {signal.symbol}
+        base_candles = self._load_15m_candles(
+            symbols,
+            start_time=signal_time - timedelta(hours=10),
+        )
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_candles = self._load_1m_candles(
+            symbols,
+            start_time=latest_base_time or signal_time,
+        )
+        forward_candles = _merge_candle_maps(base_candles, tail_candles)
+        evaluated, _skipped = self._evaluate(
+            signals,
+            forward_candles,
+            position_lock=False,
+            global_latest_candle_time=self._global_latest_candle_time() or latest_base_time,
+        )
+        if not evaluated:
+            return {"selected_case": None, "selected_chart": None}
+
+        one_hour_candles = self._load_1h_candles(
+            symbols,
+            start_time=signal_time - timedelta(hours=264),
+            end_time=signal_time + timedelta(hours=4),
+        )
+        four_hour_candles = self._load_4h_candles(
+            symbols,
+            start_time=signal_time - timedelta(days=45),
+            end_time=signal_time + timedelta(hours=4),
+        )
+        item = evaluated[0]
+        context = _lab56_structure_context(
+            item,
+            one_hour_candles=sorted(
+                one_hour_candles.get(signal.symbol, []),
+                key=lambda candle: candle.close_time,
+            ),
+            four_hour_candles=sorted(
+                four_hour_candles.get(signal.symbol, []),
+                key=lambda candle: candle.close_time,
+            ),
+            config=next(
+                config for config in LAB56_ZONE_CONFIGS if config.config_id == LAB56_PRIMARY_CONFIG_ID
+            ),
+        )
+        selected = {**item, **context}
+        return {
+            "selected_case": _lab56_case_row(selected),
+            "selected_chart": _lab56_zone_chart_payload(
+                selected,
+                candles=one_hour_candles.get(signal.symbol, []),
+            ),
         }
 
     def mid_short_1h_volume_safe_shadow(
@@ -1457,6 +1535,7 @@ class SignalCandidatePerformanceService:
         position_lock: bool,
         shadow_status: str,
         include_target_distance_context: bool = False,
+        include_failure_anatomy: bool = True,
     ) -> tuple[
         list[dict[str, Any]],
         Counter[str],
@@ -1475,9 +1554,26 @@ class SignalCandidatePerformanceService:
         min_signal_time = min((_naive(row.signal_timestamp) for row in signals), default=None)
         max_signal_time = max((_naive(row.signal_timestamp) for row in signals), default=None)
         source_symbols = {row.symbol for row in signals}
-        candle_symbols = set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
+        candle_symbols = (
+            set(source_symbols) | {"BTCUSDT", "ETHUSDT"}
+            if include_failure_anatomy
+            else set(source_symbols)
+        )
         candle_start = min_signal_time - timedelta(hours=10) if min_signal_time is not None else None
-        base_candles = self._load_15m_candles(candle_symbols, start_time=candle_start)
+        start_times_by_symbol: dict[str, datetime] = {}
+        for signal in signals:
+            symbol_start = _naive(signal.signal_timestamp) - timedelta(hours=10)
+            current = start_times_by_symbol.get(signal.symbol)
+            if current is None or symbol_start < current:
+                start_times_by_symbol[signal.symbol] = symbol_start
+        for symbol in candle_symbols - source_symbols:
+            if candle_start is not None:
+                start_times_by_symbol[symbol] = candle_start
+        base_candles = self._load_15m_candles(
+            candle_symbols,
+            start_time=candle_start,
+            start_times_by_symbol=start_times_by_symbol,
+        )
         latest_base_time = max(
             (candle.close_time for rows in base_candles.values() for candle in rows),
             default=None,
@@ -1521,14 +1617,19 @@ class SignalCandidatePerformanceService:
                 for item in evaluated
                 if str(item.get("quality_shadow_status") or "").upper() == normalized_shadow_status
             ]
-        return (
+        annotated = (
             _annotate_mid_short_failure_anatomy(
                 evaluated,
                 candles,
                 one_hour_candles=one_hour_candles,
                 oi_history=oi_history,
                 include_target_distance_context=include_target_distance_context,
-            ),
+            )
+            if include_failure_anatomy
+            else evaluated
+        )
+        return (
+            annotated,
             skipped,
             latest_candle_time,
             normalized_shadow_status,
@@ -2217,6 +2318,7 @@ class SignalCandidatePerformanceService:
         *,
         start_time: datetime | None,
         end_time: datetime | None = None,
+        start_times_by_symbol: dict[str, datetime] | None = None,
     ) -> dict[str, list[PerfCandle]]:
         if not symbols:
             return {}
@@ -2234,13 +2336,21 @@ class SignalCandidatePerformanceService:
                 FuturesKline15m.taker_sell_base_volume,
                 FuturesKline15m.aggregation_status,
             )
-            .where(
-                FuturesKline15m.symbol.in_(symbols),
-            )
             .order_by(asc(FuturesKline15m.symbol), asc(FuturesKline15m.open_time))
         )
-        if start_time is not None:
-            query = query.where(FuturesKline15m.open_time >= start_time)
+        if start_times_by_symbol:
+            symbol_windows = []
+            for symbol in symbols:
+                symbol_start = start_times_by_symbol.get(symbol, start_time)
+                predicate = FuturesKline15m.symbol == symbol
+                if symbol_start is not None:
+                    predicate = and_(predicate, FuturesKline15m.open_time >= symbol_start)
+                symbol_windows.append(predicate)
+            query = query.where(or_(*symbol_windows))
+        else:
+            query = query.where(FuturesKline15m.symbol.in_(symbols))
+            if start_time is not None:
+                query = query.where(FuturesKline15m.open_time >= start_time)
         if end_time is not None:
             query = query.where(FuturesKline15m.open_time <= end_time)
         rows = self.db.execute(query).all()
@@ -6722,6 +6832,14 @@ def _mid_short_structure_zone_study(
     limit: int,
     selected_signal_id: str | None,
 ) -> dict[str, Any]:
+    one_hour_candles = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in one_hour_candles.items()
+    }
+    four_hour_candles = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in four_hour_candles.items()
+    }
     ordered, train, validation, validation_cutoff = _lab53_chronological_split(items)
     split_keys = {
         "all": {_lab55_item_key(item) for item in ordered},
@@ -6738,6 +6856,7 @@ def _mid_short_structure_zone_study(
                 one_hour_candles=one_hour_candles.get(symbol, []),
                 four_hour_candles=four_hour_candles.get(symbol, []),
                 config=config,
+                include_four_hour_confluence=config.config_id == LAB56_PRIMARY_CONFIG_ID,
             )
             enriched.append({**item, **context})
         by_config[config.config_id] = enriched
@@ -6946,6 +7065,7 @@ def _lab56_structure_context(
     one_hour_candles: list[PerfCandle],
     four_hour_candles: list[PerfCandle],
     config: StructureZoneConfig,
+    include_four_hour_confluence: bool = True,
 ) -> dict[str, Any]:
     signal_time = _parse_dt(item.get("signal_timestamp"))
     entry = _decimal_or_none_any(item.get("entry"))
@@ -6966,13 +7086,12 @@ def _lab56_structure_context(
     }
     if signal_time is None or entry is None or entry <= 0:
         return unavailable
-    closed_through_signal = sorted(
-        (candle for candle in one_hour_candles if candle.close_time <= signal_time),
-        key=lambda candle: candle.close_time,
-    )
+    closed_through_signal = [
+        candle for candle in one_hour_candles if candle.close_time <= signal_time
+    ]
     signal_candle = closed_through_signal[-1] if closed_through_signal else None
     prior_candle = closed_through_signal[-2] if len(closed_through_signal) >= 2 else None
-    atr_1h = _lab56_atr_at_signal(one_hour_candles, signal_time=signal_time)
+    atr_1h = _lab56_atr_from_closed(closed_through_signal)
     history = [
         candle
         for candle in one_hour_candles
@@ -6985,6 +7104,7 @@ def _lab56_structure_context(
         zone_half_width_atr=config.zone_half_width_atr,
         min_touches=config.min_touches,
         independent_touch_gap=timedelta(hours=4),
+        presorted=True,
     )
     if signal_candle is None or prior_candle is None or atr_1h is None or atr_1h <= 0 or len(history) < 24:
         return {
@@ -7010,12 +7130,22 @@ def _lab56_structure_context(
         zones=zones,
         atr=atr_1h,
     )
-    confluence = _lab56_four_hour_confluence(
-        entry=entry,
-        signal_time=signal_time,
-        primary_state=classification["structure_state"],
-        primary_zone=classification.get("state_zone"),
-        four_hour_candles=four_hour_candles,
+    confluence = (
+        _lab56_four_hour_confluence(
+            entry=entry,
+            signal_time=signal_time,
+            primary_state=classification["structure_state"],
+            primary_zone=classification.get("state_zone"),
+            four_hour_candles=four_hour_candles,
+        )
+        if include_four_hour_confluence
+        else {
+            "four_hour_confluence_status": "FOUR_H_CONTEXT_NOT_EVALUATED",
+            "four_hour_confluence_reason": "4h context is only evaluated for the primary display configuration.",
+            "atr_4h_at_signal": None,
+            "zone_count_4h": 0,
+            "nearest_4h_zone": None,
+        }
     )
     return {
         "zone_config_id": config.config_id,
@@ -7033,6 +7163,10 @@ def _lab56_atr_at_signal(candles: list[PerfCandle], *, signal_time: datetime) ->
         (candle for candle in candles if candle.close_time <= signal_time),
         key=lambda candle: candle.close_time,
     )
+    return _lab56_atr_from_closed(closed)
+
+
+def _lab56_atr_from_closed(closed: list[PerfCandle]) -> Decimal | None:
     if len(closed) < 15:
         return None
     ranges = _candle_true_ranges(closed)
@@ -7048,8 +7182,9 @@ def _lab56_detect_zones(
     zone_half_width_atr: Decimal,
     min_touches: int,
     independent_touch_gap: timedelta,
+    presorted: bool = False,
 ) -> list[dict[str, Any]]:
-    ordered = sorted(candles, key=lambda candle: candle.close_time)
+    ordered = candles if presorted else sorted(candles, key=lambda candle: candle.close_time)
     if atr is None or atr <= 0 or len(ordered) < (pivot_span * 2) + 3:
         return []
     points: list[dict[str, Any]] = []
@@ -7260,6 +7395,7 @@ def _lab56_four_hour_confluence(
         zone_half_width_atr=Decimal("0.35"),
         min_touches=2,
         independent_touch_gap=timedelta(hours=16),
+        presorted=True,
     )
     if atr_4h is None or not zones:
         return {

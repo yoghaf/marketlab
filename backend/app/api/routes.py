@@ -767,35 +767,49 @@ def signal_candidates_mid_short_1h_structure_zone_study(
         bool(include_watch_only),
         bool(position_lock),
         normalized_min_sample,
-        normalized_limit,
-        normalized_signal_id,
     )
     now = monotonic()
+    cache_hit = False
     with _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK:
         cached = _MID_SHORT_STRUCTURE_ZONE_CACHE.get(cache_key)
         if cached and now - cached[0] <= _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS:
-            payload = dict(cached[1])
-            payload["cache"] = {
-                "hit": True,
-                "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
-            }
-            return payload
+            base_payload = dict(cached[1])
+            cache_hit = True
 
-    payload = json_safe(
-        SignalCandidatePerformanceService(db).mid_short_1h_structure_zone_study(
-            include_watch_only=include_watch_only,
-            position_lock=position_lock,
-            min_sample=normalized_min_sample,
-            limit=normalized_limit,
-            signal_id=normalized_signal_id,
+    service = SignalCandidatePerformanceService(db)
+    if not cache_hit:
+        base_payload = json_safe(
+            service.mid_short_1h_structure_zone_study(
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                min_sample=normalized_min_sample,
+                limit=150,
+                signal_id=None,
+            )
         )
-    )
+        with _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK:
+            _MID_SHORT_STRUCTURE_ZONE_CACHE[cache_key] = (monotonic(), base_payload)
+
+    payload = dict(base_payload)
+    payload["filters"] = {
+        **dict(base_payload.get("filters") or {}),
+        "limit": normalized_limit,
+        "signal_id": normalized_signal_id,
+    }
+    payload["case_rows"] = list(base_payload.get("case_rows") or [])[:normalized_limit]
+    if normalized_signal_id:
+        payload.update(
+            json_safe(
+                service.mid_short_1h_structure_zone_case(
+                    signal_id=normalized_signal_id,
+                    include_watch_only=include_watch_only,
+                )
+            )
+        )
     payload["cache"] = {
-        "hit": False,
+        "hit": cache_hit,
         "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
     }
-    with _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK:
-        _MID_SHORT_STRUCTURE_ZONE_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 
