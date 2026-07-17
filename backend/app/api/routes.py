@@ -79,6 +79,8 @@ _MID_SHORT_WRONG_DIRECTION_CACHE_LOCK = Lock()
 _MID_SHORT_WRONG_DIRECTION_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_ENTRY_CONFIRMATION_CACHE_LOCK = Lock()
 _MID_SHORT_ENTRY_CONFIRMATION_CACHE: dict[tuple, tuple[float, dict]] = {}
+_MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK = Lock()
+_MID_SHORT_STRUCTURE_ZONE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_VOLUME_SAFE_CACHE_LOCK = Lock()
 _MID_SHORT_VOLUME_SAFE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_FILTER_COMBO_CACHE_LOCK = Lock()
@@ -746,6 +748,54 @@ def signal_candidates_mid_short_1h_entry_confirmation_study(
     payload["cache"] = {"hit": False, "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS}
     with _MID_SHORT_ENTRY_CONFIRMATION_CACHE_LOCK:
         _MID_SHORT_ENTRY_CONFIRMATION_CACHE[cache_key] = (monotonic(), payload)
+    return payload
+
+
+@router.get("/api/signal-candidates/mid-short-1h-structure-zone-study")
+def signal_candidates_mid_short_1h_structure_zone_study(
+    include_watch_only: bool = False,
+    position_lock: bool = True,
+    min_sample: int = 20,
+    limit: int = 50,
+    signal_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    normalized_limit = max(1, min(limit, 150))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    normalized_signal_id = (signal_id or "").strip() or None
+    cache_key = (
+        bool(include_watch_only),
+        bool(position_lock),
+        normalized_min_sample,
+        normalized_limit,
+        normalized_signal_id,
+    )
+    now = monotonic()
+    with _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK:
+        cached = _MID_SHORT_STRUCTURE_ZONE_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {
+                "hit": True,
+                "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
+            }
+            return payload
+
+    payload = json_safe(
+        SignalCandidatePerformanceService(db).mid_short_1h_structure_zone_study(
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            min_sample=normalized_min_sample,
+            limit=normalized_limit,
+            signal_id=normalized_signal_id,
+        )
+    )
+    payload["cache"] = {
+        "hit": False,
+        "ttl_seconds": _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS,
+    }
+    with _MID_SHORT_STRUCTURE_ZONE_CACHE_LOCK:
+        _MID_SHORT_STRUCTURE_ZONE_CACHE[cache_key] = (monotonic(), payload)
     return payload
 
 

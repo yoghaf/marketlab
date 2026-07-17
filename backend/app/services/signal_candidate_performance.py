@@ -16,6 +16,7 @@ from app.models.market import (
     FuturesKline1h,
     FuturesKline1m,
     FuturesKline15m,
+    FuturesKline4h,
     MarketlabActiveUniverse,
     RichFutures5mAlignment,
     SignalForwardReturnLog,
@@ -97,6 +98,42 @@ class FilterStudySpec:
     family: str
     required_fields: tuple[str, ...]
     predicate: Callable[[dict[str, Any]], bool]
+
+
+@dataclass(frozen=True)
+class StructureZoneConfig:
+    config_id: str
+    label: str
+    lookback_hours: int
+    pivot_span: int
+    zone_half_width_atr: Decimal
+    min_touches: int = 2
+
+
+LAB56_ZONE_CONFIGS = (
+    StructureZoneConfig(
+        config_id="TIGHT_96H_020ATR",
+        label="Tight 96h / 0.20 ATR",
+        lookback_hours=96,
+        pivot_span=2,
+        zone_half_width_atr=Decimal("0.20"),
+    ),
+    StructureZoneConfig(
+        config_id="BALANCED_168H_030ATR",
+        label="Balanced 168h / 0.30 ATR",
+        lookback_hours=168,
+        pivot_span=2,
+        zone_half_width_atr=Decimal("0.30"),
+    ),
+    StructureZoneConfig(
+        config_id="BROAD_240H_040ATR",
+        label="Broad 240h / 0.40 ATR",
+        lookback_hours=240,
+        pivot_span=2,
+        zone_half_width_atr=Decimal("0.40"),
+    ),
+)
+LAB56_PRIMARY_CONFIG_ID = "BALANCED_168H_030ATR"
 
 
 class SignalCandidatePerformanceService:
@@ -957,6 +994,86 @@ class SignalCandidatePerformanceService:
                 "The original risk distance and RR are preserved, while entry, stop, target, and realistic cost are recalculated.",
                 "Position lock selects the source cohort once and is not re-optimized per confirmation variant.",
                 "No threshold, live signal, order, execution, leverage, or position sizing is changed.",
+            ],
+        }
+
+    def mid_short_1h_structure_zone_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+        signal_id: str | None = None,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _forward_candles = (
+            self._mid_short_1h_anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                shadow_status="SHADOW_PASS",
+            )
+        )
+        signal_times = [
+            value
+            for value in (_parse_dt(item.get("signal_timestamp")) for item in annotated)
+            if value is not None
+        ]
+        symbols = {str(item.get("symbol") or "") for item in annotated if item.get("symbol")}
+        min_signal_time = min(signal_times, default=None)
+        max_signal_time = max(signal_times, default=None)
+        one_hour_candles = self._load_1h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(hours=264)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        four_hour_candles = self._load_4h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(days=45)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        study = _mid_short_structure_zone_study(
+            annotated,
+            one_hour_candles=one_hour_candles,
+            four_hour_candles=four_hour_candles,
+            min_sample=min_sample,
+            limit=limit,
+            selected_signal_id=signal_id,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "min_sample": min_sample,
+                "limit": limit,
+                "signal_id": signal_id,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_structure_zone_study",
+            "study_scope": "read_only_mid_short_1h_causal_structure_zones",
+            "source_table": (
+                "signal_forward_return_logs + futures_klines_1h + futures_klines_4h"
+            ),
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            **study,
+            "guardrails": [
+                "Every 1h zone uses only futures candles closed before the signal; the signal candle may classify a reaction but cannot create its own zone.",
+                "The 4h layer is optional confluence and never a hard gate for a MID_SHORT 1h signal.",
+                "Configuration selection reads train performance only; validation stays an untouched checkpoint.",
+                "Filtered rows remain in the fixed cohort as zero-R no-entry observations when tradeoff metrics are calculated.",
+                "No Signal Factory rule, scanner decision, TP/SL formula, threshold, outcome logger, or execution path is changed.",
             ],
         }
 
@@ -2204,6 +2321,60 @@ class SignalCandidatePerformanceService:
                         Decimal(row.taker_sell_base_volume) if row.taker_sell_base_volume is not None else None
                     ),
                     source_interval="1h",
+                )
+            )
+        return dict(output)
+
+    def _load_4h_candles(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[PerfCandle]]:
+        if not symbols:
+            return {}
+        query = (
+            select(
+                FuturesKline4h.symbol,
+                FuturesKline4h.open_time,
+                FuturesKline4h.close_time,
+                FuturesKline4h.open,
+                FuturesKline4h.high,
+                FuturesKline4h.low,
+                FuturesKline4h.close,
+                FuturesKline4h.volume,
+                FuturesKline4h.taker_buy_base_volume,
+                FuturesKline4h.taker_sell_base_volume,
+                FuturesKline4h.aggregation_status,
+            )
+            .where(FuturesKline4h.symbol.in_(symbols))
+            .order_by(asc(FuturesKline4h.symbol), asc(FuturesKline4h.open_time))
+        )
+        if start_time is not None:
+            query = query.where(FuturesKline4h.open_time >= start_time)
+        if end_time is not None:
+            query = query.where(FuturesKline4h.open_time <= end_time)
+        output: dict[str, list[PerfCandle]] = defaultdict(list)
+        for row in self.db.execute(query).all():
+            if row.aggregation_status != "AGG_READY":
+                continue
+            output[row.symbol].append(
+                PerfCandle(
+                    open_time=_naive(row.open_time),
+                    close_time=_naive(row.close_time),
+                    open=Decimal(row.open),
+                    high=Decimal(row.high),
+                    low=Decimal(row.low),
+                    close=Decimal(row.close),
+                    volume=Decimal(row.volume) if row.volume is not None else None,
+                    taker_buy_base_volume=(
+                        Decimal(row.taker_buy_base_volume) if row.taker_buy_base_volume is not None else None
+                    ),
+                    taker_sell_base_volume=(
+                        Decimal(row.taker_sell_base_volume) if row.taker_sell_base_volume is not None else None
+                    ),
+                    source_interval="4h",
                 )
             )
         return dict(output)
@@ -6504,6 +6675,943 @@ def _mid_short_entry_confirmation_shadow_study(
             "The four-hour horizon is fixed per simulated entry. Unfinished paths remain WAITING_4H and contribute no R.",
             "OHLC cannot resolve intrabar order when stop and target hit in one candle, so the result stays conservative.",
             "One chronological checkpoint is not sufficient to promote a confirmation gate into Signal Factory.",
+        ],
+    }
+
+
+LAB56_GATE_SPECS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "AVOID_1H_SUPPORT_CONFLICT",
+        "Avoid 1h support conflict",
+        (
+            "AT_1H_RESISTANCE",
+            "1H_RESISTANCE_REJECTED",
+            "1H_SUPPORT_BREAK",
+            "1H_BREAK_RETEST_REJECTED",
+            "1H_MID_RANGE",
+        ),
+    ),
+    (
+        "SHORT_STRUCTURE_CONFIRMED",
+        "Confirmed short structure",
+        (
+            "1H_RESISTANCE_REJECTED",
+            "1H_SUPPORT_BREAK",
+            "1H_BREAK_RETEST_REJECTED",
+        ),
+    ),
+    (
+        "RESISTANCE_OR_BREAK_CONTEXT",
+        "Resistance or broken support context",
+        (
+            "AT_1H_RESISTANCE",
+            "1H_RESISTANCE_REJECTED",
+            "1H_SUPPORT_BREAK",
+            "1H_BREAK_RETEST_REJECTED",
+        ),
+    ),
+)
+
+
+def _mid_short_structure_zone_study(
+    items: list[dict[str, Any]],
+    *,
+    one_hour_candles: dict[str, list[PerfCandle]],
+    four_hour_candles: dict[str, list[PerfCandle]],
+    min_sample: int,
+    limit: int,
+    selected_signal_id: str | None,
+) -> dict[str, Any]:
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(items)
+    split_keys = {
+        "all": {_lab55_item_key(item) for item in ordered},
+        "train": {_lab55_item_key(item) for item in train},
+        "validation": {_lab55_item_key(item) for item in validation},
+    }
+    by_config: dict[str, list[dict[str, Any]]] = {}
+    for config in LAB56_ZONE_CONFIGS:
+        enriched: list[dict[str, Any]] = []
+        for item in ordered:
+            symbol = str(item.get("symbol") or "")
+            context = _lab56_structure_context(
+                item,
+                one_hour_candles=one_hour_candles.get(symbol, []),
+                four_hour_candles=four_hour_candles.get(symbol, []),
+                config=config,
+            )
+            enriched.append({**item, **context})
+        by_config[config.config_id] = enriched
+
+    primary_items = by_config[LAB56_PRIMARY_CONFIG_ID]
+    primary_split = {
+        split: [item for item in primary_items if _lab55_item_key(item) in keys]
+        for split, keys in split_keys.items()
+    }
+    primary_baselines = {split: _walk_forward_perf(rows) for split, rows in primary_split.items()}
+    state_names = (
+        "AT_1H_SUPPORT",
+        "AT_1H_RESISTANCE",
+        "1H_RESISTANCE_REJECTED",
+        "1H_SUPPORT_BREAK",
+        "1H_BREAK_RETEST_REJECTED",
+        "1H_FAILED_BREAK_RECLAIM",
+        "1H_MID_RANGE",
+        "1H_ZONE_UNAVAILABLE",
+    )
+    state_rows = [
+        _lab56_bucket_row(
+            state,
+            field="structure_state",
+            split_items=primary_split,
+            baselines=primary_baselines,
+        )
+        for state in state_names
+    ]
+    gate_rows = [
+        _lab56_gate_row(
+            gate_id=gate_id,
+            label=label,
+            allowed_states=allowed_states,
+            split_items=primary_split,
+            baselines=primary_baselines,
+            min_sample=min_sample,
+        )
+        for gate_id, label, allowed_states in LAB56_GATE_SPECS
+    ]
+
+    config_rows: list[dict[str, Any]] = []
+    for config in LAB56_ZONE_CONFIGS:
+        config_items = by_config[config.config_id]
+        config_split = {
+            split: [item for item in config_items if _lab55_item_key(item) in keys]
+            for split, keys in split_keys.items()
+        }
+        config_baselines = {split: _walk_forward_perf(rows) for split, rows in config_split.items()}
+        not_conflicted = _lab56_gate_row(
+            gate_id="AVOID_1H_SUPPORT_CONFLICT",
+            label="Avoid 1h support conflict",
+            allowed_states=LAB56_GATE_SPECS[0][2],
+            split_items=config_split,
+            baselines=config_baselines,
+            min_sample=min_sample,
+        )
+        config_rows.append(
+            {
+                "config_id": config.config_id,
+                "label": config.label,
+                "lookback_hours": config.lookback_hours,
+                "pivot_span": config.pivot_span,
+                "zone_half_width_atr": config.zone_half_width_atr,
+                "min_touches": config.min_touches,
+                "zone_available_count": sum(
+                    1 for item in config_items if item.get("structure_state") != "1H_ZONE_UNAVAILABLE"
+                ),
+                "not_conflicted_gate": not_conflicted,
+            }
+        )
+
+    selected_config_row = _lab56_select_config_from_train(config_rows)
+    selected_gate = selected_config_row.get("not_conflicted_gate") if selected_config_row else None
+    verdict = _lab56_study_verdict(selected_gate, min_sample=min_sample)
+    all_scope = _lab56_cohort_row("ALL_SHADOW_PASS", primary_items, primary_baselines["all"])
+    taker_scope_items = _apply_named_second_filter(primary_items, "TAKER_SELL_GE_52")
+    taker_scope = _lab56_cohort_row(
+        "TAKER_SELL_GE_52",
+        taker_scope_items,
+        primary_baselines["all"],
+    )
+    confluence_rows = [
+        _lab56_bucket_row(
+            status,
+            field="four_hour_confluence_status",
+            split_items=primary_split,
+            baselines=primary_baselines,
+        )
+        for status in (
+            "ALIGNED_WITH_4H_RESISTANCE",
+            "CONFLICT_WITH_4H_SUPPORT",
+            "NO_4H_CONFLUENCE",
+            "FOUR_H_CONTEXT_UNAVAILABLE",
+        )
+    ]
+    case_rows = [
+        _lab56_case_row(item)
+        for item in sorted(
+            primary_items,
+            key=lambda row: (
+                _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                str(row.get("symbol") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+    ]
+    selected = next(
+        (item for item in primary_items if str(item.get("signal_id") or "") == str(selected_signal_id or "")),
+        None,
+    )
+    if selected is None and primary_items:
+        selected = max(
+            primary_items,
+            key=lambda row: _parse_dt(row.get("signal_timestamp")) or datetime.min,
+        )
+    selected_symbol = str(selected.get("symbol") or "") if selected else ""
+    selected_case = _lab56_case_row(selected) if selected else None
+    selected_chart = (
+        _lab56_zone_chart_payload(
+            selected,
+            candles=one_hour_candles.get(selected_symbol, []),
+        )
+        if selected
+        else None
+    )
+    train_choice_validation = (
+        selected_config_row["not_conflicted_gate"]["validation"] if selected_config_row else None
+    )
+    return {
+        "study_id": "LAB_56_MID_SHORT_1H_STRUCTURE_ZONE_STUDY",
+        "method": (
+            "Repeated pivot highs and lows from closed futures 1h candles are clustered into ATR-normalized zones. "
+            "The signal candle classifies rejection, break, retest, reclaim, support, resistance, or mid-range but "
+            "cannot create the zone it is being tested against. Three predeclared sensitivity configurations are "
+            "compared; the research choice is ranked on train only and then read on chronological validation."
+        ),
+        "definitions": {
+            "primary_timeframe": "futures 1h closed candles",
+            "outcome_path": "futures 15m closed candles with the existing realistic cost model",
+            "four_hour_role": "optional confluence only; never a hard fail",
+            "independent_touch_gap": "at least four hours between 1h pivot touches",
+            "at_zone_distance": "entry within the zone or no farther than 0.15 ATR from its boundary",
+            "fixed_cohort": "rows rejected by a simulated gate remain zero-R no-entry observations",
+            "states": {
+                "AT_1H_SUPPORT": "entry is on or immediately above a repeated 1h zone",
+                "AT_1H_RESISTANCE": "entry is on or immediately below a repeated 1h zone",
+                "1H_RESISTANCE_REJECTED": "signal candle probes a repeated resistance zone and closes below it",
+                "1H_SUPPORT_BREAK": "signal candle closes below a zone that the previous candle held",
+                "1H_BREAK_RETEST_REJECTED": "support was already broken, then the signal retests and closes below it",
+                "1H_FAILED_BREAK_RECLAIM": "price had broken a zone but the signal closes back above it",
+                "1H_MID_RANGE": "no immediate repeated-zone interaction",
+                "1H_ZONE_UNAVAILABLE": "closed history, ATR, or repeated pivots are insufficient",
+            },
+        },
+        "summary": {
+            "source_count": len(primary_items),
+            "train_count": len(primary_split["train"]),
+            "validation_count": len(primary_split["validation"]),
+            "validation_cutoff_utc": validation_cutoff,
+            "zone_available_count": sum(
+                1 for item in primary_items if item.get("structure_state") != "1H_ZONE_UNAVAILABLE"
+            ),
+            "four_hour_context_available_count": sum(
+                1
+                for item in primary_items
+                if item.get("four_hour_confluence_status") != "FOUR_H_CONTEXT_UNAVAILABLE"
+            ),
+            "primary_config_id": LAB56_PRIMARY_CONFIG_ID,
+            "train_selected_config_id": selected_config_row.get("config_id") if selected_config_row else None,
+            "train_selected_validation_avg_r_delta": (
+                train_choice_validation.get("fixed_avg_r_delta_vs_baseline")
+                if train_choice_validation
+                else None
+            ),
+            "train_selected_validation_sl_avoided": (
+                train_choice_validation.get("sl_avoided_count") if train_choice_validation else 0
+            ),
+            "train_selected_validation_tp_lost": (
+                train_choice_validation.get("tp_lost_count") if train_choice_validation else 0
+            ),
+            "verdict": verdict,
+            "recommended_action": _lab56_recommended_action(verdict),
+        },
+        "cohort_rows": [all_scope, taker_scope],
+        "config_rows": config_rows,
+        "state_rows": state_rows,
+        "gate_rows": gate_rows,
+        "four_hour_confluence_rows": confluence_rows,
+        "case_rows": case_rows,
+        "selected_case": selected_case,
+        "selected_chart": selected_chart,
+        "limitations": [
+            "A candle-derived zone is not order-book liquidity and can move when more history accumulates.",
+            "OHLC proves that a zone was touched, not the exact intrabar sequence or resting order size.",
+            "Zone parameters are a small predeclared sensitivity grid; no validation winner is optimized into a rule.",
+            "The 4h context can be unavailable when fewer closed aggregates exist and is reported honestly.",
+            "One chronological validation checkpoint cannot establish a production filter.",
+        ],
+    }
+
+
+def _lab56_structure_context(
+    item: dict[str, Any],
+    *,
+    one_hour_candles: list[PerfCandle],
+    four_hour_candles: list[PerfCandle],
+    config: StructureZoneConfig,
+) -> dict[str, Any]:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    entry = _decimal_or_none_any(item.get("entry"))
+    unavailable = {
+        "zone_config_id": config.config_id,
+        "structure_state": "1H_ZONE_UNAVAILABLE",
+        "structure_reason": "Signal timestamp or futures entry reference is missing.",
+        "atr_1h_at_signal": None,
+        "one_hour_history_count": 0,
+        "zone_count_1h": 0,
+        "nearest_support": None,
+        "nearest_resistance": None,
+        "nearest_support_distance_atr": None,
+        "nearest_resistance_distance_atr": None,
+        "four_hour_confluence_status": "FOUR_H_CONTEXT_UNAVAILABLE",
+        "four_hour_confluence_reason": "4h context was not evaluated.",
+        "_lab56_zones": [],
+    }
+    if signal_time is None or entry is None or entry <= 0:
+        return unavailable
+    closed_through_signal = sorted(
+        (candle for candle in one_hour_candles if candle.close_time <= signal_time),
+        key=lambda candle: candle.close_time,
+    )
+    signal_candle = closed_through_signal[-1] if closed_through_signal else None
+    prior_candle = closed_through_signal[-2] if len(closed_through_signal) >= 2 else None
+    atr_1h = _lab56_atr_at_signal(one_hour_candles, signal_time=signal_time)
+    history = [
+        candle
+        for candle in one_hour_candles
+        if signal_time - timedelta(hours=config.lookback_hours) <= candle.close_time < signal_time
+    ]
+    zones = _lab56_detect_zones(
+        history,
+        atr=atr_1h,
+        pivot_span=config.pivot_span,
+        zone_half_width_atr=config.zone_half_width_atr,
+        min_touches=config.min_touches,
+        independent_touch_gap=timedelta(hours=4),
+    )
+    if signal_candle is None or prior_candle is None or atr_1h is None or atr_1h <= 0 or len(history) < 24:
+        return {
+            **unavailable,
+            "structure_reason": "At least 24 closed 1h candles plus a valid ATR(14) are required.",
+            "atr_1h_at_signal": atr_1h,
+            "one_hour_history_count": len(history),
+            "zone_count_1h": len(zones),
+            "_lab56_zones": zones,
+        }
+    if not zones:
+        return {
+            **unavailable,
+            "structure_reason": "No repeated 1h pivot zone met the two-touch requirement.",
+            "atr_1h_at_signal": atr_1h,
+            "one_hour_history_count": len(history),
+            "zone_count_1h": 0,
+        }
+    classification = _lab56_classify_structure(
+        entry=entry,
+        signal_candle=signal_candle,
+        prior_candle=prior_candle,
+        zones=zones,
+        atr=atr_1h,
+    )
+    confluence = _lab56_four_hour_confluence(
+        entry=entry,
+        signal_time=signal_time,
+        primary_state=classification["structure_state"],
+        primary_zone=classification.get("state_zone"),
+        four_hour_candles=four_hour_candles,
+    )
+    return {
+        "zone_config_id": config.config_id,
+        "atr_1h_at_signal": atr_1h,
+        "one_hour_history_count": len(history),
+        "zone_count_1h": len(zones),
+        **classification,
+        **confluence,
+        "_lab56_zones": zones,
+    }
+
+
+def _lab56_atr_at_signal(candles: list[PerfCandle], *, signal_time: datetime) -> Decimal | None:
+    closed = sorted(
+        (candle for candle in candles if candle.close_time <= signal_time),
+        key=lambda candle: candle.close_time,
+    )
+    if len(closed) < 15:
+        return None
+    ranges = _candle_true_ranges(closed)
+    values = ranges[-14:]
+    return sum(values, Decimal("0")) / Decimal(len(values)) if values else None
+
+
+def _lab56_detect_zones(
+    candles: list[PerfCandle],
+    *,
+    atr: Decimal | None,
+    pivot_span: int,
+    zone_half_width_atr: Decimal,
+    min_touches: int,
+    independent_touch_gap: timedelta,
+) -> list[dict[str, Any]]:
+    ordered = sorted(candles, key=lambda candle: candle.close_time)
+    if atr is None or atr <= 0 or len(ordered) < (pivot_span * 2) + 3:
+        return []
+    points: list[dict[str, Any]] = []
+    for index in range(pivot_span, len(ordered) - pivot_span):
+        candle = ordered[index]
+        window = ordered[index - pivot_span : index + pivot_span + 1]
+        if candle.low == min(row.low for row in window) and (
+            candle.low < ordered[index - 1].low or candle.low < ordered[index + 1].low
+        ):
+            points.append({"price": candle.low, "kind": "LOW", "time": candle.close_time})
+        if candle.high == max(row.high for row in window) and (
+            candle.high > ordered[index - 1].high or candle.high > ordered[index + 1].high
+        ):
+            points.append({"price": candle.high, "kind": "HIGH", "time": candle.close_time})
+    tolerance = atr * zone_half_width_atr
+    clusters: list[list[dict[str, Any]]] = []
+    for point in sorted(points, key=lambda row: (Decimal(row["price"]), row["time"])):
+        best: list[dict[str, Any]] | None = None
+        best_distance: Decimal | None = None
+        for cluster in clusters:
+            center = sum((Decimal(row["price"]) for row in cluster), Decimal("0")) / Decimal(len(cluster))
+            distance = abs(Decimal(point["price"]) - center)
+            if distance <= tolerance and (best_distance is None or distance < best_distance):
+                best = cluster
+                best_distance = distance
+        if best is None:
+            clusters.append([point])
+        else:
+            best.append(point)
+
+    zones: list[dict[str, Any]] = []
+    for cluster in clusters:
+        independent: list[dict[str, Any]] = []
+        for point in sorted(cluster, key=lambda row: row["time"]):
+            if not independent or point["time"] - independent[-1]["time"] >= independent_touch_gap:
+                independent.append(point)
+        if len(independent) < min_touches:
+            continue
+        center = sum((Decimal(point["price"]) for point in independent), Decimal("0")) / Decimal(len(independent))
+        low_touches = sum(1 for point in independent if point["kind"] == "LOW")
+        high_touches = sum(1 for point in independent if point["kind"] == "HIGH")
+        latest = max(independent, key=lambda point: point["time"])
+        zones.append(
+            {
+                "center": center,
+                "lower": center - tolerance,
+                "upper": center + tolerance,
+                "touch_count": len(independent),
+                "support_touch_count": low_touches,
+                "resistance_touch_count": high_touches,
+                "origin_role": (
+                    "ROLE_FLIP"
+                    if low_touches and high_touches
+                    else "SUPPORT_ORIGIN"
+                    if low_touches
+                    else "RESISTANCE_ORIGIN"
+                ),
+                "latest_pivot_kind": latest["kind"],
+                "first_touch_time": min(point["time"] for point in independent),
+                "last_touch_time": latest["time"],
+            }
+        )
+    return sorted(zones, key=lambda zone: Decimal(zone["center"]))
+
+
+def _lab56_classify_structure(
+    *,
+    entry: Decimal,
+    signal_candle: PerfCandle,
+    prior_candle: PerfCandle,
+    zones: list[dict[str, Any]],
+    atr: Decimal,
+) -> dict[str, Any]:
+    nearest_support = max(
+        (zone for zone in zones if Decimal(zone["center"]) <= entry),
+        key=lambda zone: Decimal(zone["center"]),
+        default=None,
+    )
+    nearest_resistance = min(
+        (zone for zone in zones if Decimal(zone["center"]) > entry),
+        key=lambda zone: Decimal(zone["center"]),
+        default=None,
+    )
+    support_distance = _lab56_distance_to_zone(entry, nearest_support, atr)
+    resistance_distance = _lab56_distance_to_zone(entry, nearest_resistance, atr)
+
+    failed_reclaim = min(
+        (
+            zone
+            for zone in zones
+            if prior_candle.close < Decimal(zone["lower"])
+            and signal_candle.close > Decimal(zone["upper"])
+        ),
+        key=lambda zone: abs(Decimal(zone["center"]) - entry),
+        default=None,
+    )
+    if failed_reclaim is not None:
+        state = "1H_FAILED_BREAK_RECLAIM"
+        reason = "The prior candle was below a repeated zone, but the signal candle reclaimed above it."
+        state_zone = failed_reclaim
+    else:
+        break_retest = min(
+            (
+                zone
+                for zone in zones
+                if prior_candle.close < Decimal(zone["lower"])
+                and signal_candle.high >= Decimal(zone["lower"])
+                and signal_candle.close < Decimal(zone["lower"])
+            ),
+            key=lambda zone: abs(Decimal(zone["center"]) - entry),
+            default=None,
+        )
+        support_break = min(
+            (
+                zone
+                for zone in zones
+                if prior_candle.close >= Decimal(zone["lower"])
+                and signal_candle.close < Decimal(zone["lower"])
+            ),
+            key=lambda zone: abs(Decimal(zone["center"]) - entry),
+            default=None,
+        )
+        resistance_rejection = min(
+            (
+                zone
+                for zone in zones
+                if int(zone.get("resistance_touch_count") or 0) > 0
+                and signal_candle.open < Decimal(zone["lower"])
+                and signal_candle.high >= Decimal(zone["lower"])
+                and signal_candle.close < Decimal(zone["lower"])
+            ),
+            key=lambda zone: abs(Decimal(zone["center"]) - entry),
+            default=None,
+        )
+        if break_retest is not None:
+            state = "1H_BREAK_RETEST_REJECTED"
+            reason = "Price stayed below broken support after a retest into the repeated zone."
+            state_zone = break_retest
+        elif support_break is not None:
+            state = "1H_SUPPORT_BREAK"
+            reason = "The signal candle closed below a repeated zone held by the prior candle."
+            state_zone = support_break
+        elif resistance_rejection is not None:
+            state = "1H_RESISTANCE_REJECTED"
+            reason = "The signal candle probed repeated resistance and closed back below the zone."
+            state_zone = resistance_rejection
+        elif support_distance is not None and support_distance <= Decimal("0.15"):
+            state = "AT_1H_SUPPORT"
+            reason = "The short entry is inside or within 0.15 ATR above repeated 1h support."
+            state_zone = nearest_support
+        elif resistance_distance is not None and resistance_distance <= Decimal("0.15"):
+            state = "AT_1H_RESISTANCE"
+            reason = "The short entry is inside or within 0.15 ATR below repeated 1h resistance."
+            state_zone = nearest_resistance
+        else:
+            state = "1H_MID_RANGE"
+            reason = "No immediate repeated 1h support or resistance interaction was detected."
+            state_zone = None
+    return {
+        "structure_state": state,
+        "structure_reason": reason,
+        "nearest_support": _lab56_public_zone(nearest_support),
+        "nearest_resistance": _lab56_public_zone(nearest_resistance),
+        "nearest_support_distance_atr": support_distance,
+        "nearest_resistance_distance_atr": resistance_distance,
+        "state_zone": _lab56_public_zone(state_zone),
+    }
+
+
+def _lab56_distance_to_zone(
+    entry: Decimal,
+    zone: dict[str, Any] | None,
+    atr: Decimal,
+) -> Decimal | None:
+    if zone is None or atr <= 0:
+        return None
+    lower = Decimal(zone["lower"])
+    upper = Decimal(zone["upper"])
+    if lower <= entry <= upper:
+        return Decimal("0")
+    return min(abs(entry - lower), abs(entry - upper)) / atr
+
+
+def _lab56_public_zone(zone: dict[str, Any] | None) -> dict[str, Any] | None:
+    if zone is None:
+        return None
+    return {key: value for key, value in zone.items() if not str(key).startswith("_")}
+
+
+def _lab56_four_hour_confluence(
+    *,
+    entry: Decimal,
+    signal_time: datetime,
+    primary_state: str,
+    primary_zone: dict[str, Any] | None,
+    four_hour_candles: list[PerfCandle],
+) -> dict[str, Any]:
+    atr_4h = _lab56_atr_at_signal(four_hour_candles, signal_time=signal_time)
+    history = [
+        candle
+        for candle in four_hour_candles
+        if signal_time - timedelta(days=45) <= candle.close_time < signal_time
+    ]
+    zones = _lab56_detect_zones(
+        history,
+        atr=atr_4h,
+        pivot_span=2,
+        zone_half_width_atr=Decimal("0.35"),
+        min_touches=2,
+        independent_touch_gap=timedelta(hours=16),
+    )
+    if atr_4h is None or not zones:
+        return {
+            "four_hour_confluence_status": "FOUR_H_CONTEXT_UNAVAILABLE",
+            "four_hour_confluence_reason": "Repeated closed 4h zones or ATR(14) are unavailable.",
+            "atr_4h_at_signal": atr_4h,
+            "zone_count_4h": len(zones),
+            "nearest_4h_zone": None,
+        }
+    nearest = min(zones, key=lambda zone: _lab56_distance_to_zone(entry, zone, atr_4h) or Decimal("0"))
+    nearest_distance = _lab56_distance_to_zone(entry, nearest, atr_4h)
+    overlaps = bool(
+        primary_zone
+        and any(
+            Decimal(zone["lower"]) <= Decimal(primary_zone["upper"])
+            and Decimal(zone["upper"]) >= Decimal(primary_zone["lower"])
+            for zone in zones
+        )
+    )
+    short_aligned_states = {
+        "AT_1H_RESISTANCE",
+        "1H_RESISTANCE_REJECTED",
+        "1H_SUPPORT_BREAK",
+        "1H_BREAK_RETEST_REJECTED",
+    }
+    if overlaps and primary_state in short_aligned_states:
+        status = "ALIGNED_WITH_4H_RESISTANCE"
+        reason = "The active 1h short structure overlaps a repeated 4h zone."
+    elif (
+        Decimal(nearest["center"]) <= entry
+        and nearest_distance is not None
+        and nearest_distance <= Decimal("0.25")
+    ):
+        status = "CONFLICT_WITH_4H_SUPPORT"
+        reason = "Entry is on or immediately above a repeated 4h support zone."
+    else:
+        status = "NO_4H_CONFLUENCE"
+        reason = "No nearby 4h zone aligns with or directly conflicts with the 1h setup."
+    return {
+        "four_hour_confluence_status": status,
+        "four_hour_confluence_reason": reason,
+        "atr_4h_at_signal": atr_4h,
+        "zone_count_4h": len(zones),
+        "nearest_4h_zone": _lab56_public_zone(nearest),
+        "nearest_4h_zone_distance_atr": nearest_distance,
+    }
+
+
+def _lab56_bucket_row(
+    bucket: str,
+    *,
+    field: str,
+    split_items: dict[str, list[dict[str, Any]]],
+    baselines: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    rows = {
+        split: [item for item in items if str(item.get(field) or "") == bucket]
+        for split, items in split_items.items()
+    }
+    return {
+        "bucket": bucket,
+        "all": _walk_forward_perf(rows["all"], baseline=baselines["all"]),
+        "train": _walk_forward_perf(rows["train"], baseline=baselines["train"]),
+        "validation": _walk_forward_perf(rows["validation"], baseline=baselines["validation"]),
+    }
+
+
+def _lab56_gate_row(
+    *,
+    gate_id: str,
+    label: str,
+    allowed_states: tuple[str, ...],
+    split_items: dict[str, list[dict[str, Any]]],
+    baselines: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    selected = {
+        split: [item for item in items if str(item.get("structure_state") or "") in allowed_states]
+        for split, items in split_items.items()
+    }
+    fixed = {
+        split: _lab56_fixed_cohort_perf(split_items[split], selected[split])
+        for split in ("all", "train", "validation")
+    }
+    row = {
+        "gate_id": gate_id,
+        "label": label,
+        "allowed_states": list(allowed_states),
+        "all": fixed["all"],
+        "train": fixed["train"],
+        "validation": fixed["validation"],
+        "selected_performance": {
+            split: _walk_forward_perf(selected[split], baseline=baselines[split])
+            for split in ("all", "train", "validation")
+        },
+    }
+    row["verdict"] = _lab56_gate_verdict(row, min_sample=min_sample)
+    return row
+
+
+def _lab56_fixed_cohort_perf(
+    source_items: list[dict[str, Any]],
+    selected_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected_keys = {_lab55_item_key(item) for item in selected_items}
+    closed = [
+        item
+        for item in source_items
+        if item.get("result_status") in COMPLETED_OUTCOMES and item.get("realistic_realized_r") is not None
+    ]
+    closed.sort(
+        key=lambda item: (
+            _parse_dt(item.get("result_time_utc"))
+            or _parse_dt(item.get("signal_timestamp"))
+            or datetime.min,
+            str(item.get("symbol") or ""),
+        )
+    )
+    values: list[Decimal] = []
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    selected_closed = []
+    for item in closed:
+        entered = _lab55_item_key(item) in selected_keys
+        value = Decimal(item["realistic_realized_r"]) if entered else Decimal("0")
+        values.append(value)
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+        if entered:
+            selected_closed.append(item)
+    baseline_total = sum((Decimal(item["realistic_realized_r"]) for item in closed), Decimal("0"))
+    baseline_avg = baseline_total / Decimal(len(closed)) if closed else None
+    fixed_avg = cumulative / Decimal(len(closed)) if closed else None
+    baseline_tp = [item for item in closed if item.get("result_status") == "TP_HIT"]
+    baseline_sl = [item for item in closed if item.get("result_status") == "SL_HIT"]
+    selected_tp = [item for item in selected_closed if item.get("result_status") == "TP_HIT"]
+    selected_sl = [item for item in selected_closed if item.get("result_status") == "SL_HIT"]
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in selected_items)
+    top_symbol, top_count = symbols.most_common(1)[0] if symbols else (None, 0)
+    return {
+        "source_count": len(source_items),
+        "source_closed_count": len(closed),
+        "entered_count": len(selected_items),
+        "entered_closed_count": len(selected_closed),
+        "filtered_no_entry_count": len(source_items) - len(selected_items),
+        "retention_pct": _retention(len(selected_items), len(source_items)),
+        "tp_retained_count": len(selected_tp),
+        "tp_lost_count": len(baseline_tp) - len(selected_tp),
+        "sl_retained_count": len(selected_sl),
+        "sl_avoided_count": len(baseline_sl) - len(selected_sl),
+        "both_retained_count": sum(1 for item in selected_closed if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"),
+        "fixed_total_realistic_r": cumulative,
+        "fixed_avg_realistic_r": fixed_avg,
+        "fixed_median_realistic_r": _median_decimal(values),
+        "fixed_max_drawdown_r": max_drawdown,
+        "baseline_total_realistic_r": baseline_total,
+        "baseline_avg_realistic_r": baseline_avg,
+        "fixed_total_r_delta_vs_baseline": cumulative - baseline_total,
+        "fixed_avg_r_delta_vs_baseline": (
+            fixed_avg - baseline_avg if fixed_avg is not None and baseline_avg is not None else None
+        ),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": (
+            Decimal(top_count) / Decimal(len(selected_items)) * Decimal("100") if selected_items else None
+        ),
+    }
+
+
+def _lab56_gate_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    train = row["train"]
+    validation = row["validation"]
+    required = max(6, min_sample // 2)
+    if (
+        int(validation.get("source_closed_count") or 0) < required
+        or int(validation.get("entered_closed_count") or 0) < max(3, required // 3)
+    ):
+        return "STRUCTURE_NEEDS_MORE_SAMPLE"
+    train_delta = _decimal_or_none_any(train.get("fixed_avg_r_delta_vs_baseline"))
+    validation_delta = _decimal_or_none_any(validation.get("fixed_avg_r_delta_vs_baseline"))
+    validation_total = _decimal_or_none_any(validation.get("fixed_total_realistic_r"))
+    if (
+        train_delta is not None
+        and train_delta > 0
+        and validation_delta is not None
+        and validation_delta >= Decimal("0.05")
+        and validation_total is not None
+        and validation_total > 0
+        and int(validation.get("sl_avoided_count") or 0) >= int(validation.get("tp_lost_count") or 0)
+    ):
+        return "STRUCTURE_VALIDATION_IMPROVES"
+    if validation_delta is not None and validation_delta > 0:
+        return "STRUCTURE_REDUCES_DAMAGE_ONLY"
+    if train_delta is not None and train_delta > 0 and (validation_delta is None or validation_delta <= 0):
+        return "STRUCTURE_TRAIN_ONLY"
+    return "STRUCTURE_NO_CLEAR_GAIN"
+
+
+def _lab56_select_config_from_train(config_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [
+        row
+        for row in config_rows
+        if row.get("not_conflicted_gate", {}).get("train", {}).get("fixed_avg_r_delta_vs_baseline") is not None
+        and int(row.get("not_conflicted_gate", {}).get("train", {}).get("entered_closed_count") or 0) >= 3
+    ]
+    return max(
+        candidates,
+        key=lambda row: (
+            Decimal(row["not_conflicted_gate"]["train"]["fixed_avg_r_delta_vs_baseline"]),
+            int(row["not_conflicted_gate"]["train"].get("entered_closed_count") or 0),
+        ),
+        default=None,
+    )
+
+
+def _lab56_study_verdict(selected_gate: dict[str, Any] | None, *, min_sample: int) -> str:
+    if selected_gate is None:
+        return "STRUCTURE_NEEDS_MORE_SAMPLE"
+    return _lab56_gate_verdict(selected_gate, min_sample=min_sample)
+
+
+def _lab56_recommended_action(verdict: str) -> str:
+    return {
+        "STRUCTURE_VALIDATION_IMPROVES": (
+            "Keep the train-selected zone configuration in read-only shadow monitoring; do not change the live gate."
+        ),
+        "STRUCTURE_REDUCES_DAMAGE_ONLY": (
+            "Collect another chronological checkpoint; the zone gate reduces damage but is not independently positive."
+        ),
+        "STRUCTURE_TRAIN_ONLY": (
+            "Reject promotion because the apparent train improvement did not survive validation."
+        ),
+        "STRUCTURE_NO_CLEAR_GAIN": (
+            "Do not add structure to the live gate; continue collecting MID_SHORT 1h outcomes."
+        ),
+        "STRUCTURE_NEEDS_MORE_SAMPLE": (
+            "Wait for more closed validation paths before judging the 1h structure hypothesis."
+        ),
+    }.get(verdict, "Keep the live rule frozen.")
+
+
+def _lab56_cohort_row(
+    cohort_id: str,
+    items: list[dict[str, Any]],
+    baseline: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "cohort_id": cohort_id,
+        "performance": _walk_forward_perf(items, baseline=baseline),
+        "state_counts": dict(Counter(str(item.get("structure_state") or "UNKNOWN") for item in items)),
+    }
+
+
+def _lab56_case_row(item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if item is None:
+        return None
+    evidence = item.get("evidence_snapshot") if isinstance(item.get("evidence_snapshot"), dict) else {}
+    return {
+        "signal_id": item.get("signal_id"),
+        "symbol": item.get("symbol"),
+        "signal_timestamp": item.get("signal_timestamp"),
+        "signal_time_wib": item.get("signal_time_wib"),
+        "entry": item.get("entry"),
+        "stop_loss": item.get("stop_loss"),
+        "take_profit": item.get("take_profit"),
+        "result_status": item.get("result_status"),
+        "realistic_realized_r": item.get("realistic_realized_r"),
+        "structure_state": item.get("structure_state"),
+        "structure_reason": item.get("structure_reason"),
+        "atr_1h_at_signal": item.get("atr_1h_at_signal"),
+        "one_hour_history_count": item.get("one_hour_history_count"),
+        "zone_count_1h": item.get("zone_count_1h"),
+        "nearest_support": item.get("nearest_support"),
+        "nearest_resistance": item.get("nearest_resistance"),
+        "nearest_support_distance_atr": item.get("nearest_support_distance_atr"),
+        "nearest_resistance_distance_atr": item.get("nearest_resistance_distance_atr"),
+        "state_zone": item.get("state_zone"),
+        "four_hour_confluence_status": item.get("four_hour_confluence_status"),
+        "four_hour_confluence_reason": item.get("four_hour_confluence_reason"),
+        "nearest_4h_zone": item.get("nearest_4h_zone"),
+        "taker_sell_ratio": evidence.get("kline_taker_sell_ratio"),
+        "detail_href": f"/signals/{item.get('symbol')}?signal_id={item.get('signal_id')}",
+    }
+
+
+def _lab56_zone_chart_payload(
+    item: dict[str, Any],
+    *,
+    candles: list[PerfCandle],
+) -> dict[str, Any] | None:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    entry = _decimal_or_none_any(item.get("entry"))
+    stop = _decimal_or_none_any(item.get("stop_loss"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    if signal_time is None or entry is None or stop is None or target is None:
+        return None
+    visible = [
+        candle
+        for candle in candles
+        if signal_time - timedelta(hours=168) <= candle.open_time <= signal_time + timedelta(hours=4)
+    ]
+    if not visible:
+        return None
+    result_time = _parse_dt(item.get("result_time_utc"))
+    end_time = min(
+        max((candle.close_time for candle in visible), default=signal_time),
+        signal_time + timedelta(hours=4),
+    )
+    return {
+        "market": "futures",
+        "price_source": "futures_klines_1h",
+        "display_interval": "1h_closed",
+        "candle_count": len(visible),
+        "signal_time": signal_time,
+        "signal_time_wib": _wib_string(signal_time),
+        "result_time": result_time,
+        "result_time_wib": _wib_string(result_time),
+        "box_end_time": result_time or end_time,
+        "direction": "SHORT",
+        "result_status": item.get("result_status"),
+        "entry": entry,
+        "stop_loss": stop,
+        "take_profit": target,
+        "latest_price": visible[-1].close,
+        "latest_candle_time": visible[-1].close_time,
+        "candles": [
+            {
+                "open_time": candle.open_time,
+                "close_time": candle.close_time,
+                "open": candle.open,
+                "high": candle.high,
+                "low": candle.low,
+                "close": candle.close,
+                "volume": candle.volume,
+                "source_interval": candle.source_interval,
+            }
+            for candle in visible
+        ],
+        "structure_zones": [
+            {
+                **_lab56_public_zone(zone),
+                "start_time": max(
+                    _parse_dt(zone.get("first_touch_time")) or visible[0].open_time,
+                    visible[0].open_time,
+                ),
+                "end_time": end_time,
+            }
+            for zone in item.get("_lab56_zones", [])
+            if Decimal(zone["upper"]) >= min(candle.low for candle in visible)
+            and Decimal(zone["lower"]) <= max(candle.high for candle in visible)
         ],
     }
 

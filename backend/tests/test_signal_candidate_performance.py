@@ -12,6 +12,11 @@ from app.services.signal_candidate_performance import (
     FilterStudySpec,
     PerfCandle,
     SignalCandidatePerformanceService,
+    StructureZoneConfig,
+    _lab56_classify_structure,
+    _lab56_detect_zones,
+    _lab56_fixed_cohort_perf,
+    _lab56_structure_context,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
     _lab55_evaluate_confirmation_config,
@@ -1692,6 +1697,180 @@ def test_mid_short_lab55_reports_tp_lost_and_sl_avoided_by_confirmation_veto() -
     assert veto["tradeoff_vs_control"]["all"]["avoided_sl_count"] == 1
     assert veto["tradeoff_vs_control"]["all"]["lost_tp_count"] == 1
     assert all(row["results"]["VETO_UP_REVERSAL_0_05"]["entered"] is False for row in study["case_rows"])
+
+
+def test_mid_short_lab56_zone_context_excludes_future_candles() -> None:
+    signal_time = datetime(2026, 1, 3, 0, 0)
+    candles: list[PerfCandle] = []
+    start = signal_time - timedelta(hours=36)
+    for index in range(36):
+        low = Decimal("90") if index in {5, 16, 27} else Decimal("96")
+        high = Decimal("110") if index in {9, 20, 31} else Decimal("104")
+        candles.append(
+            PerfCandle(
+                open_time=start + timedelta(hours=index),
+                close_time=start + timedelta(hours=index + 1),
+                open=Decimal("100"),
+                high=high,
+                low=low,
+                close=Decimal("100"),
+                source_interval="1h",
+            )
+        )
+    candles.append(
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(hours=1),
+            open=Decimal("100"),
+            high=Decimal("150"),
+            low=Decimal("50"),
+            close=Decimal("60"),
+            source_interval="1h",
+        )
+    )
+    config = StructureZoneConfig(
+        config_id="TEST",
+        label="Test",
+        lookback_hours=96,
+        pivot_span=2,
+        zone_half_width_atr=Decimal("0.20"),
+    )
+    context = _lab56_structure_context(
+        {
+            "signal_id": "lab56-causal",
+            "symbol": "TESTUSDT",
+            "signal_timestamp": signal_time,
+            "entry": Decimal("100"),
+        },
+        one_hour_candles=candles,
+        four_hour_candles=[],
+        config=config,
+    )
+
+    centers = [Decimal(zone["center"]) for zone in context["_lab56_zones"]]
+    assert context["structure_state"] != "1H_ZONE_UNAVAILABLE"
+    assert centers
+    assert all(center > Decimal("80") for center in centers)
+    assert context["four_hour_confluence_status"] == "FOUR_H_CONTEXT_UNAVAILABLE"
+
+
+def test_mid_short_lab56_clusters_only_independent_repeated_pivots() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+    lows = ["100", "99", "95", "99", "100", "99", "95.1", "99", "100"]
+    candles = [
+        PerfCandle(
+            open_time=start + timedelta(hours=index),
+            close_time=start + timedelta(hours=index + 1),
+            open=Decimal("100"),
+            high=Decimal("103"),
+            low=Decimal(low),
+            close=Decimal("100"),
+            source_interval="1h",
+        )
+        for index, low in enumerate(lows)
+    ]
+
+    zones = _lab56_detect_zones(
+        candles,
+        atr=Decimal("5"),
+        pivot_span=1,
+        zone_half_width_atr=Decimal("0.10"),
+        min_touches=2,
+        independent_touch_gap=timedelta(hours=3),
+    )
+
+    support = min(zones, key=lambda zone: abs(Decimal(zone["center"]) - Decimal("95")))
+    assert support["touch_count"] == 2
+    assert support["support_touch_count"] == 2
+    assert Decimal("94.9") <= Decimal(support["center"]) <= Decimal("95.2")
+
+
+def test_mid_short_lab56_classifies_break_retest_and_failed_reclaim() -> None:
+    zone = {
+        "center": Decimal("100"),
+        "lower": Decimal("99"),
+        "upper": Decimal("101"),
+        "touch_count": 3,
+        "support_touch_count": 2,
+        "resistance_touch_count": 1,
+        "origin_role": "ROLE_FLIP",
+        "latest_pivot_kind": "LOW",
+        "first_touch_time": datetime(2026, 1, 1, 0, 0),
+        "last_touch_time": datetime(2026, 1, 1, 12, 0),
+    }
+    prior_below = PerfCandle(
+        open_time=datetime(2026, 1, 2, 0, 0),
+        close_time=datetime(2026, 1, 2, 1, 0),
+        open=Decimal("98"),
+        high=Decimal("98.5"),
+        low=Decimal("97"),
+        close=Decimal("98"),
+    )
+    rejected = PerfCandle(
+        open_time=datetime(2026, 1, 2, 1, 0),
+        close_time=datetime(2026, 1, 2, 2, 0),
+        open=Decimal("98"),
+        high=Decimal("100"),
+        low=Decimal("97"),
+        close=Decimal("98"),
+    )
+    reclaimed = PerfCandle(
+        open_time=datetime(2026, 1, 2, 1, 0),
+        close_time=datetime(2026, 1, 2, 2, 0),
+        open=Decimal("98"),
+        high=Decimal("103"),
+        low=Decimal("97"),
+        close=Decimal("102"),
+    )
+
+    retest = _lab56_classify_structure(
+        entry=Decimal("98"),
+        signal_candle=rejected,
+        prior_candle=prior_below,
+        zones=[zone],
+        atr=Decimal("4"),
+    )
+    reclaim = _lab56_classify_structure(
+        entry=Decimal("102"),
+        signal_candle=reclaimed,
+        prior_candle=prior_below,
+        zones=[zone],
+        atr=Decimal("4"),
+    )
+
+    assert retest["structure_state"] == "1H_BREAK_RETEST_REJECTED"
+    assert reclaim["structure_state"] == "1H_FAILED_BREAK_RECLAIM"
+
+
+def test_mid_short_lab56_fixed_cohort_keeps_filtered_rows_as_zero_r() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    source = [
+        {
+            "signal_id": "tp",
+            "symbol": "AAAUSDT",
+            "signal_timestamp": signal_time,
+            "result_time_utc": signal_time + timedelta(hours=1),
+            "result_status": "TP_HIT",
+            "realistic_realized_r": Decimal("1.45"),
+        },
+        {
+            "signal_id": "sl",
+            "symbol": "BBBUSDT",
+            "signal_timestamp": signal_time + timedelta(hours=1),
+            "result_time_utc": signal_time + timedelta(hours=2),
+            "result_status": "SL_HIT",
+            "realistic_realized_r": Decimal("-1.05"),
+        },
+    ]
+
+    result = _lab56_fixed_cohort_perf(source, [source[0]])
+
+    assert result["source_closed_count"] == 2
+    assert result["entered_closed_count"] == 1
+    assert result["sl_avoided_count"] == 1
+    assert result["tp_lost_count"] == 0
+    assert result["fixed_total_realistic_r"] == Decimal("1.45")
+    assert result["fixed_avg_realistic_r"] == Decimal("0.725")
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:

@@ -40,6 +40,7 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
       normalized.entry,
       normalized.stopLoss,
       normalized.takeProfit,
+      ...normalized.structureZones.flatMap((zone) => [zone.lower, zone.upper]),
       ...normalized.candles.flatMap((candle) => [candle.high, candle.low])
     ]);
     const chart = createChart(container, {
@@ -159,6 +160,16 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
 
     const rewardBox = zoneElement("rgba(5, 150, 105, 0.10)", "rgba(5, 150, 105, 0.35)", "TARGET ZONE");
     const riskBox = zoneElement("rgba(220, 38, 38, 0.09)", "rgba(220, 38, 38, 0.30)", "RISK ZONE");
+    const structureBoxes = normalized.structureZones.map((zone) => {
+      const colors = structureZoneColors(zone.originRole);
+      const element = zoneElement(
+        colors.background,
+        colors.border,
+        `${zone.originRole.replaceAll("_", " ")} | ${zone.touchCount} touches`
+      );
+      container.append(element);
+      return { element, zone };
+    });
     container.append(rewardBox, riskBox);
 
     const updateZones = () => {
@@ -176,6 +187,15 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
         candleSeries.priceToCoordinate(normalized.entry),
         candleSeries.priceToCoordinate(normalized.stopLoss)
       );
+      for (const { element, zone } of structureBoxes) {
+        positionZone(
+          element,
+          chart.timeScale().timeToCoordinate(zone.startTime),
+          chart.timeScale().timeToCoordinate(zone.endTime),
+          candleSeries.priceToCoordinate(zone.lower),
+          candleSeries.priceToCoordinate(zone.upper)
+        );
+      }
     };
 
     chart.subscribeCrosshairMove((param) => {
@@ -207,6 +227,7 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
       chart.timeScale().unsubscribeVisibleTimeRangeChange(updateZones);
       rewardBox.remove();
       riskBox.remove();
+      for (const { element } of structureBoxes) element.remove();
       chart.remove();
     };
   }, [normalized]);
@@ -230,6 +251,11 @@ export function SignalPriceChart({ chartData }: { chartData?: SignalChartPayload
           <span className="rounded border border-line bg-field/50 px-2 py-1 font-semibold text-slate-600">
             {normalized.candles.length} candle futures
           </span>
+          {normalized.structureZones.length ? (
+            <span className="rounded border border-amber-500 bg-amber-50 px-2 py-1 font-semibold text-amber-800">
+              {normalized.structureZones.length} structure zones
+            </span>
+          ) : null}
         </div>
         <div className="text-right text-slate-500">
           <span className="font-semibold text-ink">{labelFor(normalized.resultStatus)}</span>
@@ -295,6 +321,16 @@ function normalizeChartData(chartData?: SignalChartPayload) {
   const resultMarkerTime = chartData.result_time ? candleTimeAtOrBefore(candles, chartData.result_time) : null;
   const boxEndMarkerTime = candleTimeAtOrBefore(candles, chartData.box_end_time);
   const latestCandle = candles[candles.length - 1];
+  const structureZones = (chartData.structure_zones || [])
+    .map((zone) => ({
+      lower: Number(zone.lower),
+      upper: Number(zone.upper),
+      originRole: zone.origin_role,
+      touchCount: Number(zone.touch_count),
+      startTime: candleTimeAtOrAfter(candles, zone.start_time),
+      endTime: candleTimeAtOrBefore(candles, zone.end_time)
+    }))
+    .filter((zone) => Number.isFinite(zone.lower) && Number.isFinite(zone.upper) && zone.lower <= zone.upper);
   return {
     candles,
     entry,
@@ -305,6 +341,7 @@ function normalizeChartData(chartData?: SignalChartPayload) {
     signalMarkerTime,
     resultMarkerTime,
     boxEndMarkerTime,
+    structureZones,
     latest: {
       time: formatWibDateTime(Number(latestCandle.time)),
       open: latestCandle.open,
@@ -330,6 +367,14 @@ function candleTimeAtOrBefore(candles: CandlestickData<UTCTimestamp>[], value: s
     selected = candle.time;
   }
   return selected;
+}
+
+function candleTimeAtOrAfter(candles: CandlestickData<UTCTimestamp>[], value: string): UTCTimestamp {
+  const target = Number(toTimestamp(value));
+  for (const candle of candles) {
+    if (Number(candle.time) >= target) return candle.time;
+  }
+  return candles[candles.length - 1].time;
 }
 
 function toTimestamp(value: string): UTCTimestamp {
@@ -387,6 +432,16 @@ function resultMarkerText(status: string): string {
   if (status === "OPEN") return "CURRENT";
   if (status === "STALE_FORWARD_DATA") return "LAST KNOWN";
   return "RESULT";
+}
+
+function structureZoneColors(role: string): { background: string; border: string } {
+  if (role === "SUPPORT_ORIGIN") {
+    return { background: "rgba(14, 116, 144, 0.08)", border: "rgba(14, 116, 144, 0.38)" };
+  }
+  if (role === "RESISTANCE_ORIGIN") {
+    return { background: "rgba(217, 119, 6, 0.08)", border: "rgba(217, 119, 6, 0.40)" };
+  }
+  return { background: "rgba(124, 58, 237, 0.07)", border: "rgba(124, 58, 237, 0.34)" };
 }
 
 function zoneElement(background: string, border: string, label: string): HTMLDivElement {

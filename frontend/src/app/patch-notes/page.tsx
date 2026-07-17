@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-17",
+    version: "LAB-56",
+    title: "MID_SHORT 1h Structure Zone Study",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menguji support/resistance futures 1h berbentuk zona sentuh berulang untuk menjelaskan TP dan SL MID_SHORT tanpa mengubah rule live.",
+    changes: [
+      "Pivot high/low hanya memakai candle futures 1h yang sudah closed sebelum signal lalu dikelompokkan menjadi zona ATR-normalized dengan minimum dua sentuhan independen.",
+      "Signal diklasifikasikan sebagai at support, at resistance, resistance rejection, support break, break-retest rejection, failed reclaim, mid-range, atau unavailable.",
+      "Tiga konfigurasi sensitivitas ditetapkan di awal; pilihan riset memakai train saja lalu diuji pada chronological validation.",
+      "Fixed-cohort tradeoff menjaga signal yang disaring sebagai no-entry 0R agar TP yang hilang dan SL yang terhindar tetap terlihat.",
+      "Context 4h ditampilkan sebagai confluence opsional dan tidak pernah menjadi hard gate untuk MID_SHORT 1h.",
+      "Chart evidence menampilkan candle 1h, box Entry/SL/TP, dan zona structure yang benar-benar tersedia saat signal.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, TP/SL live, outcome logger, atau execution."
+    ],
+    impact: "Kita dapat menguji apakah banyak MID_SHORT gagal karena entry berada di support, failed breakdown, atau tidak memiliki structure confirmation, tanpa menebak garis setelah hasil diketahui.",
+    links: [
+      { href: "/mid-short-structure-zone-study", label: "Structure Zone Study" },
+      { href: "/mid-short-failure-anatomy", label: "Failure Anatomy" },
+      { href: "/mid-short-entry-confirmation-study", label: "Entry Confirmation" }
+    ]
+  },
+  {
+    date: "2026-07-17",
     version: "LAB-55",
     title: "MID_SHORT 1h Entry Confirmation Shadow",
     status: "LIVE",

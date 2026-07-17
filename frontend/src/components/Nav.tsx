@@ -25,6 +25,8 @@ const labGroups = [
     title: "Deep Dive",
     links: [
       { href: "/mid-short-failure-anatomy", label: "Failure Anatomy", helper: "Path SL/TP" },
+      { href: "/mid-short-structure-zone-study", label: "Structure Zones", helper: "Support/resistance 1h" },
+      { href: "/mid-short-entry-confirmation-study", label: "Entry Confirmation", helper: "Tunggu candle 15m" },
       { href: "/mid-short-wrong-direction-deep-dive", label: "Wrong Direction", helper: "Salah arah" },
       { href: "/mid-short-taker-sell-deep-dive", label: "Taker Sell", helper: "Dominasi sell" },
       { href: "/mid-short-volume-safe-shadow", label: "Volume Safe", helper: "Volume tidak telat" },

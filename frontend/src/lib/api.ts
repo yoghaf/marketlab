@@ -1352,6 +1352,22 @@ export type SignalChartPayload = {
   latest_price?: string | number | null;
   latest_candle_time?: string | null;
   candles: SignalChartCandle[];
+  structure_zones?: SignalStructureZone[];
+};
+
+export type SignalStructureZone = {
+  center: string | number;
+  lower: string | number;
+  upper: string | number;
+  touch_count: number;
+  support_touch_count: number;
+  resistance_touch_count: number;
+  origin_role: string;
+  latest_pivot_kind: string;
+  first_touch_time: string;
+  last_touch_time: string;
+  start_time: string;
+  end_time: string;
 };
 
 export type SignalQualityBucket = SignalPerformanceBucket & {
@@ -1969,6 +1985,150 @@ export type MidShortEntryConfirmationResponse = {
     read: string;
   }>;
   case_rows: MidShortEntryConfirmationCase[];
+  limitations: string[];
+  guardrails: string[];
+};
+
+export type MidShortStructureZone = {
+  center: string | number;
+  lower: string | number;
+  upper: string | number;
+  touch_count: number;
+  support_touch_count: number;
+  resistance_touch_count: number;
+  origin_role: string;
+  latest_pivot_kind: string;
+  first_touch_time: string;
+  last_touch_time: string;
+};
+
+export type MidShortStructureFixedPerf = {
+  source_count: number;
+  source_closed_count: number;
+  entered_count: number;
+  entered_closed_count: number;
+  filtered_no_entry_count: number;
+  retention_pct?: string | number | null;
+  tp_retained_count: number;
+  tp_lost_count: number;
+  sl_retained_count: number;
+  sl_avoided_count: number;
+  both_retained_count: number;
+  fixed_total_realistic_r: string | number;
+  fixed_avg_realistic_r?: string | number | null;
+  fixed_median_realistic_r?: string | number | null;
+  fixed_max_drawdown_r: string | number;
+  baseline_total_realistic_r: string | number;
+  baseline_avg_realistic_r?: string | number | null;
+  fixed_total_r_delta_vs_baseline: string | number;
+  fixed_avg_r_delta_vs_baseline?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidShortStructureGateRow = {
+  gate_id: string;
+  label: string;
+  allowed_states: string[];
+  all: MidShortStructureFixedPerf;
+  train: MidShortStructureFixedPerf;
+  validation: MidShortStructureFixedPerf;
+  selected_performance: Record<string, OneHourWalkForwardPerf>;
+  verdict: string;
+};
+
+export type MidShortStructureStateRow = {
+  bucket: string;
+  all: OneHourWalkForwardPerf;
+  train: OneHourWalkForwardPerf;
+  validation: OneHourWalkForwardPerf;
+};
+
+export type MidShortStructureConfigRow = {
+  config_id: string;
+  label: string;
+  lookback_hours: number;
+  pivot_span: number;
+  zone_half_width_atr: string | number;
+  min_touches: number;
+  zone_available_count: number;
+  not_conflicted_gate: MidShortStructureGateRow;
+};
+
+export type MidShortStructureCase = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp: string;
+  signal_time_wib?: string | null;
+  entry?: string | number | null;
+  stop_loss?: string | number | null;
+  take_profit?: string | number | null;
+  result_status: string;
+  realistic_realized_r?: string | number | null;
+  structure_state: string;
+  structure_reason: string;
+  atr_1h_at_signal?: string | number | null;
+  one_hour_history_count: number;
+  zone_count_1h: number;
+  nearest_support?: MidShortStructureZone | null;
+  nearest_resistance?: MidShortStructureZone | null;
+  nearest_support_distance_atr?: string | number | null;
+  nearest_resistance_distance_atr?: string | number | null;
+  state_zone?: MidShortStructureZone | null;
+  four_hour_confluence_status: string;
+  four_hour_confluence_reason: string;
+  nearest_4h_zone?: MidShortStructureZone | null;
+  taker_sell_ratio?: string | number | null;
+  detail_href: string;
+};
+
+export type MidShortStructureZoneResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    min_sample: number;
+    limit: number;
+    signal_id?: string | null;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_id: string;
+  method: string;
+  definitions: Record<string, unknown>;
+  summary: {
+    source_count: number;
+    train_count: number;
+    validation_count: number;
+    validation_cutoff_utc?: string | null;
+    zone_available_count: number;
+    four_hour_context_available_count: number;
+    primary_config_id: string;
+    train_selected_config_id?: string | null;
+    train_selected_validation_avg_r_delta?: string | number | null;
+    train_selected_validation_sl_avoided: number;
+    train_selected_validation_tp_lost: number;
+    verdict: string;
+    recommended_action: string;
+  };
+  cohort_rows: Array<{
+    cohort_id: string;
+    performance: OneHourWalkForwardPerf;
+    state_counts: Record<string, number>;
+  }>;
+  config_rows: MidShortStructureConfigRow[];
+  state_rows: MidShortStructureStateRow[];
+  gate_rows: MidShortStructureGateRow[];
+  four_hour_confluence_rows: MidShortStructureStateRow[];
+  case_rows: MidShortStructureCase[];
+  selected_case?: MidShortStructureCase | null;
+  selected_chart?: SignalChartPayload | null;
   limitations: string[];
   guardrails: string[];
 };
