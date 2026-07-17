@@ -2086,6 +2086,7 @@ export type MidShortStructureFixedPerf = {
   fixed_max_drawdown_r: string | number;
   baseline_total_realistic_r: string | number;
   baseline_avg_realistic_r?: string | number | null;
+  baseline_max_drawdown_r?: string | number | null;
   fixed_total_r_delta_vs_baseline: string | number;
   fixed_avg_r_delta_vs_baseline?: string | number | null;
   top_symbol?: string | null;
@@ -2195,6 +2196,79 @@ export type MidShortStructureZoneResponse = {
   case_rows: MidShortStructureCase[];
   selected_case?: MidShortStructureCase | null;
   selected_chart?: SignalChartPayload | null;
+  limitations: string[];
+  guardrails: string[];
+};
+
+export type MidShortV21StructureVariant = {
+  variant_id: string;
+  label: string;
+  selection_rule: string;
+  all: MidShortStructureFixedPerf;
+  train: MidShortStructureFixedPerf;
+  validation: MidShortStructureFixedPerf;
+  selected_performance: Record<string, OneHourWalkForwardPerf>;
+  selected_state_counts: Record<string, number>;
+  selected_target_path_counts: Record<string, number>;
+  verdict: string;
+};
+
+export type MidShortV21StructureCase = MidShortStructureCase & {
+  target_path_status: string;
+  target_path_reason: string;
+  target_path_support_center?: string | number | null;
+  support_clearance_to_target_r?: string | number | null;
+  primary_conflict: boolean;
+  variant_membership: Record<string, boolean>;
+};
+
+export type MidShortV21StructureInteractionResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    base_filter_id: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_id: string;
+  method: string;
+  definitions: Record<string, unknown>;
+  summary: {
+    fixed_cohort_count: number;
+    fixed_cohort_closed_count: number;
+    train_count: number;
+    validation_count: number;
+    validation_closed_count: number;
+    validation_cutoff_utc?: string | null;
+    zone_available_count: number;
+    zone_unavailable_count: number;
+    primary_conflict_count: number;
+    target_path_blocked_count: number;
+    four_hour_context_available_count: number;
+    open_count: number;
+    waiting_count: number;
+    readiness_target_closed: number;
+    readiness_status: string;
+    best_validation_variant_id?: string | null;
+    best_validation_verdict?: string | null;
+    study_verdict: string;
+    recommended_action: string;
+  };
+  baseline: Record<string, OneHourWalkForwardPerf>;
+  variant_rows: MidShortV21StructureVariant[];
+  state_rows: MidShortStructureStateRow[];
+  target_path_rows: MidShortStructureStateRow[];
+  four_hour_context_rows: MidShortStructureStateRow[];
+  case_rows: MidShortV21StructureCase[];
+  research_answers: Record<string, string>;
   limitations: string[];
   guardrails: string[];
 };

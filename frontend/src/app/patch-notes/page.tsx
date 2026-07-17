@@ -19,6 +19,28 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-17",
+    version: "LAB-59",
+    title: "MID_SHORT V2.1 Structure Interaction Study",
+    status: "RESEARCH",
+    area: "V2.1 fixed-cohort validation",
+    summary: "Menguji apakah konflik support 1h dan support yang menghalangi jalur target menjelaskan loss MID_SHORT V2.1 tanpa mencampur SHADOW_FAIL atau lane lain.",
+    changes: [
+      "Cohort dikunci sebelum variant: MID_SHORT 1h, SHADOW_PASS, taker sell minimal 52%, dan satu position lock yang sama.",
+      "Empat variant dibandingkan: V2.1 control, primary conflict veto, target path clear, serta aligned-and-clear.",
+      "Baris yang ditolak tetap bernilai 0R dalam fixed-cohort agar filter tidak tampak bagus hanya karena membuang sample.",
+      "Hasil dipisah all/train/chronological validation dan menampilkan TP lost, SL avoided, realistic R, drawdown, serta concentration.",
+      "Zona unavailable tetap jujur; context 4h hanya didiagnosis dan tidak menjadi hard gate.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, SL/TP, outcome evaluator, atau execution."
+    ],
+    impact: "Penelitian V2.1 sekarang dapat menjawab apakah struktur benar-benar mengurangi salah arah dan target terhalang pada cohort yang sama, sebelum ada usulan perubahan rule.",
+    links: [
+      { href: "/signal-quality-lab?lab=structure-v21", label: "Open LAB-59" },
+      { href: "/mid-short-filter-combination-study", label: "V2.1 Decision" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-17",
     version: "LAB-58",
     title: "Historical Signal Zone Detail Recovery",
     status: "LIVE",

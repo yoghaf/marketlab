@@ -1208,6 +1208,95 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_v21_structure_interaction_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _forward_candles = (
+            self._mid_short_1h_anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                shadow_status="SHADOW_PASS",
+                include_failure_anatomy=False,
+            )
+        )
+        fixed_cohort = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        signal_times = [
+            value
+            for value in (_parse_dt(item.get("signal_timestamp")) for item in fixed_cohort)
+            if value is not None
+        ]
+        symbols = {str(item.get("symbol") or "") for item in fixed_cohort if item.get("symbol")}
+        min_signal_time = min(signal_times, default=None)
+        max_signal_time = max(signal_times, default=None)
+        one_hour_candles = self._load_1h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(hours=264)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        four_hour_candles = self._load_4h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(days=45)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        study = _mid_short_v21_structure_interaction_study(
+            fixed_cohort,
+            one_hour_candles=one_hour_candles,
+            four_hour_candles=four_hour_candles,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_v21_structure_interaction_study",
+            "study_scope": "read_only_mid_short_1h_v21_shadow_pass_structure_interaction",
+            "source_table": (
+                "signal_forward_return_logs + futures_klines_1h + futures_klines_4h"
+            ),
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": (
+                    "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS "
+                    "AND kline_taker_sell_ratio >= 0.52"
+                ),
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            **study,
+            "guardrails": [
+                "LAB-59 reads only the fixed V2.1 SHADOW_PASS plus taker-sell cohort; SHADOW_FAIL and other stages or timeframes are excluded.",
+                "Every zone uses only futures candles closed at or before the signal and cannot see future pivots.",
+                "Rows rejected by a variant remain zero-R observations in the fixed cohort comparison.",
+                "Missing zone data is reported separately and is not silently treated as a conflict.",
+                "The 4h zone is context-only and never a hard gate in this study.",
+                "No Signal Factory rule, scanner decision, threshold, TP/SL formula, outcome logic, or execution path is changed.",
+            ],
+        }
+
     def mid_short_1h_structure_zone_case(
         self,
         *,
@@ -7233,6 +7322,394 @@ def _mid_short_structure_zone_study(
     }
 
 
+LAB59_PRIMARY_CONFLICT_STATES = frozenset(
+    {
+        "AT_1H_SUPPORT",
+        "1H_FAILED_BREAK_RECLAIM",
+    }
+)
+LAB59_SHORT_ALIGNED_STATES = frozenset(
+    {
+        "AT_1H_RESISTANCE",
+        "1H_RESISTANCE_REJECTED",
+        "1H_SUPPORT_BREAK",
+        "1H_BREAK_RETEST_REJECTED",
+    }
+)
+
+
+def _mid_short_v21_structure_interaction_study(
+    items: list[dict[str, Any]],
+    *,
+    one_hour_candles: dict[str, list[PerfCandle]],
+    four_hour_candles: dict[str, list[PerfCandle]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    primary_config = next(
+        config for config in LAB56_ZONE_CONFIGS if config.config_id == LAB56_PRIMARY_CONFIG_ID
+    )
+    sorted_one_hour = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in one_hour_candles.items()
+    }
+    sorted_four_hour = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in four_hour_candles.items()
+    }
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        symbol = str(item.get("symbol") or "")
+        structure = _lab56_structure_context(
+            item,
+            one_hour_candles=sorted_one_hour.get(symbol, []),
+            four_hour_candles=sorted_four_hour.get(symbol, []),
+            config=primary_config,
+        )
+        with_structure = {**item, **structure}
+        enriched.append({**with_structure, **_lab59_target_path_context(with_structure)})
+
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(enriched)
+    split_items = {"all": ordered, "train": train, "validation": validation}
+    baselines = {split: _walk_forward_perf(rows) for split, rows in split_items.items()}
+    variants = [
+        _lab59_variant_row(
+            variant_id=variant_id,
+            label=label,
+            selection_rule=selection_rule,
+            split_items=split_items,
+            baselines=baselines,
+            min_sample=min_sample,
+        )
+        for variant_id, label, selection_rule in (
+            (
+                "V21_CONTROL",
+                "V2.1 fixed-cohort control",
+                "All MID_SHORT 1h SHADOW_PASS rows with taker sell >= 52%.",
+            ),
+            (
+                "PRIMARY_CONFLICT_VETO",
+                "Veto immediate 1h structure conflict",
+                "Exclude AT_1H_SUPPORT and 1H_FAILED_BREAK_RECLAIM; unavailable zones remain included.",
+            ),
+            (
+                "TARGET_PATH_CLEAR",
+                "Require clear path to logged target",
+                "Exclude only rows where repeated 1h support lies strictly between short entry and target; unavailable stays included.",
+            ),
+            (
+                "ALIGNED_AND_CLEAR",
+                "Require aligned short structure and clear target path",
+                "Keep resistance, resistance rejection, support break, or break-retest rejection and exclude blocked target paths.",
+            ),
+        )
+    ]
+    state_names = (
+        "AT_1H_SUPPORT",
+        "AT_1H_RESISTANCE",
+        "1H_RESISTANCE_REJECTED",
+        "1H_SUPPORT_BREAK",
+        "1H_BREAK_RETEST_REJECTED",
+        "1H_FAILED_BREAK_RECLAIM",
+        "1H_MID_RANGE",
+        "1H_ZONE_UNAVAILABLE",
+    )
+    state_rows = [
+        _lab56_bucket_row(
+            state,
+            field="structure_state",
+            split_items=split_items,
+            baselines=baselines,
+        )
+        for state in state_names
+    ]
+    target_path_rows = [
+        _lab56_bucket_row(
+            status,
+            field="target_path_status",
+            split_items=split_items,
+            baselines=baselines,
+        )
+        for status in ("TARGET_PATH_CLEAR", "TARGET_PATH_BLOCKED", "TARGET_PATH_UNAVAILABLE")
+    ]
+    four_hour_context_rows = [
+        _lab56_bucket_row(
+            status,
+            field="four_hour_confluence_status",
+            split_items=split_items,
+            baselines=baselines,
+        )
+        for status in (
+            "ALIGNED_WITH_4H_RESISTANCE",
+            "CONFLICT_WITH_4H_SUPPORT",
+            "NO_4H_CONFLUENCE",
+            "FOUR_H_CONTEXT_UNAVAILABLE",
+        )
+    ]
+    non_control = [
+        row
+        for row in variants
+        if row["variant_id"] != "V21_CONTROL"
+        and int(row["validation"].get("entered_closed_count") or 0) > 0
+        and row["validation"].get("fixed_avg_r_delta_vs_baseline") is not None
+    ]
+    ranked = sorted(
+        non_control,
+        key=lambda row: (
+            _decimal_or_zero(row["validation"].get("fixed_avg_r_delta_vs_baseline")),
+            int(row["validation"].get("entered_closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    best_variant = ranked[0] if ranked else None
+    source_closed_count = int(variants[0]["all"].get("source_closed_count") or 0) if variants else 0
+    validation_closed_count = (
+        int(variants[0]["validation"].get("source_closed_count") or 0) if variants else 0
+    )
+    readiness_status = (
+        "READY_FOR_READ_ONLY_COMPARISON"
+        if source_closed_count >= 120 and validation_closed_count >= max(12, min_sample)
+        else "MONITOR_MORE"
+    )
+    case_rows = [
+        _lab59_case_row(item)
+        for item in sorted(
+            ordered,
+            key=lambda row: (
+                _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                str(row.get("symbol") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+    ]
+    conflict_count = sum(
+        1 for item in ordered if str(item.get("structure_state") or "") in LAB59_PRIMARY_CONFLICT_STATES
+    )
+    blocked_path_count = sum(1 for item in ordered if item.get("target_path_status") == "TARGET_PATH_BLOCKED")
+    return {
+        "study_id": "LAB_59_MID_SHORT_1H_V21_STRUCTURE_INTERACTION",
+        "method": (
+            "The V2.1 fixed cohort is formed before any structure variant: MID_SHORT 1h, SHADOW_PASS, "
+            "taker sell at least 52%, and one shared position lock. Repeated 1h pivot zones are causal. "
+            "Four predefined variants are compared on the same chronological 70/30 split; rejected rows "
+            "remain zero-R in fixed-cohort metrics. The 4h structure is descriptive context only."
+        ),
+        "definitions": {
+            "fixed_cohort": "MID_SHORT 1h + SHADOW_PASS + taker sell >= 52%",
+            "outcome_path": "existing realistic futures paper outcome from closed 15m/1m candles",
+            "zone_source": "closed futures 1h candles before or at signal time",
+            "target_path_blocked": "nearest repeated 1h support center is strictly between short entry and logged target",
+            "primary_conflict_states": sorted(LAB59_PRIMARY_CONFLICT_STATES),
+            "short_aligned_states": sorted(LAB59_SHORT_ALIGNED_STATES),
+            "four_hour_role": "context-only; never changes variant membership",
+            "sample_target": "120 fixed-cohort closed rows and at least max(12, min_sample) validation closed rows",
+        },
+        "summary": {
+            "fixed_cohort_count": len(ordered),
+            "fixed_cohort_closed_count": source_closed_count,
+            "train_count": len(train),
+            "validation_count": len(validation),
+            "validation_closed_count": validation_closed_count,
+            "validation_cutoff_utc": validation_cutoff,
+            "zone_available_count": sum(
+                1 for item in ordered if item.get("structure_state") != "1H_ZONE_UNAVAILABLE"
+            ),
+            "zone_unavailable_count": sum(
+                1 for item in ordered if item.get("structure_state") == "1H_ZONE_UNAVAILABLE"
+            ),
+            "primary_conflict_count": conflict_count,
+            "target_path_blocked_count": blocked_path_count,
+            "four_hour_context_available_count": sum(
+                1
+                for item in ordered
+                if item.get("four_hour_confluence_status") != "FOUR_H_CONTEXT_UNAVAILABLE"
+            ),
+            "open_count": sum(1 for item in ordered if item.get("result_status") == "OPEN"),
+            "waiting_count": sum(1 for item in ordered if str(item.get("result_status") or "").startswith("WAITING")),
+            "readiness_target_closed": 120,
+            "readiness_status": readiness_status,
+            "best_validation_variant_id": best_variant.get("variant_id") if best_variant else None,
+            "best_validation_verdict": best_variant.get("verdict") if best_variant else None,
+            "study_verdict": _lab59_study_verdict(readiness_status, best_variant),
+            "recommended_action": _lab59_recommended_action(readiness_status, best_variant),
+        },
+        "baseline": baselines,
+        "variant_rows": variants,
+        "state_rows": state_rows,
+        "target_path_rows": target_path_rows,
+        "four_hour_context_rows": four_hour_context_rows,
+        "case_rows": case_rows,
+        "research_answers": {
+            "does_primary_support_conflict_explain_losses": (
+                f"{conflict_count} of {len(ordered)} fixed-cohort rows are immediate support/reclaim conflicts; compare their TP/SL/R in state_rows."
+            ),
+            "does_target_path_blockage_explain_missed_targets": (
+                f"{blocked_path_count} of {len(ordered)} rows have repeated support between entry and target; compare TARGET_PATH_BLOCKED against CLEAR."
+            ),
+            "is_four_hour_context_a_gate": "No. It is grouped for diagnosis and never changes selected rows.",
+            "can_a_variant_change_live_v21_now": "No. This checkpoint is read-only and requires forward confirmation before any rule proposal.",
+        },
+        "limitations": [
+            "Repeated OHLC pivot zones approximate market structure; they are not order-book liquidity.",
+            "The nearest support center is a deterministic path diagnostic, not a replacement target.",
+            "Unavailable structure remains explicit and is not converted into a conflict or a pass claim.",
+            "A single chronological validation checkpoint can describe behavior but cannot establish a live filter.",
+        ],
+    }
+
+
+def _lab59_target_path_context(item: dict[str, Any]) -> dict[str, Any]:
+    entry = _decimal_or_none_any(item.get("entry"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    support = item.get("nearest_support") if isinstance(item.get("nearest_support"), dict) else None
+    support_center = _decimal_or_none_any(support.get("center")) if support else None
+    if entry is None or target is None or risk is None or risk <= 0 or support_center is None:
+        return {
+            "target_path_status": "TARGET_PATH_UNAVAILABLE",
+            "target_path_reason": "Entry, target, risk, or a repeated 1h support zone is unavailable.",
+            "target_path_support_center": support_center,
+            "support_clearance_to_target_r": None,
+        }
+    clearance = (support_center - target) / risk
+    if target < support_center < entry:
+        return {
+            "target_path_status": "TARGET_PATH_BLOCKED",
+            "target_path_reason": "Repeated 1h support lies between the short entry and logged target.",
+            "target_path_support_center": support_center,
+            "support_clearance_to_target_r": clearance,
+        }
+    return {
+        "target_path_status": "TARGET_PATH_CLEAR",
+        "target_path_reason": "No nearest repeated 1h support center lies between entry and target.",
+        "target_path_support_center": support_center,
+        "support_clearance_to_target_r": clearance,
+    }
+
+
+def _lab59_variant_selected(item: dict[str, Any], variant_id: str) -> bool:
+    state = str(item.get("structure_state") or "1H_ZONE_UNAVAILABLE")
+    target_path = str(item.get("target_path_status") or "TARGET_PATH_UNAVAILABLE")
+    if variant_id == "V21_CONTROL":
+        return True
+    if variant_id == "PRIMARY_CONFLICT_VETO":
+        return state not in LAB59_PRIMARY_CONFLICT_STATES
+    if variant_id == "TARGET_PATH_CLEAR":
+        return target_path != "TARGET_PATH_BLOCKED"
+    if variant_id == "ALIGNED_AND_CLEAR":
+        return state in LAB59_SHORT_ALIGNED_STATES and target_path != "TARGET_PATH_BLOCKED"
+    return False
+
+
+def _lab59_variant_row(
+    *,
+    variant_id: str,
+    label: str,
+    selection_rule: str,
+    split_items: dict[str, list[dict[str, Any]]],
+    baselines: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    selected = {
+        split: [item for item in rows if _lab59_variant_selected(item, variant_id)]
+        for split, rows in split_items.items()
+    }
+    fixed = {
+        split: _lab56_fixed_cohort_perf(split_items[split], selected[split])
+        for split in ("all", "train", "validation")
+    }
+    row = {
+        "variant_id": variant_id,
+        "label": label,
+        "selection_rule": selection_rule,
+        "all": fixed["all"],
+        "train": fixed["train"],
+        "validation": fixed["validation"],
+        "selected_performance": {
+            split: _walk_forward_perf(selected[split], baseline=baselines[split])
+            for split in ("all", "train", "validation")
+        },
+        "selected_state_counts": dict(
+            Counter(str(item.get("structure_state") or "UNKNOWN") for item in selected["all"])
+        ),
+        "selected_target_path_counts": dict(
+            Counter(str(item.get("target_path_status") or "UNKNOWN") for item in selected["all"])
+        ),
+    }
+    row["verdict"] = _lab59_variant_verdict(row, min_sample=min_sample)
+    return row
+
+
+def _lab59_variant_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if row.get("variant_id") == "V21_CONTROL":
+        return "FIXED_COHORT_CONTROL"
+    all_row = row["all"]
+    train = row["train"]
+    validation = row["validation"]
+    if (
+        int(all_row.get("source_closed_count") or 0) < 120
+        or int(validation.get("source_closed_count") or 0) < max(12, min_sample)
+        or int(validation.get("entered_closed_count") or 0) < max(6, min_sample // 2)
+    ):
+        return "MONITOR_MORE"
+    train_delta = _decimal_or_none_any(train.get("fixed_avg_r_delta_vs_baseline"))
+    validation_delta = _decimal_or_none_any(validation.get("fixed_avg_r_delta_vs_baseline"))
+    validation_total = _decimal_or_none_any(validation.get("fixed_total_realistic_r"))
+    validation_drawdown = _decimal_or_none_any(validation.get("fixed_max_drawdown_r"))
+    control_drawdown = _decimal_or_none_any(validation.get("baseline_max_drawdown_r"))
+    tradeoff_ok = int(validation.get("sl_avoided_count") or 0) >= int(validation.get("tp_lost_count") or 0)
+    drawdown_ok = (
+        validation_drawdown is not None
+        and control_drawdown is not None
+        and validation_drawdown >= control_drawdown
+    )
+    if validation_delta is not None and validation_delta > 0 and tradeoff_ok and drawdown_ok:
+        return "VALIDATION_IMPROVES" if validation_total is not None and validation_total > 0 else "VALIDATION_REDUCES_DAMAGE"
+    if train_delta is not None and train_delta > 0 and (validation_delta is None or validation_delta <= 0):
+        return "TRAIN_ONLY"
+    return "NO_CLEAR_GAIN"
+
+
+def _lab59_study_verdict(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "V21_STRUCTURE_MONITOR_MORE"
+    verdict = str(best_variant.get("verdict") or "") if best_variant else ""
+    if verdict == "VALIDATION_IMPROVES":
+        return "V21_STRUCTURE_FORWARD_CHECKPOINT_REQUIRED"
+    if verdict == "VALIDATION_REDUCES_DAMAGE":
+        return "V21_STRUCTURE_DAMAGE_REDUCTION_ONLY"
+    return "V21_STRUCTURE_NO_PROMOTION"
+
+
+def _lab59_recommended_action(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "Collect more closed V2.1 fixed-cohort outcomes; do not alter the live gate."
+    if best_variant and best_variant.get("verdict") == "VALIDATION_IMPROVES":
+        return "Track the descriptive winner in a new forward-only shadow checkpoint before proposing any rule change."
+    return "Keep V2.1 unchanged; current structure variants do not justify promotion."
+
+
+def _lab59_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    row = _lab56_case_row(item) or {}
+    return {
+        **row,
+        "target_path_status": item.get("target_path_status"),
+        "target_path_reason": item.get("target_path_reason"),
+        "target_path_support_center": item.get("target_path_support_center"),
+        "support_clearance_to_target_r": item.get("support_clearance_to_target_r"),
+        "primary_conflict": str(item.get("structure_state") or "") in LAB59_PRIMARY_CONFLICT_STATES,
+        "variant_membership": {
+            variant_id: _lab59_variant_selected(item, variant_id)
+            for variant_id in (
+                "V21_CONTROL",
+                "PRIMARY_CONFLICT_VETO",
+                "TARGET_PATH_CLEAR",
+                "ALIGNED_AND_CLEAR",
+            )
+        },
+    }
+
+
 def _lab56_structure_context(
     item: dict[str, Any],
     *,
@@ -7692,14 +8169,24 @@ def _lab56_fixed_cohort_perf(
     cumulative = Decimal("0")
     peak = Decimal("0")
     max_drawdown = Decimal("0")
+    baseline_cumulative = Decimal("0")
+    baseline_peak = Decimal("0")
+    baseline_max_drawdown = Decimal("0")
     selected_closed = []
     for item in closed:
         entered = _lab55_item_key(item) in selected_keys
         value = Decimal(item["realistic_realized_r"]) if entered else Decimal("0")
+        baseline_value = Decimal(item["realistic_realized_r"])
         values.append(value)
         cumulative += value
         peak = max(peak, cumulative)
         max_drawdown = min(max_drawdown, cumulative - peak)
+        baseline_cumulative += baseline_value
+        baseline_peak = max(baseline_peak, baseline_cumulative)
+        baseline_max_drawdown = min(
+            baseline_max_drawdown,
+            baseline_cumulative - baseline_peak,
+        )
         if entered:
             selected_closed.append(item)
     baseline_total = sum((Decimal(item["realistic_realized_r"]) for item in closed), Decimal("0"))
@@ -7729,6 +8216,7 @@ def _lab56_fixed_cohort_perf(
         "fixed_max_drawdown_r": max_drawdown,
         "baseline_total_realistic_r": baseline_total,
         "baseline_avg_realistic_r": baseline_avg,
+        "baseline_max_drawdown_r": baseline_max_drawdown,
         "fixed_total_r_delta_vs_baseline": cumulative - baseline_total,
         "fixed_avg_r_delta_vs_baseline": (
             fixed_avg - baseline_avg if fixed_avg is not None and baseline_avg is not None else None

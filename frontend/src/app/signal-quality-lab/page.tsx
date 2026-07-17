@@ -9,6 +9,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import {
   MarketRegimeStudyBucket,
   MarketRegimeStudyResponse,
+  MidShortStructureStateRow,
+  MidShortV21StructureInteractionResponse,
+  MidShortV21StructureVariant,
   SignalCalibrationCandidate,
   SignalCalibrationLabResponse,
   SignalCalibrationLane,
@@ -44,6 +47,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   const includeWatchOnly = firstParam(params.include_watch_only) === "true";
   const positionLock = firstParam(params.position_lock) !== "false";
   const showArchive = firstParam(params.show_archive) === "true";
+  const activeLab = firstParam(params.lab);
+  const showV21Structure = activeLab === "structure-v21";
   const minSample = normalizeNumber(firstParam(params.min_sample), 5, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 25, 5, 100);
   const query = new URLSearchParams({
@@ -58,9 +63,11 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   let data: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
   let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
+  let v21StructureStudy: MidShortV21StructureInteractionResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
   let marketRegimeError: string | null = null;
+  let v21StructureError: string | null = null;
   try {
     data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
   } catch (err) {
@@ -84,6 +91,22 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   } catch (err) {
     marketRegimeError = err instanceof Error ? err.message : "Market Regime Study API failed";
   }
+  if (showV21Structure) {
+    const structureQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      min_sample: String(Math.max(20, minSample)),
+      limit: String(limit)
+    });
+    try {
+      v21StructureStudy = await fetchJson<MidShortV21StructureInteractionResponse>(
+        `/api/signal-candidates/mid-short-1h-v2-1-structure-interaction-study?${structureQuery.toString()}`,
+        { revalidateSeconds: 300 }
+      );
+    } catch (err) {
+      v21StructureError = err instanceof Error ? err.message : "V2.1 Structure Interaction API failed";
+    }
+  }
 
   const aggregate = data?.aggregate;
   const bestStage = data?.by_stage?.[0];
@@ -103,6 +126,12 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance">Open Signal History</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-misidentification-audit">Open Misidentification Audit</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+        <Link
+          className={`rounded-md border px-3 py-2 font-semibold ${showV21Structure ? "border-primary bg-primary text-white" : "border-line bg-white hover:bg-field"}`}
+          href={showV21Structure ? "/signal-quality-lab" : "/signal-quality-lab?lab=structure-v21"}
+        >
+          {showV21Structure ? "Close V2.1 Structure" : "Open V2.1 Structure"}
+        </Link>
         <details className="relative">
           <summary className="cursor-pointer list-none rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field">Deep research links</summary>
           <div className="absolute left-0 top-11 z-10 grid w-72 gap-1 rounded-lg border border-line bg-white p-2 shadow-lg">
@@ -154,6 +183,10 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           </SectionCard>
 
           <MidShortRefinementPanel data={data?.mid_short_1h_refinement || null} />
+
+          {showV21Structure ? (
+            <V21StructureInteractionPanel data={v21StructureStudy} error={v21StructureError} />
+          ) : null}
 
           <V2ProfitLossResearchPanel data={data?.profit_loss_research || null} />
 
@@ -331,6 +364,225 @@ function CollapsiblePanel({
         {children}
       </div>
     </details>
+  );
+}
+
+function V21StructureInteractionPanel({
+  data,
+  error
+}: {
+  data: MidShortV21StructureInteractionResponse | null;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <SectionCard title="LAB-59 V2.1 Structure Interaction" description="Studi fixed-cohort gagal dimuat.">
+        <div className="p-4 text-sm text-stale">{error}</div>
+      </SectionCard>
+    );
+  }
+  if (!data) {
+    return (
+      <SectionCard title="LAB-59 V2.1 Structure Interaction" description="Menunggu payload studi read-only.">
+        <EmptyState title="No LAB-59 data" detail="Buka ulang setelah endpoint studi tersedia." />
+      </SectionCard>
+    );
+  }
+
+  const summary = data.summary;
+  return (
+    <div className="space-y-4" id="v21-structure-interaction">
+      <section className="rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-ink">LAB-59 V2.1 Structure Interaction</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Hanya MID_SHORT 1h SHADOW_PASS + taker sell &gt;= 52%. Semua varian memakai cohort dan position lock yang sama.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <StatusBadge value={summary.readiness_status} />
+              <StatusBadge value={summary.study_verdict} />
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-px bg-line sm:grid-cols-2 xl:grid-cols-6">
+          <LabMetric label="Fixed cohort" value={String(summary.fixed_cohort_count)} detail={`${summary.fixed_cohort_closed_count} closed`} />
+          <LabMetric label="Train / validation" value={`${summary.train_count} / ${summary.validation_count}`} detail={`${summary.validation_closed_count} validation closed`} />
+          <LabMetric label="Zone available" value={`${summary.zone_available_count}/${summary.fixed_cohort_count}`} detail={`${summary.zone_unavailable_count} unavailable`} />
+          <LabMetric label="Primary conflict" value={String(summary.primary_conflict_count)} detail="Support / failed reclaim" />
+          <LabMetric label="Target blocked" value={String(summary.target_path_blocked_count)} detail="Support between entry and TP" />
+          <LabMetric label="Best validation read" value={summary.best_validation_variant_id || "-"} detail={summary.best_validation_verdict || "No variant"} />
+        </div>
+        <div className="border-t border-line p-4 text-sm">
+          <div className="font-semibold text-ink">Kesimpulan checkpoint</div>
+          <p className="mt-1 text-slate-700">{summary.recommended_action}</p>
+          <p className="mt-2 text-xs text-slate-500">Read-only. Varian yang ditolak tetap dihitung 0R; 4h hanya konteks dan tidak memblokir sinyal.</p>
+        </div>
+      </section>
+
+      <CollapsiblePanel
+        title="V2.1 fixed-cohort variant comparison"
+        description="Kontrol dibandingkan dengan veto konflik, jalur target bersih, dan struktur selaras. Fokus pada validation, TP yang hilang, SL yang dihindari, serta drawdown."
+        defaultOpen
+      >
+        <V21VariantTable rows={data.variant_rows} />
+      </CollapsiblePanel>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <CollapsiblePanel title="Primary 1h structure states" description="Performa tiap interaksi support/resistance pada cohort V2.1 yang sama." defaultOpen>
+          <V21BucketTable rows={data.state_rows} />
+        </CollapsiblePanel>
+        <CollapsiblePanel title="Target path diagnosis" description="Apakah repeated support berada di antara entry short dan target tercatat." defaultOpen>
+          <V21BucketTable rows={data.target_path_rows} />
+        </CollapsiblePanel>
+      </section>
+
+      <CollapsiblePanel title="4h context, diagnostic only" description="Konteks 4h dilaporkan untuk diagnosis, tetapi tidak pernah menjadi hard gate LAB-59.">
+        <V21BucketTable rows={data.four_hour_context_rows} />
+      </CollapsiblePanel>
+
+      <CollapsiblePanel title="Latest fixed-cohort cases" description="Bukti per sinyal: state, jalur target, hasil realistis, dan keanggotaan tiap varian.">
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Time WIB</th>
+                <th>Symbol</th>
+                <th>Result</th>
+                <th>Realistic R</th>
+                <th>1h state</th>
+                <th>Target path</th>
+                <th>Support / clearance</th>
+                <th>4h context</th>
+                <th>Variant pass</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.case_rows.map((row) => (
+                <tr key={row.signal_id}>
+                  <td>{row.signal_time_wib || fmtTime(row.signal_timestamp)}</td>
+                  <td className="font-semibold">{row.symbol}</td>
+                  <td><StatusBadge value={row.result_status} /></td>
+                  <td>{row.realistic_realized_r == null ? "-" : `${fmtSigned(row.realistic_realized_r)}R`}</td>
+                  <td>
+                    <StatusBadge value={row.structure_state} />
+                    <div className="mt-1 max-w-xs text-xs text-slate-500">{row.structure_reason}</div>
+                  </td>
+                  <td>
+                    <StatusBadge value={row.target_path_status} />
+                    <div className="mt-1 max-w-xs text-xs text-slate-500">{row.target_path_reason}</div>
+                  </td>
+                  <td>{fmtNumber(row.target_path_support_center)} / {fmtSigned(row.support_clearance_to_target_r)}R</td>
+                  <td><StatusBadge value={row.four_hour_confluence_status} /></td>
+                  <td className="text-xs">
+                    {Object.entries(row.variant_membership)
+                      .filter(([, selected]) => selected)
+                      .map(([variant]) => variant.replaceAll("_", " "))
+                      .join(", ") || "None"}
+                  </td>
+                  <td><Link className="font-semibold text-primary hover:underline" href={row.detail_href}>Open</Link></td>
+                </tr>
+              ))}
+              {!data.case_rows.length ? (
+                <tr><td colSpan={10}><EmptyState title="No V2.1 cases" detail="Belum ada fixed-cohort signal untuk ditampilkan." /></td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </CollapsiblePanel>
+    </div>
+  );
+}
+
+function LabMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 bg-white p-4">
+      <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
+      <div className="mt-1 break-words text-xl font-bold text-ink">{value}</div>
+      <div className="mt-2 text-xs text-slate-500">{detail}</div>
+    </div>
+  );
+}
+
+function V21VariantTable({ rows }: { rows: MidShortV21StructureVariant[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th>Verdict</th>
+            <th>All retained</th>
+            <th>All fixed R</th>
+            <th>Train avg delta</th>
+            <th>Validation retained</th>
+            <th>Validation TP lost / SL avoided</th>
+            <th>Validation fixed R</th>
+            <th>Validation avg delta</th>
+            <th>Validation DD</th>
+            <th>Top symbol</th>
+            <th>Rule</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.variant_id}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.variant_id}</div>
+              </td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.all.entered_count}/{row.all.source_count} ({fmtNumber(row.all.retention_pct)}%)</td>
+              <td>{fmtSigned(row.all.fixed_total_realistic_r)}R</td>
+              <td>{fmtSigned(row.train.fixed_avg_r_delta_vs_baseline)}R</td>
+              <td>{row.validation.entered_closed_count}/{row.validation.source_closed_count}</td>
+              <td>{row.validation.tp_lost_count} / {row.validation.sl_avoided_count}</td>
+              <td>{fmtSigned(row.validation.fixed_total_realistic_r)}R</td>
+              <td>{fmtSigned(row.validation.fixed_avg_r_delta_vs_baseline)}R</td>
+              <td>{fmtSigned(row.validation.fixed_max_drawdown_r)}R</td>
+              <td>{row.validation.top_symbol || "-"} ({fmtNumber(row.validation.top_symbol_share_pct)}%)</td>
+              <td className="max-w-sm text-xs text-slate-600">{row.selection_rule}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function V21BucketTable({ rows }: { rows: MidShortStructureStateRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>All sample</th>
+            <th>TP / SL</th>
+            <th>Avg realistic R</th>
+            <th>Validation sample</th>
+            <th>Validation avg R</th>
+            <th>Top symbol</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.bucket}>
+              <td><StatusBadge value={row.bucket} /></td>
+              <td>{row.all.sample_count}</td>
+              <td>{row.all.tp_count} / {row.all.sl_count}</td>
+              <td>{fmtSigned(row.all.realistic_avg_r_closed)}R</td>
+              <td>{row.validation.sample_count}</td>
+              <td>{fmtSigned(row.validation.realistic_avg_r_closed)}R</td>
+              <td>{row.validation.top_symbol || "-"} ({fmtNumber(row.validation.top_symbol_share_pct)}%)</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

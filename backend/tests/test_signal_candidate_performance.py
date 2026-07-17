@@ -18,6 +18,9 @@ from app.services.signal_candidate_performance import (
     _lab56_detect_zones,
     _lab56_fixed_cohort_perf,
     _lab56_structure_context,
+    _lab59_target_path_context,
+    _lab59_variant_selected,
+    _mid_short_v21_structure_interaction_study,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
     _lab55_evaluate_confirmation_config,
@@ -2017,6 +2020,125 @@ def test_mid_short_lab56_fixed_cohort_keeps_filtered_rows_as_zero_r() -> None:
     assert result["tp_lost_count"] == 0
     assert result["fixed_total_realistic_r"] == Decimal("1.45")
     assert result["fixed_avg_realistic_r"] == Decimal("0.725")
+
+
+def test_lab59_target_path_uses_repeated_support_between_short_entry_and_target() -> None:
+    blocked = _lab59_target_path_context(
+        {
+            "entry": Decimal("100"),
+            "take_profit": Decimal("85"),
+            "risk": Decimal("10"),
+            "nearest_support": {"center": Decimal("90")},
+        }
+    )
+    clear = _lab59_target_path_context(
+        {
+            "entry": Decimal("100"),
+            "take_profit": Decimal("85"),
+            "risk": Decimal("10"),
+            "nearest_support": {"center": Decimal("80")},
+        }
+    )
+    unavailable = _lab59_target_path_context(
+        {
+            "entry": Decimal("100"),
+            "take_profit": Decimal("85"),
+            "risk": Decimal("10"),
+            "nearest_support": None,
+        }
+    )
+
+    assert blocked["target_path_status"] == "TARGET_PATH_BLOCKED"
+    assert blocked["support_clearance_to_target_r"] == Decimal("0.5")
+    assert clear["target_path_status"] == "TARGET_PATH_CLEAR"
+    assert clear["support_clearance_to_target_r"] == Decimal("-0.5")
+    assert unavailable["target_path_status"] == "TARGET_PATH_UNAVAILABLE"
+    assert _lab59_variant_selected(
+        {"structure_state": "1H_ZONE_UNAVAILABLE", "target_path_status": "TARGET_PATH_UNAVAILABLE"},
+        "PRIMARY_CONFLICT_VETO",
+    ) is True
+    assert _lab59_variant_selected(
+        {"structure_state": "1H_ZONE_UNAVAILABLE", "target_path_status": "TARGET_PATH_UNAVAILABLE"},
+        "TARGET_PATH_CLEAR",
+    ) is True
+
+
+def test_lab59_fixed_v21_variants_do_not_use_four_hour_context_as_gate() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+
+    def item(
+        signal_id: str,
+        offset: int,
+        status: str,
+        realized: str,
+        state: str,
+        support: str | None,
+        four_hour: str,
+    ) -> dict:
+        signal_time = start + timedelta(hours=offset)
+        return {
+            "signal_id": signal_id,
+            "symbol": f"{signal_id}USDT",
+            "signal_timestamp": signal_time,
+            "result_time_utc": signal_time + timedelta(hours=1),
+            "result_status": status,
+            "realized_r": Decimal(realized),
+            "realistic_realized_r": Decimal(realized),
+            "entry": Decimal("100"),
+            "stop_loss": Decimal("110"),
+            "take_profit": Decimal("85"),
+            "risk": Decimal("10"),
+            "_test_structure_state": state,
+            "_test_support": Decimal(support) if support is not None else None,
+            "_test_four_hour": four_hour,
+            "evidence_snapshot": {"kline_taker_sell_ratio": Decimal("0.55")},
+        }
+
+    source = [
+        item("CONFLICT", 0, "SL_HIT", "-1.05", "AT_1H_SUPPORT", "90", "NO_4H_CONFLUENCE"),
+        item("RESIST", 1, "TP_HIT", "1.45", "AT_1H_RESISTANCE", "80", "ALIGNED_WITH_4H_RESISTANCE"),
+        item("MISSING", 2, "SL_HIT", "-1.05", "1H_ZONE_UNAVAILABLE", None, "FOUR_H_CONTEXT_UNAVAILABLE"),
+        item("BREAK", 3, "TP_HIT", "1.45", "1H_SUPPORT_BREAK", "80", "CONFLICT_WITH_4H_SUPPORT"),
+    ]
+
+    def context(row: dict, **_kwargs) -> dict:
+        support = row["_test_support"]
+        return {
+            "structure_state": row["_test_structure_state"],
+            "structure_reason": "controlled",
+            "atr_1h_at_signal": Decimal("5") if support is not None else None,
+            "one_hour_history_count": 100 if support is not None else 0,
+            "zone_count_1h": 1 if support is not None else 0,
+            "nearest_support": {"center": support} if support is not None else None,
+            "nearest_resistance": None,
+            "nearest_support_distance_atr": Decimal("0.1") if support is not None else None,
+            "nearest_resistance_distance_atr": None,
+            "state_zone": None,
+            "four_hour_confluence_status": row["_test_four_hour"],
+            "four_hour_confluence_reason": "controlled",
+            "_lab56_zones": [],
+        }
+
+    with patch("app.services.signal_candidate_performance._lab56_structure_context", side_effect=context):
+        study = _mid_short_v21_structure_interaction_study(
+            source,
+            one_hour_candles={},
+            four_hour_candles={},
+            min_sample=1,
+            limit=10,
+        )
+
+    variants = {row["variant_id"]: row for row in study["variant_rows"]}
+    assert study["summary"]["fixed_cohort_count"] == 4
+    assert variants["V21_CONTROL"]["all"]["entered_count"] == 4
+    assert variants["PRIMARY_CONFLICT_VETO"]["all"]["entered_count"] == 3
+    assert variants["TARGET_PATH_CLEAR"]["all"]["entered_count"] == 3
+    assert variants["ALIGNED_AND_CLEAR"]["all"]["entered_count"] == 2
+    assert variants["ALIGNED_AND_CLEAR"]["all"]["tp_retained_count"] == 2
+    assert variants["ALIGNED_AND_CLEAR"]["selected_state_counts"]["1H_SUPPORT_BREAK"] == 1
+    break_case = next(row for row in study["case_rows"] if row["signal_id"] == "BREAK")
+    assert break_case["four_hour_confluence_status"] == "CONFLICT_WITH_4H_SUPPORT"
+    assert break_case["variant_membership"]["ALIGNED_AND_CLEAR"] is True
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:
