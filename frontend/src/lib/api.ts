@@ -1820,6 +1820,159 @@ export type MidShortSupportTargetCase = {
   support_cost_buffer: MidShortSupportTargetResult;
 };
 
+export type MidShortEntryConfirmationPerformance = {
+  source_count: number;
+  entered_count: number;
+  filtered_count: number;
+  missing_confirmation_count: number;
+  waiting_count: number;
+  evaluated_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_count: number;
+  neither_count: number;
+  total_realistic_r: string | number;
+  avg_realistic_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  max_drawdown_r: string | number;
+  sample_retention_pct?: string | number | null;
+  tp_share_pct_closed?: string | number | null;
+  sl_share_pct_closed?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidShortEntryConfirmationTradeoff = {
+  lost_tp_count: number;
+  avoided_sl_count: number;
+  retained_tp_count: number;
+  tp_to_sl_count: number;
+  sl_to_tp_count: number;
+  retained_sl_count: number;
+};
+
+export type MidShortEntryConfirmationVariant = {
+  config_id: string;
+  label: string;
+  definition: string;
+  all: MidShortEntryConfirmationPerformance;
+  train: MidShortEntryConfirmationPerformance;
+  validation: MidShortEntryConfirmationPerformance;
+  tradeoff_vs_control: {
+    all: MidShortEntryConfirmationTradeoff;
+    train: MidShortEntryConfirmationTradeoff;
+    validation: MidShortEntryConfirmationTradeoff;
+  };
+  train_avg_r_delta_vs_control?: string | number | null;
+  validation_avg_r_delta_vs_control?: string | number | null;
+  validation_total_r_delta_vs_control?: string | number | null;
+  validation_drawdown_delta_vs_control?: string | number | null;
+  verdict: string;
+};
+
+export type MidShortEntryConfirmationResult = {
+  status: string;
+  entered: boolean;
+  gate_reason: string;
+  entry_time_utc?: string | null;
+  entry_time_wib?: string | null;
+  entry?: string | number | null;
+  stop?: string | number | null;
+  target?: string | number | null;
+  realistic_r?: string | number | null;
+  result_time_utc?: string | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+};
+
+export type MidShortEntryConfirmationCase = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp: string;
+  signal_time_wib?: string | null;
+  logged_result_status: string;
+  failure_primary_cause?: string | null;
+  original_entry?: string | number | null;
+  original_stop?: string | number | null;
+  original_target?: string | number | null;
+  original_risk?: string | number | null;
+  original_rr?: string | number | null;
+  confirmation_time_utc?: string | null;
+  confirmation_time_wib?: string | null;
+  confirmation_open?: string | number | null;
+  confirmation_high?: string | number | null;
+  confirmation_low?: string | number | null;
+  confirmation_close?: string | number | null;
+  confirmation_return_pct?: string | number | null;
+  confirmation_return_bucket: string;
+  confirmation_taker_sell_ratio?: string | number | null;
+  results: Record<string, MidShortEntryConfirmationResult>;
+};
+
+export type MidShortEntryConfirmationResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    base_filter_id: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_id: string;
+  study_scope: string;
+  method: string;
+  evaluation_horizon: string;
+  definitions: Record<string, string>;
+  latest_evaluation_candle_time?: string | null;
+  skipped_by_position_lock: Record<string, number>;
+  summary: {
+    source_count: number;
+    train_count: number;
+    validation_count: number;
+    validation_cutoff_utc?: string | null;
+    confirmation_available_count: number;
+    immediate_reversal_count: number;
+    direction_confirmed_count: number;
+    best_validation_config_id?: string | null;
+    best_validation_avg_realistic_r?: string | number | null;
+    best_validation_total_realistic_r?: string | number | null;
+    best_validation_avoided_sl_count: number;
+    best_validation_lost_tp_count: number;
+    verdict: string;
+    recommended_action: string;
+  };
+  control: {
+    all: MidShortEntryConfirmationPerformance;
+    train: MidShortEntryConfirmationPerformance;
+    validation: MidShortEntryConfirmationPerformance;
+  };
+  variant_rows: MidShortEntryConfirmationVariant[];
+  confirmation_bucket_rows: Array<{
+    bucket: string;
+    sample_count: number;
+    wrong_direction_1h_count: number;
+    logged_tp_count: number;
+    logged_sl_count: number;
+    control_4h_tp_count: number;
+    control_4h_sl_count: number;
+    control_4h_neither_count: number;
+    control_4h_avg_realistic_r?: string | number | null;
+    read: string;
+  }>;
+  case_rows: MidShortEntryConfirmationCase[];
+  limitations: string[];
+  guardrails: string[];
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;

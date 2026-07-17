@@ -18,6 +18,27 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-17",
+    version: "LAB-55",
+    title: "MID_SHORT 1h Entry Confirmation Shadow",
+    status: "LIVE",
+    area: "Signal research diagnostics",
+    summary: "Menguji dampak menunggu satu candle futures 15m closed sebelum entry MID_SHORT 1h tanpa mengubah Signal Factory live.",
+    changes: [
+      "Fixed cohort SHADOW_PASS + taker sell >= 52% dibandingkan pada immediate control, delay-only, veto reversal +0.05%, confirmation close below entry, dan confirmation direction + taker sell.",
+      "Entry delayed memakai close candle konfirmasi; stop dan target digeser dengan absolute risk serta RR logged yang sama, lalu biaya realistis dihitung ulang.",
+      "Evaluator dimulai dari candle setelah konfirmasi sehingga high/low candle konfirmasi tidak dapat dipakai sebagai hasil TP/SL setelah entry.",
+      "Laporan menampilkan train/validation, realistic R, drawdown, TP yang hilang, SL yang terhindar, transition outcome, bucket candle pertama, dan full ledger.",
+      "Patch ini tidak mengubah Signal Factory, scanner, entry live, TP/SL live, threshold, outcome logger, atau execution."
+    ],
+    impact: "Kita dapat mengukur apakah confirmation delay benar-benar memperbaiki salah arah atau hanya membuang TP dan memperburuk harga entry.",
+    links: [
+      { href: "/mid-short-entry-confirmation-study", label: "Entry Confirmation Study" },
+      { href: "/mid-short-failure-anatomy", label: "Failure Anatomy" },
+      { href: "/mid-short-wrong-direction-deep-dive", label: "Wrong Direction" }
+    ]
+  },
+  {
     date: "2026-07-16",
     version: "LAB-54",
     title: "MID_SHORT 1h Structure-Aware Target Shadow",

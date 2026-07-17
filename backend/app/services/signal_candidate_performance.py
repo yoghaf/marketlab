@@ -464,7 +464,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -604,7 +604,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -678,7 +678,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -777,7 +777,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -893,6 +893,73 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_entry_confirmation_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status, candles = (
+            self._mid_short_1h_anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                shadow_status="SHADOW_PASS",
+            )
+        )
+        taker_scope = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        study = _mid_short_entry_confirmation_shadow_study(
+            taker_scope,
+            candles=candles,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_entry_confirmation_shadow_study",
+            "study_scope": "read_only_mid_short_1h_15m_entry_confirmation",
+            "source_table": "signal_forward_return_logs + futures_klines_15m",
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": (
+                    "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS "
+                    "AND kline_taker_sell_ratio >= 0.52"
+                ),
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            **study,
+            "guardrails": [
+                "LAB-55 is a fixed-cohort shadow study and does not alter Signal Factory or scanner output.",
+                "The confirmation candle must close before a delayed entry can exist.",
+                "Delayed TP/SL evaluation starts from the candle after confirmation; confirmation high/low is never reused.",
+                "The original risk distance and RR are preserved, while entry, stop, target, and realistic cost are recalculated.",
+                "Position lock selects the source cohort once and is not re-optimized per confirmation variant.",
+                "No threshold, live signal, order, execution, leverage, or position sizing is changed.",
+            ],
+        }
+
     def mid_short_1h_volume_safe_shadow(
         self,
         *,
@@ -902,7 +969,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -1019,7 +1086,7 @@ class SignalCandidatePerformanceService:
         min_sample: int = 20,
         limit: int = 50,
     ) -> dict[str, Any]:
-        annotated, skipped, latest_candle_time, normalized_shadow_status = self._mid_short_1h_anatomy_dataset(
+        annotated, skipped, latest_candle_time, normalized_shadow_status, _candles = self._mid_short_1h_anatomy_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
             position_lock=position_lock,
@@ -1273,7 +1340,13 @@ class SignalCandidatePerformanceService:
         position_lock: bool,
         shadow_status: str,
         include_target_distance_context: bool = False,
-    ) -> tuple[list[dict[str, Any]], Counter[str], datetime | None, str]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        Counter[str],
+        datetime | None,
+        str,
+        dict[str, list[PerfCandle]],
+    ]:
         signals = self._load_signals(
             epoch=epoch,
             include_watch_only=include_watch_only,
@@ -1342,6 +1415,7 @@ class SignalCandidatePerformanceService:
             skipped,
             latest_candle_time,
             normalized_shadow_status,
+            candles,
         )
 
     def forward_integrity(
@@ -4853,6 +4927,36 @@ LAB54_TARGET_SPECS = (
 
 LAB54_SUPPORT_CONFIG_IDS = frozenset({"SUPPORT_TOUCH", "SUPPORT_COST_BUFFER"})
 
+LAB55_CONFIRMATION_SPECS = (
+    (
+        "CONTROL_IMMEDIATE",
+        "Immediate entry control",
+        "Enter at the logged signal close with logged stop and target.",
+    ),
+    (
+        "WAIT_15M_ALWAYS",
+        "Wait one closed 15m candle",
+        "Always enter at the first closed 15m confirmation price.",
+    ),
+    (
+        "VETO_UP_REVERSAL_0_05",
+        "Wait 15m and veto +0.05% reversal",
+        "Enter unless the confirmation close is at least 0.05% above the signal entry.",
+    ),
+    (
+        "CONFIRM_CLOSE_BELOW_ENTRY",
+        "Confirm close below signal entry",
+        "Enter only when the confirmation close is below the original signal entry.",
+    ),
+    (
+        "CONFIRM_BELOW_ENTRY_TAKER_SELL_52",
+        "Confirm direction and taker sell",
+        "Enter only when confirmation closes below signal entry and taker sell is at least 52%.",
+    ),
+)
+
+LAB55_LOSS_STATUSES = frozenset({"SL_HIT", "BOTH_HIT_SAME_CANDLE"})
+
 
 LAB52_ITEM_ONLY_FIELDS = frozenset(
     {
@@ -6250,6 +6354,595 @@ def _lab54_recommended_action(verdict: str) -> str:
             "Do not promote support-aware targets; continue the wrong-direction and entry-timing investigation."
         ),
     }.get(verdict, "Keep the current live target frozen.")
+
+
+def _mid_short_entry_confirmation_shadow_study(
+    items: list[dict[str, Any]],
+    *,
+    candles: dict[str, list[PerfCandle]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(items)
+    train_keys = {_lab55_item_key(item) for item in train}
+    validation_keys = {_lab55_item_key(item) for item in validation}
+    results_by_config: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+    for config_id, _label, _definition in LAB55_CONFIRMATION_SPECS:
+        results_by_config[config_id] = {
+            _lab55_item_key(item): _lab55_evaluate_confirmation_config(
+                item,
+                candles=candles.get(str(item.get("symbol") or ""), []),
+                config_id=config_id,
+            )
+            for item in ordered
+        }
+
+    def pairs_for(config_id: str, keys: set[tuple[str, str]] | None = None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        output: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        for item in ordered:
+            key = _lab55_item_key(item)
+            if keys is not None and key not in keys:
+                continue
+            output.append((item, results_by_config[config_id][key]))
+        return output
+
+    control_id = "CONTROL_IMMEDIATE"
+    control_pairs = {
+        "all": pairs_for(control_id),
+        "train": pairs_for(control_id, train_keys),
+        "validation": pairs_for(control_id, validation_keys),
+    }
+    control = {split: _lab55_confirmation_performance(rows) for split, rows in control_pairs.items()}
+    variant_rows: list[dict[str, Any]] = []
+    for config_id, label, definition in LAB55_CONFIRMATION_SPECS:
+        split_pairs = {
+            "all": pairs_for(config_id),
+            "train": pairs_for(config_id, train_keys),
+            "validation": pairs_for(config_id, validation_keys),
+        }
+        perf = {split: _lab55_confirmation_performance(rows) for split, rows in split_pairs.items()}
+        tradeoff = {
+            split: _lab55_confirmation_tradeoff(control_pairs[split], rows)
+            for split, rows in split_pairs.items()
+        }
+        row = {
+            "config_id": config_id,
+            "label": label,
+            "definition": definition,
+            **perf,
+            "tradeoff_vs_control": tradeoff,
+            "train_avg_r_delta_vs_control": _decimal_delta(
+                perf["train"].get("avg_realistic_r"),
+                control["train"].get("avg_realistic_r"),
+            ),
+            "validation_avg_r_delta_vs_control": _decimal_delta(
+                perf["validation"].get("avg_realistic_r"),
+                control["validation"].get("avg_realistic_r"),
+            ),
+            "validation_total_r_delta_vs_control": _decimal_delta(
+                perf["validation"].get("total_realistic_r"),
+                control["validation"].get("total_realistic_r"),
+            ),
+            "validation_drawdown_delta_vs_control": _decimal_delta(
+                perf["validation"].get("max_drawdown_r"),
+                control["validation"].get("max_drawdown_r"),
+            ),
+        }
+        row["verdict"] = _lab55_confirmation_variant_verdict(
+            row,
+            control=control,
+            min_sample=min_sample,
+        )
+        variant_rows.append(row)
+
+    comparable = [
+        row
+        for row in variant_rows
+        if row["config_id"] != control_id and row["validation"].get("avg_realistic_r") is not None
+    ]
+    best = max(comparable, key=lambda row: Decimal(row["validation"]["avg_realistic_r"])) if comparable else None
+    control_results = results_by_config[control_id]
+    verdict = _lab55_confirmation_study_verdict(best)
+    return {
+        "study_id": "LAB_55_15M_ENTRY_CONFIRMATION_SHADOW",
+        "evaluation_horizon": "4h from each simulated entry using closed futures candles",
+        "method": (
+            "The source cohort is fixed before any variant is evaluated. Delayed variants wait for the first complete "
+            "15m futures candle after the 1h signal, enter at its close, preserve the logged absolute risk and RR, "
+            "shift stop/target around the new entry, and evaluate only subsequent candles."
+        ),
+        "definitions": {
+            config_id: definition for config_id, _label, definition in LAB55_CONFIRMATION_SPECS
+        },
+        "summary": {
+            "source_count": len(ordered),
+            "train_count": len(train),
+            "validation_count": len(validation),
+            "validation_cutoff_utc": validation_cutoff,
+            "confirmation_available_count": sum(
+                1 for result in control_results.values() if result.get("confirmation_time_utc") is not None
+            ),
+            "immediate_reversal_count": sum(
+                1
+                for result in control_results.values()
+                if _decimal_or_none_any(result.get("confirmation_return_pct")) is not None
+                and Decimal(result["confirmation_return_pct"]) >= Decimal("0.05")
+            ),
+            "direction_confirmed_count": sum(
+                1
+                for result in control_results.values()
+                if _decimal_or_none_any(result.get("confirmation_return_pct")) is not None
+                and Decimal(result["confirmation_return_pct"]) < 0
+            ),
+            "best_validation_config_id": best.get("config_id") if best else None,
+            "best_validation_avg_realistic_r": best["validation"].get("avg_realistic_r") if best else None,
+            "best_validation_total_realistic_r": best["validation"].get("total_realistic_r") if best else None,
+            "best_validation_avoided_sl_count": (
+                best["tradeoff_vs_control"]["validation"].get("avoided_sl_count") if best else 0
+            ),
+            "best_validation_lost_tp_count": (
+                best["tradeoff_vs_control"]["validation"].get("lost_tp_count") if best else 0
+            ),
+            "verdict": verdict,
+            "recommended_action": _lab55_confirmation_recommended_action(verdict),
+        },
+        "control": control,
+        "variant_rows": variant_rows,
+        "confirmation_bucket_rows": _lab55_confirmation_bucket_rows(
+            ordered,
+            control_results=control_results,
+        ),
+        "case_rows": _lab55_confirmation_case_rows(
+            ordered,
+            results_by_config=results_by_config,
+            limit=limit,
+        ),
+        "limitations": [
+            "The +0.05% veto and 52% taker threshold are sensitivity references already used by prior diagnostics, not new live rules.",
+            "Waiting changes the entry price; therefore every delayed stop, target, and realistic R is recalculated instead of reusing the logged outcome.",
+            "A filtered historical TP is counted as lost even if another later setup might have appeared; this study does not invent replacement entries.",
+            "The four-hour horizon is fixed per simulated entry. Unfinished paths remain WAITING_4H and contribute no R.",
+            "OHLC cannot resolve intrabar order when stop and target hit in one candle, so the result stays conservative.",
+            "One chronological checkpoint is not sufficient to promote a confirmation gate into Signal Factory.",
+        ],
+    }
+
+
+def _lab55_item_key(item: dict[str, Any]) -> tuple[str, str]:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    return str(item.get("signal_id") or ""), signal_time.isoformat() if signal_time is not None else ""
+
+
+def _lab55_confirmation_context(
+    item: dict[str, Any],
+    candles: list[PerfCandle],
+) -> tuple[PerfCandle | None, Decimal | None, Decimal | None]:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    entry = _decimal_or_none_any(item.get("entry"))
+    if signal_time is None or entry is None or entry <= 0:
+        return None, None, None
+    confirmation = next(
+        (
+            candle
+            for candle in sorted(candles, key=lambda row: row.open_time)
+            if candle.source_interval == "15m"
+            and candle.open_time >= signal_time
+            and candle.open_time < signal_time + timedelta(minutes=15)
+        ),
+        None,
+    )
+    if confirmation is None:
+        return None, None, None
+    return_pct = (confirmation.close - entry) / entry * Decimal("100")
+    buy = confirmation.taker_buy_base_volume
+    sell = confirmation.taker_sell_base_volume
+    taker_sell_ratio = sell / (buy + sell) if buy is not None and sell is not None and buy + sell > 0 else None
+    return confirmation, return_pct, taker_sell_ratio
+
+
+def _lab55_confirmation_gate(
+    config_id: str,
+    *,
+    return_pct: Decimal | None,
+    taker_sell_ratio: Decimal | None,
+) -> tuple[bool, str]:
+    if config_id == "WAIT_15M_ALWAYS":
+        return True, "Confirmation candle closed; delay-only variant enters."
+    if return_pct is None:
+        return False, "Confirmation return is unavailable."
+    if config_id == "VETO_UP_REVERSAL_0_05":
+        passed = return_pct < Decimal("0.05")
+        return passed, "No +0.05% upward reversal." if passed else "Confirmation reversed upward by at least 0.05%."
+    if config_id == "CONFIRM_CLOSE_BELOW_ENTRY":
+        passed = return_pct < 0
+        return passed, "Confirmation closed below signal entry." if passed else "Confirmation did not close below signal entry."
+    if config_id == "CONFIRM_BELOW_ENTRY_TAKER_SELL_52":
+        if taker_sell_ratio is None:
+            return False, "Confirmation taker split is unavailable."
+        passed = return_pct < 0 and taker_sell_ratio >= Decimal("0.52")
+        return (
+            passed,
+            "Direction and taker-sell confirmation passed."
+            if passed
+            else "Direction or confirmation taker-sell threshold did not pass.",
+        )
+    return False, "Unknown confirmation configuration."
+
+
+def _lab55_evaluate_confirmation_config(
+    item: dict[str, Any],
+    *,
+    candles: list[PerfCandle],
+    config_id: str,
+) -> dict[str, Any]:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    original_entry = _decimal_or_none_any(item.get("entry"))
+    original_stop = _decimal_or_none_any(item.get("stop_loss"))
+    original_target = _decimal_or_none_any(item.get("take_profit"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    rr = _decimal_or_none_any(item.get("rr"))
+    if rr is None and None not in (original_entry, original_target, risk) and risk != 0:
+        rr = abs(Decimal(original_target) - Decimal(original_entry)) / Decimal(risk)
+    confirmation, return_pct, taker_sell_ratio = _lab55_confirmation_context(item, candles)
+    confirmation_fields = {
+        "confirmation_time_utc": confirmation.close_time if confirmation is not None else None,
+        "confirmation_time_wib": _wib_string(confirmation.close_time) if confirmation is not None else None,
+        "confirmation_open": confirmation.open if confirmation is not None else None,
+        "confirmation_high": confirmation.high if confirmation is not None else None,
+        "confirmation_low": confirmation.low if confirmation is not None else None,
+        "confirmation_close": confirmation.close if confirmation is not None else None,
+        "confirmation_return_pct": return_pct,
+        "confirmation_return_bucket": _mid_short_first_return_bucket(return_pct),
+        "confirmation_taker_sell_ratio": taker_sell_ratio,
+    }
+    if signal_time is None or original_entry is None or original_stop is None or original_target is None or risk is None or risk <= 0 or rr is None:
+        return {
+            **confirmation_fields,
+            "status": "MISSING_CONTEXT",
+            "entered": False,
+            "gate_reason": "Signal entry, risk, target, or timestamp is unavailable.",
+            "realistic_r": None,
+        }
+
+    if config_id == "CONTROL_IMMEDIATE":
+        entry_time = signal_time
+        entry = original_entry
+        stop = original_stop
+        target = original_target
+        gate_reason = "Immediate control uses the logged signal entry."
+    else:
+        if confirmation is None:
+            return {
+                **confirmation_fields,
+                "status": "MISSING_CONFIRMATION",
+                "entered": False,
+                "gate_reason": "The first closed 15m candle after signal is unavailable.",
+                "realistic_r": None,
+            }
+        passed, gate_reason = _lab55_confirmation_gate(
+            config_id,
+            return_pct=return_pct,
+            taker_sell_ratio=taker_sell_ratio,
+        )
+        if not passed:
+            return {
+                **confirmation_fields,
+                "status": "FILTERED_NO_ENTRY",
+                "entered": False,
+                "gate_reason": gate_reason,
+                "realistic_r": None,
+            }
+        entry_time = confirmation.close_time
+        entry = confirmation.close
+        stop = entry + risk
+        target = entry - (risk * rr)
+
+    ordered = sorted(candles, key=lambda candle: candle.open_time)
+    future = [
+        candle
+        for candle in ordered
+        if candle.open_time >= entry_time and candle.close_time <= entry_time + timedelta(hours=4)
+    ]
+    evidence = item.get("evidence_snapshot") if isinstance(item.get("evidence_snapshot"), dict) else {}
+    assumptions = _realistic_assumptions(entry=entry, risk=risk, evidence_snapshot=evidence)
+    shadow_item = {
+        **item,
+        **assumptions,
+        "signal_timestamp": entry_time,
+        "entry": entry,
+        "stop_loss": stop,
+        "take_profit": target,
+        "risk": risk,
+        "rr": rr,
+    }
+    result = _mid_short_counterfactual_exit(
+        shadow_item,
+        candles=[],
+        risk_scale=Decimal("1"),
+        target_rr=None,
+        protect_at_r=None,
+        use_logged_target=True,
+        prepared_future_4h=future,
+        require_complete_horizon_for_neither=True,
+    )
+    return {
+        **confirmation_fields,
+        **result,
+        "entered": True,
+        "entry_time_utc": entry_time,
+        "entry_time_wib": _wib_string(entry_time),
+        "gate_reason": gate_reason,
+        "rr": rr,
+    }
+
+
+def _lab55_confirmation_performance(
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, Any]:
+    status_counts = Counter(str(result.get("status") or "UNKNOWN") for _item, result in pairs)
+    evaluated = [(item, result) for item, result in pairs if result.get("realistic_r") is not None]
+    values = [Decimal(result["realistic_r"]) for _item, result in evaluated]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    symbol_counts = Counter(str(item.get("symbol") or "") for item, _result in evaluated)
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    closed_count = (
+        status_counts.get("TP_HIT", 0)
+        + status_counts.get("SL_HIT", 0)
+        + status_counts.get("BOTH_HIT_SAME_CANDLE", 0)
+    )
+    entered_count = sum(1 for _item, result in pairs if result.get("entered"))
+    return {
+        "source_count": len(pairs),
+        "entered_count": entered_count,
+        "filtered_count": status_counts.get("FILTERED_NO_ENTRY", 0),
+        "missing_confirmation_count": status_counts.get("MISSING_CONFIRMATION", 0),
+        "waiting_count": status_counts.get("WAITING_4H", 0),
+        "evaluated_count": len(evaluated),
+        "closed_count": closed_count,
+        "tp_count": status_counts.get("TP_HIT", 0),
+        "sl_count": status_counts.get("SL_HIT", 0),
+        "both_count": status_counts.get("BOTH_HIT_SAME_CANDLE", 0),
+        "neither_count": status_counts.get("NEITHER_4H", 0),
+        "total_realistic_r": sum(values, Decimal("0")),
+        "avg_realistic_r": _avg_decimal(values),
+        "median_realistic_r": _percentile_decimal(values, Decimal("0.50")),
+        "max_drawdown_r": max_drawdown,
+        "sample_retention_pct": Decimal(entered_count) / Decimal(len(pairs)) * Decimal("100") if pairs else None,
+        "tp_share_pct_closed": (
+            Decimal(status_counts.get("TP_HIT", 0)) / Decimal(closed_count) * Decimal("100") if closed_count else None
+        ),
+        "sl_share_pct_closed": (
+            Decimal(status_counts.get("SL_HIT", 0) + status_counts.get("BOTH_HIT_SAME_CANDLE", 0))
+            / Decimal(closed_count)
+            * Decimal("100")
+            if closed_count
+            else None
+        ),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(evaluated)) * Decimal("100") if evaluated else None,
+    }
+
+
+def _lab55_confirmation_tradeoff(
+    control_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+    variant_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, int]:
+    control_by_key = {_lab55_item_key(item): result for item, result in control_pairs}
+    counts: Counter[str] = Counter()
+    for item, variant in variant_pairs:
+        control = control_by_key.get(_lab55_item_key(item), {})
+        control_status = str(control.get("status") or "")
+        variant_status = str(variant.get("status") or "")
+        filtered = variant_status == "FILTERED_NO_ENTRY"
+        if control_status == "TP_HIT" and filtered:
+            counts["lost_tp_count"] += 1
+        if control_status in LAB55_LOSS_STATUSES and filtered:
+            counts["avoided_sl_count"] += 1
+        if control_status == "TP_HIT" and variant_status == "TP_HIT":
+            counts["retained_tp_count"] += 1
+        if control_status == "TP_HIT" and variant_status in LAB55_LOSS_STATUSES:
+            counts["tp_to_sl_count"] += 1
+        if control_status in LAB55_LOSS_STATUSES and variant_status == "TP_HIT":
+            counts["sl_to_tp_count"] += 1
+        if control_status in LAB55_LOSS_STATUSES and variant_status in LAB55_LOSS_STATUSES:
+            counts["retained_sl_count"] += 1
+    return {
+        "lost_tp_count": counts["lost_tp_count"],
+        "avoided_sl_count": counts["avoided_sl_count"],
+        "retained_tp_count": counts["retained_tp_count"],
+        "tp_to_sl_count": counts["tp_to_sl_count"],
+        "sl_to_tp_count": counts["sl_to_tp_count"],
+        "retained_sl_count": counts["retained_sl_count"],
+    }
+
+
+def _lab55_confirmation_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    control_results: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    bucket_order = ("UP_STRONG", "UP", "FLAT", "DOWN", "DOWN_STRONG", "MISSING_FORWARD_DATA")
+    output: list[dict[str, Any]] = []
+    for bucket in bucket_order:
+        rows = [
+            (item, control_results[_lab55_item_key(item)])
+            for item in items
+            if control_results[_lab55_item_key(item)].get("confirmation_return_bucket") == bucket
+        ]
+        if not rows:
+            continue
+        perf = _lab55_confirmation_performance(rows)
+        output.append(
+            {
+                "bucket": bucket,
+                "sample_count": len(rows),
+                "wrong_direction_1h_count": sum(
+                    1 for item, _result in rows if item.get("direction_1h") == "WRONG_DIRECTION"
+                ),
+                "logged_tp_count": sum(1 for item, _result in rows if item.get("result_status") == "TP_HIT"),
+                "logged_sl_count": sum(1 for item, _result in rows if item.get("result_status") == "SL_HIT"),
+                "control_4h_tp_count": perf["tp_count"],
+                "control_4h_sl_count": perf["sl_count"] + perf["both_count"],
+                "control_4h_neither_count": perf["neither_count"],
+                "control_4h_avg_realistic_r": perf["avg_realistic_r"],
+                "read": _lab55_confirmation_bucket_read(bucket, perf),
+            }
+        )
+    return output
+
+
+def _lab55_confirmation_bucket_read(bucket: str, perf: dict[str, Any]) -> str:
+    if int(perf.get("evaluated_count") or 0) < 10:
+        return "SMALL_SAMPLE"
+    if bucket in {"UP_STRONG", "UP"} and int(perf.get("sl_count") or 0) + int(perf.get("both_count") or 0) > int(perf.get("tp_count") or 0):
+        return "UPWARD_CONFIRMATION_LOSS_HEAVY"
+    if bucket in {"DOWN", "DOWN_STRONG"} and int(perf.get("tp_count") or 0) > int(perf.get("sl_count") or 0) + int(perf.get("both_count") or 0):
+        return "SHORT_CONFIRMATION_HEALTHIER"
+    return "MIXED_PATH"
+
+
+def _lab55_confirmation_case_rows(
+    items: list[dict[str, Any]],
+    *,
+    results_by_config: dict[str, dict[tuple[str, str], dict[str, Any]]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for item in sorted(
+        items,
+        key=lambda row: (_parse_dt(row.get("signal_timestamp")) or datetime.min, str(row.get("symbol") or "")),
+        reverse=True,
+    )[:limit]:
+        key = _lab55_item_key(item)
+        control = results_by_config["CONTROL_IMMEDIATE"][key]
+        output.append(
+            {
+                "signal_id": item.get("signal_id"),
+                "symbol": item.get("symbol"),
+                "signal_timestamp": item.get("signal_timestamp"),
+                "signal_time_wib": item.get("signal_time_wib"),
+                "logged_result_status": item.get("result_status"),
+                "failure_primary_cause": item.get("failure_primary_cause"),
+                "original_entry": item.get("entry"),
+                "original_stop": item.get("stop_loss"),
+                "original_target": item.get("take_profit"),
+                "original_risk": item.get("risk"),
+                "original_rr": item.get("rr"),
+                "confirmation_time_utc": control.get("confirmation_time_utc"),
+                "confirmation_time_wib": control.get("confirmation_time_wib"),
+                "confirmation_open": control.get("confirmation_open"),
+                "confirmation_high": control.get("confirmation_high"),
+                "confirmation_low": control.get("confirmation_low"),
+                "confirmation_close": control.get("confirmation_close"),
+                "confirmation_return_pct": control.get("confirmation_return_pct"),
+                "confirmation_return_bucket": control.get("confirmation_return_bucket"),
+                "confirmation_taker_sell_ratio": control.get("confirmation_taker_sell_ratio"),
+                "results": {
+                    config_id: _lab55_case_result(results[key])
+                    for config_id, results in results_by_config.items()
+                },
+            }
+        )
+    return output
+
+
+def _lab55_case_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": result.get("status"),
+        "entered": result.get("entered"),
+        "gate_reason": result.get("gate_reason"),
+        "entry_time_utc": result.get("entry_time_utc"),
+        "entry_time_wib": result.get("entry_time_wib"),
+        "entry": result.get("entry"),
+        "stop": result.get("stop"),
+        "target": result.get("target"),
+        "realistic_r": result.get("realistic_r"),
+        "result_time_utc": result.get("result_time_utc"),
+        "mfe_r": result.get("mfe_r"),
+        "mae_r": result.get("mae_r"),
+    }
+
+
+def _lab55_confirmation_variant_verdict(
+    row: dict[str, Any],
+    *,
+    control: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> str:
+    if row.get("config_id") == "CONTROL_IMMEDIATE":
+        return "CURRENT_CONTROL"
+    train = row["train"]
+    validation = row["validation"]
+    if (
+        int(train.get("evaluated_count") or 0) < max(10, min_sample)
+        or int(validation.get("evaluated_count") or 0) < max(10, min_sample // 2)
+    ):
+        return "CONFIRMATION_NEEDS_MORE_SAMPLE"
+    train_delta = _decimal_delta(train.get("avg_realistic_r"), control["train"].get("avg_realistic_r"))
+    validation_delta = _decimal_delta(
+        validation.get("avg_realistic_r"),
+        control["validation"].get("avg_realistic_r"),
+    )
+    drawdown_delta = _decimal_delta(
+        validation.get("max_drawdown_r"),
+        control["validation"].get("max_drawdown_r"),
+    )
+    if (
+        train_delta is not None
+        and train_delta > 0
+        and validation_delta is not None
+        and validation_delta > 0
+        and Decimal(validation.get("total_realistic_r") or 0) > 0
+        and (drawdown_delta is None or drawdown_delta >= 0)
+    ):
+        return "CONFIRMATION_VALIDATION_IMPROVES"
+    if validation_delta is not None and validation_delta > 0:
+        return "CONFIRMATION_REDUCES_DAMAGE_ONLY"
+    if train_delta is not None and train_delta > 0:
+        return "CONFIRMATION_TRAIN_ONLY"
+    return "CONFIRMATION_NO_IMPROVEMENT"
+
+
+def _lab55_confirmation_study_verdict(best: dict[str, Any] | None) -> str:
+    if best is None:
+        return "CONFIRMATION_NEEDS_MORE_SAMPLE"
+    verdict = str(best.get("verdict") or "")
+    if verdict == "CONFIRMATION_VALIDATION_IMPROVES":
+        return "CONFIRMATION_VALIDATION_IMPROVES"
+    if verdict == "CONFIRMATION_REDUCES_DAMAGE_ONLY":
+        return "CONFIRMATION_REDUCES_DAMAGE_ONLY"
+    if verdict == "CONFIRMATION_TRAIN_ONLY":
+        return "CONFIRMATION_TRAIN_ONLY"
+    if verdict == "CONFIRMATION_NEEDS_MORE_SAMPLE":
+        return "CONFIRMATION_NEEDS_MORE_SAMPLE"
+    return "CONFIRMATION_NO_CLEAR_GAIN"
+
+
+def _lab55_confirmation_recommended_action(verdict: str) -> str:
+    return {
+        "CONFIRMATION_VALIDATION_IMPROVES": (
+            "Keep the best confirmation variant in shadow for another forward checkpoint; do not change live entry yet."
+        ),
+        "CONFIRMATION_REDUCES_DAMAGE_ONLY": (
+            "Monitor more samples; the confirmation reduces some damage but does not yet justify a rule change."
+        ),
+        "CONFIRMATION_TRAIN_ONLY": (
+            "Do not promote. The apparent improvement did not hold in chronological validation."
+        ),
+        "CONFIRMATION_NEEDS_MORE_SAMPLE": (
+            "Collect more completed four-hour paths before judging delayed entry."
+        ),
+        "CONFIRMATION_NO_CLEAR_GAIN": (
+            "Keep immediate entry unchanged; current confirmation variants do not improve validation."
+        ),
+    }.get(verdict, "Keep Signal Factory entry logic frozen.")
 
 
 def _lab52_data_derived_thresholds(tp_items: list[dict[str, Any]]) -> dict[str, Any]:

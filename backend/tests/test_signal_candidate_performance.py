@@ -14,6 +14,8 @@ from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
+    _lab55_evaluate_confirmation_config,
+    _mid_short_entry_confirmation_shadow_study,
     _mid_short_support_target_shadow_study,
     _mid_short_structure_clearance_shadow_study,
     _mid_short_support_context,
@@ -1579,6 +1581,117 @@ def test_mid_short_lab54_support_target_study_requires_train_and_validation_impr
     assert support_row["validation"]["tp_count"] == 12
     assert support_row["validation_avg_r_delta_vs_control"] == Decimal("1.77")
     assert len(study["case_rows"]) == 40
+
+
+def test_mid_short_lab55_delayed_entry_does_not_reuse_confirmation_high_low() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_id": "lab55-no-lookahead",
+        "symbol": "TESTUSDT",
+        "signal_timestamp": signal_time,
+        "signal_time_wib": "2026-01-01 07:00:00 WIB",
+        "entry": Decimal("100"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "risk": Decimal("10"),
+        "rr": Decimal("1.5"),
+        "evidence_snapshot": {"futures_spread_pct": Decimal("0.02")},
+    }
+    candles = [
+        PerfCandle(
+            open_time=signal_time,
+            close_time=signal_time + timedelta(minutes=15),
+            open=Decimal("100"),
+            high=Decimal("111"),
+            low=Decimal("98"),
+            close=Decimal("99"),
+            taker_buy_base_volume=Decimal("45"),
+            taker_sell_base_volume=Decimal("55"),
+        ),
+        PerfCandle(
+            open_time=signal_time + timedelta(minutes=15),
+            close_time=signal_time + timedelta(minutes=30),
+            open=Decimal("99"),
+            high=Decimal("100"),
+            low=Decimal("83"),
+            close=Decimal("85"),
+        ),
+    ]
+
+    control = _lab55_evaluate_confirmation_config(item, candles=candles, config_id="CONTROL_IMMEDIATE")
+    delayed = _lab55_evaluate_confirmation_config(item, candles=candles, config_id="WAIT_15M_ALWAYS")
+
+    assert control["status"] == "SL_HIT"
+    assert delayed["status"] == "TP_HIT"
+    assert delayed["entry"] == Decimal("99")
+    assert delayed["stop"] == Decimal("109")
+    assert delayed["target"] == Decimal("84.0")
+    assert delayed["entry_time_utc"] == signal_time + timedelta(minutes=15)
+
+
+def test_mid_short_lab55_reports_tp_lost_and_sl_avoided_by_confirmation_veto() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+
+    def item(signal_id: str, symbol: str) -> dict:
+        return {
+            "signal_id": signal_id,
+            "symbol": symbol,
+            "signal_timestamp": signal_time,
+            "signal_time_wib": "2026-01-01 07:00:00 WIB",
+            "entry": Decimal("100"),
+            "stop_loss": Decimal("110"),
+            "take_profit": Decimal("85"),
+            "risk": Decimal("10"),
+            "rr": Decimal("1.5"),
+            "result_status": "SL_HIT" if symbol == "LOSSUSDT" else "TP_HIT",
+            "direction_1h": "WRONG_DIRECTION" if symbol == "LOSSUSDT" else "CORRECT_DIRECTION",
+            "evidence_snapshot": {"futures_spread_pct": Decimal("0.02")},
+        }
+
+    candles = {
+        "LOSSUSDT": [
+            PerfCandle(
+                open_time=signal_time,
+                close_time=signal_time + timedelta(minutes=15),
+                open=Decimal("100"),
+                high=Decimal("111"),
+                low=Decimal("99"),
+                close=Decimal("101"),
+            )
+        ],
+        "WINUSDT": [
+            PerfCandle(
+                open_time=signal_time,
+                close_time=signal_time + timedelta(minutes=15),
+                open=Decimal("100"),
+                high=Decimal("105"),
+                low=Decimal("99"),
+                close=Decimal("101"),
+            ),
+            PerfCandle(
+                open_time=signal_time + timedelta(minutes=15),
+                close_time=signal_time + timedelta(minutes=30),
+                open=Decimal("101"),
+                high=Decimal("102"),
+                low=Decimal("84"),
+                close=Decimal("85"),
+            ),
+        ],
+    }
+
+    study = _mid_short_entry_confirmation_shadow_study(
+        [item("loss", "LOSSUSDT"), item("win", "WINUSDT")],
+        candles=candles,
+        min_sample=1,
+        limit=10,
+    )
+    veto = next(row for row in study["variant_rows"] if row["config_id"] == "VETO_UP_REVERSAL_0_05")
+
+    assert study["study_id"] == "LAB_55_15M_ENTRY_CONFIRMATION_SHADOW"
+    assert veto["all"]["filtered_count"] == 2
+    assert veto["tradeoff_vs_control"]["all"]["avoided_sl_count"] == 1
+    assert veto["tradeoff_vs_control"]["all"]["lost_tp_count"] == 1
+    assert all(row["results"]["VETO_UP_REVERSAL_0_05"]["entered"] is False for row in study["case_rows"])
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:
