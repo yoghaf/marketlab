@@ -281,6 +281,76 @@ def test_detail_can_load_exact_signal_id() -> None:
         assert payload["chart"]["box_end_time"] == first_time + timedelta(minutes=15)
 
 
+def test_structure_zone_snapshot_is_exposed_in_detail_and_outcome_study() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        signal_time = datetime(2026, 1, 1, 0, 15)
+        zone = {
+            "center": "100",
+            "lower": "99",
+            "upper": "101",
+            "touch_count": 3,
+            "support_touch_count": 2,
+            "resistance_touch_count": 1,
+            "origin_role": "ROLE_FLIP",
+            "latest_pivot_kind": "LOW",
+            "first_touch_time": "2025-12-31T12:00:00",
+            "last_touch_time": "2026-01-01T00:00:00",
+        }
+        zone_snapshot = {
+            "version": "STRUCTURE_ZONE_SHADOW_V1",
+            "generated_at_utc": "2026-01-01T00:15:01",
+            "status": "ZONE_ALIGNED",
+            "reason": "Support break aligns with short direction.",
+            "primary_timeframe": "1h",
+            "primary": {
+                "status": "ZONE_ALIGNED",
+                "state": "SUPPORT_BREAK",
+                "reason": "The signal candle closed below support.",
+                "zone_count": 1,
+                "nearest_support_distance_atr": "0.1",
+                "nearest_resistance_distance_atr": None,
+                "zones": [zone],
+            },
+            "context_timeframe": "4h",
+            "context": {
+                "status": "ZONE_UNAVAILABLE",
+                "state": "4H_ZONE_UNAVAILABLE",
+                "reason": "4h history is unavailable.",
+            },
+            "read_only": True,
+            "not_signal_gate": True,
+        }
+        db.add(
+            _signal(
+                "zone-signal",
+                "AAAUSDT",
+                signal_time,
+                "SHORT",
+                "MID_SHORT",
+                "100",
+                "110",
+                "85",
+                evidence={"structure_zone_shadow": zone_snapshot},
+            )
+        )
+        db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="101", low="84", close="85"))
+        db.commit()
+
+        detail = SignalCandidatePerformanceService(db).detail(signal_id="zone-signal")
+        study = SignalCandidatePerformanceService(db).structure_zone_shadow_study(position_lock=False)
+
+        assert detail is not None
+        assert detail["item"]["structure_zone_status"] == "ZONE_ALIGNED"
+        assert detail["item"]["structure_zone_primary_state"] == "SUPPORT_BREAK"
+        assert detail["chart"]["structure_zones"][0]["center"] == "100"
+        assert study["snapshot_coverage"]["persisted_snapshot_count"] == 1
+        assert study["by_zone_status"][0]["bucket"] == "ZONE_ALIGNED"
+        assert study["by_zone_status"][0]["tp_count"] == 1
+
+
 def test_open_signal_with_symbol_candle_behind_global_latest_is_marked_stale() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

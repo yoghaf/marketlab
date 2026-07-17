@@ -219,6 +219,7 @@ export type Outcomes15mStatus = {
 };
 
 export type LiveScannerItem = {
+  signal_id?: string | null;
   symbol: string;
   timeframe?: string | null;
   is_active: boolean;
@@ -254,6 +255,22 @@ export type LiveScannerItem = {
   quality_shadow_pass?: boolean | null;
   quality_shadow_range_ratio_vs_atr?: string | number | null;
   quality_shadow_fill_quality?: string | null;
+  structure_zone_shadow?: Record<string, unknown> | null;
+  structure_zone_status?: string | null;
+  structure_zone_reason?: string | null;
+  structure_zone_primary_timeframe?: string | null;
+  structure_zone_primary_state?: string | null;
+  structure_zone_primary_reason?: string | null;
+  structure_zone_primary_zone_count?: number | null;
+  structure_zone_nearest_support_distance_atr?: string | number | null;
+  structure_zone_nearest_resistance_distance_atr?: string | number | null;
+  structure_zone_context_timeframe?: string | null;
+  structure_zone_context_status?: string | null;
+  structure_zone_context_state?: string | null;
+  structure_zone_context_reason?: string | null;
+  structure_zone_snapshot_time?: string | null;
+  structure_zone_read_only?: boolean;
+  structure_zone_not_signal_gate?: boolean;
   confidence: string;
   confidence_score?: string | null;
   scanner_tier: string;
@@ -746,6 +763,20 @@ export type SignalPerformanceItem = {
   quality_shadow_pass?: boolean | null;
   quality_shadow_range_ratio_vs_atr?: string | number | null;
   quality_shadow_fill_quality?: string | null;
+  structure_zone_shadow?: Record<string, unknown> | null;
+  structure_zone_status?: string | null;
+  structure_zone_reason?: string | null;
+  structure_zone_primary_timeframe?: string | null;
+  structure_zone_primary_state?: string | null;
+  structure_zone_primary_reason?: string | null;
+  structure_zone_primary_zone_count?: number | null;
+  structure_zone_nearest_support_distance_atr?: string | number | null;
+  structure_zone_nearest_resistance_distance_atr?: string | number | null;
+  structure_zone_context_timeframe?: string | null;
+  structure_zone_context_status?: string | null;
+  structure_zone_context_state?: string | null;
+  structure_zone_context_reason?: string | null;
+  structure_zone_snapshot_time?: string | null;
   confidence_tier?: string | null;
   execution_flag?: string | null;
   core_score?: string | number | null;
@@ -829,6 +860,36 @@ export type SignalPerformanceBucket = {
   fixed_risk_return_pct_1pct_with_open: string | number;
   avg_r_closed?: string | number | null;
   realistic_avg_r_closed?: string | number | null;
+};
+
+export type StructureZoneShadowBucket = SignalPerformanceBucket & {
+  bucket: string;
+  stage?: string;
+  timeframe?: string;
+  sample_count: number;
+  sample_share_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  realistic_avg_r_delta_vs_all?: string | number | null;
+  sample_status: string;
+};
+
+export type StructureZoneShadowStudyResponse = {
+  generated_at_utc: string;
+  latest_evaluation_candle_time?: string | null;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  snapshot_coverage: {
+    evaluated_count: number;
+    persisted_snapshot_count: number;
+    missing_snapshot_count: number;
+    coverage_pct?: string | number | null;
+  };
+  baseline: SignalPerformanceBucket;
+  by_zone_status: StructureZoneShadowBucket[];
+  by_stage_timeframe_zone: StructureZoneShadowBucket[];
+  latest_signals: SignalPerformanceItem[];
+  guardrails: string[];
 };
 
 export type SignalPerformanceResponse = {

@@ -99,6 +99,11 @@ def test_forward_return_logger_upserts_signal_factory_artifact_without_duplicate
             assert row.status_1h == "WAITING_DATA"
             assert row.observation_epoch == PRE_OBSERVATION_EPOCH
             assert row.observation_marker is False
+            zone_shadow = row.evidence["structure_zone_shadow"]
+            assert zone_shadow["status"] == "ZONE_UNAVAILABLE"
+            assert zone_shadow["primary_timeframe"] == "1h"
+            assert zone_shadow["read_only"] is True
+            assert zone_shadow["not_signal_gate"] is True
 
 
 def test_forward_return_logger_marks_stage8_observation_epoch() -> None:

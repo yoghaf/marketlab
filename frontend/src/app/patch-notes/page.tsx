@@ -19,6 +19,30 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-17",
+    version: "LAB-57",
+    title: "All-Signal Structure Zone Shadow",
+    status: "LIVE",
+    area: "Live Radar context enrichment",
+    summary: "Membekukan context support/resistance yang tersedia saat setiap Signal terbentuk lalu menampilkannya di Radar dan Signal Detail tanpa menjadikannya gate.",
+    changes: [
+      "Signal 15m/1h memakai struktur primary 1h dan context 4h; Signal 4h memakai primary 4h dan context 24h; Signal 24h memakai primary 24h.",
+      "Long dinilai selaras pada support bounce/reclaim atau resistance breakout; short dinilai selaras pada resistance rejection atau support breakdown.",
+      "Snapshot hanya memakai candle closed sebelum atau tepat pada waktu Signal, disimpan di evidence log, dan tidak dapat berubah karena candle masa depan.",
+      "Radar menampilkan ZONE_ALIGNED, ZONE_CONFLICT, ZONE_NEUTRAL, ZONE_UNAVAILABLE, atau ZONE_PENDING beserta alasan primary dan higher-timeframe context.",
+      "Signal Detail menampilkan snapshot zona dan overlay repeated-zone pada chart jika tersedia.",
+      "Runner backfill bounded disediakan untuk memberi label pada Signal historis tanpa menghapus atau mengubah hasil TP/SL.",
+      "Patch ini tidak mengubah Signal Factory, scanner decision, threshold, entry, SL/TP, outcome evaluator, atau execution."
+    ],
+    impact: "Setiap Signal kini memiliki barang bukti posisi terhadap support/resistance yang bisa dibandingkan dengan hasil TP/SL sebelum dipertimbangkan sebagai filter V2.1.",
+    links: [
+      { href: "/scanner", label: "Live Radar" },
+      { href: "/structure-zone-shadow-study", label: "All-Signal Zone Shadow" },
+      { href: "/signal-performance", label: "Signal History" },
+      { href: "/mid-short-structure-zone-study", label: "LAB-56 Structure Study" }
+    ]
+  },
+  {
+    date: "2026-07-17",
     version: "LAB-56",
     title: "MID_SHORT 1h Structure Zone Study",
     status: "LIVE",

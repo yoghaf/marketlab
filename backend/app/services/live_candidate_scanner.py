@@ -17,7 +17,9 @@ from app.models.market import (
     MarketCandidateOutcome15m,
     MarketSignalCandidateReadonly15m,
     MarketlabActiveUniverse,
+    SignalForwardReturnLog,
 )
+from app.services.signal_forward_return_logger import signal_id_for_candidate
 from app.services.signal_candidate_performance import (
     LIVE_STRATEGY_VERSION,
     SHADOW_STRATEGY_VERSION,
@@ -25,6 +27,7 @@ from app.services.signal_candidate_performance import (
     mid_short_1h_quality_shadow_filter,
     signal_factory_v3_shadow_for_candidate,
 )
+from app.services.structure_zone_shadow import pending_structure_zone_shadow
 from app.services.utils import json_safe
 
 SIGNAL_CANDIDATE_TYPES = {"EARLY_LONG_CANDIDATE_READONLY", "EARLY_SHORT_CANDIDATE_READONLY"}
@@ -161,10 +164,14 @@ class LiveCandidateScannerService:
         except Exception:
             return []
         universe_by_symbol = self._universe_by_symbol(include_inactive=include_inactive)
+        candidates = [
+            candidate
+            for candidate in payload.get("items", [])
+            if candidate.get("candidate_status") == "SIGNAL_CANDIDATE"
+        ]
+        zone_snapshots = self._structure_zone_snapshots(candidates)
         items: list[dict[str, Any]] = []
-        for candidate in payload.get("items", []):
-            if candidate.get("candidate_status") != "SIGNAL_CANDIDATE":
-                continue
+        for candidate in candidates:
             symbol = str(candidate.get("symbol") or "").upper()
             if not symbol:
                 continue
@@ -176,6 +183,7 @@ class LiveCandidateScannerService:
                 universe,
                 include_inactive=include_inactive,
                 v3_shadow_filter_map=v3_shadow_filter_map or {},
+                structure_zone_shadow=zone_snapshots.get(signal_id_for_candidate(candidate)),
             )
             if item is not None:
                 items.append(item)
@@ -187,6 +195,7 @@ class LiveCandidateScannerService:
         universe: MarketlabActiveUniverse | None,
         include_inactive: bool,
         v3_shadow_filter_map: dict[tuple[str, str], list[dict[str, Any]]],
+        structure_zone_shadow: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
         symbol = str(candidate.get("symbol") or "").upper()
         window_open = _parse_dt(candidate.get("window_start"))
@@ -217,8 +226,11 @@ class LiveCandidateScannerService:
             entry=entry,
             stop=stop,
         )
+        signal_id = signal_id_for_candidate(candidate)
+        zone_shadow = structure_zone_shadow or pending_structure_zone_shadow()
         return json_safe(
             {
+                "signal_id": signal_id,
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "is_active": is_active,
@@ -228,6 +240,7 @@ class LiveCandidateScannerService:
                 "scanner_visibility_reason": "signal factory final read-only candidate",
                 **v3_shadow,
                 **quality_shadow,
+                **_structure_zone_fields(zone_shadow),
                 "strategy_version": candidate.get("signal_factory_version") or candidate.get("logic_version") or LIVE_STRATEGY_VERSION,
                 "strategy_family": "Signal Factory V2",
                 "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
@@ -268,6 +281,21 @@ class LiveCandidateScannerService:
                 "not_entry_signal": True,
             }
         )
+
+    def _structure_zone_snapshots(self, candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        signal_ids = [signal_id_for_candidate(candidate) for candidate in candidates]
+        if not signal_ids:
+            return {}
+        rows = self.db.scalars(
+            select(SignalForwardReturnLog).where(SignalForwardReturnLog.signal_id.in_(signal_ids))
+        ).all()
+        snapshots: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            evidence = row.evidence if isinstance(row.evidence, dict) else {}
+            snapshot = evidence.get("structure_zone_shadow")
+            if isinstance(snapshot, dict):
+                snapshots[row.signal_id] = snapshot
+        return snapshots
 
     def _universe_by_symbol(self, include_inactive: bool) -> dict[str, MarketlabActiveUniverse]:
         query = select(MarketlabActiveUniverse)
@@ -413,6 +441,19 @@ class LiveCandidateScannerService:
                 "quality_shadow_pass": False,
                 "quality_shadow_range_ratio_vs_atr": None,
                 "quality_shadow_fill_quality": None,
+                **_structure_zone_fields(
+                    {
+                        "version": "STRUCTURE_ZONE_SHADOW_V1",
+                        "status": "ZONE_NOT_APPLICABLE",
+                        "reason": "Legacy classifier row has no persisted Signal Factory zone snapshot.",
+                        "primary_timeframe": None,
+                        "primary": None,
+                        "context_timeframe": None,
+                        "context": None,
+                        "read_only": True,
+                        "not_signal_gate": True,
+                    }
+                ),
                 "latest_actual_status": latest_actual_candidate.classifier_status,
                 "latest_actual_observation_timestamp": latest_actual_candidate.window_close_time,
                 "using_fallback_usable_row": using_fallback,
@@ -901,3 +942,26 @@ def _factory_evidence_summary(candidate: dict[str, Any]) -> dict[str, Any]:
     summary["candidate_status"] = candidate.get("candidate_status")
     summary["atr_reference_status"] = candidate.get("atr_reference_status")
     return summary
+
+
+def _structure_zone_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
+    primary = snapshot.get("primary") if isinstance(snapshot.get("primary"), dict) else {}
+    context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
+    return {
+        "structure_zone_shadow": snapshot,
+        "structure_zone_status": snapshot.get("status") or "ZONE_UNAVAILABLE",
+        "structure_zone_reason": snapshot.get("reason") or "Structure zone snapshot is unavailable.",
+        "structure_zone_primary_timeframe": snapshot.get("primary_timeframe"),
+        "structure_zone_primary_state": primary.get("state"),
+        "structure_zone_primary_reason": primary.get("reason"),
+        "structure_zone_primary_zone_count": primary.get("zone_count"),
+        "structure_zone_nearest_support_distance_atr": primary.get("nearest_support_distance_atr"),
+        "structure_zone_nearest_resistance_distance_atr": primary.get("nearest_resistance_distance_atr"),
+        "structure_zone_context_timeframe": snapshot.get("context_timeframe"),
+        "structure_zone_context_status": context.get("status"),
+        "structure_zone_context_state": context.get("state"),
+        "structure_zone_context_reason": context.get("reason"),
+        "structure_zone_snapshot_time": snapshot.get("generated_at_utc"),
+        "structure_zone_read_only": bool(snapshot.get("read_only", True)),
+        "structure_zone_not_signal_gate": bool(snapshot.get("not_signal_gate", True)),
+    }

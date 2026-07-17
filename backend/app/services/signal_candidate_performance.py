@@ -22,6 +22,7 @@ from app.models.market import (
     SignalForwardReturnLog,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
+from app.services.structure_zone_shadow import structure_zone_chart_zones
 from app.services.utils import utcnow
 
 
@@ -264,6 +265,16 @@ class SignalCandidatePerformanceService:
             end_time=chart_end_time,
         )
         chart_candles = _merge_candle_maps(chart_base_candles, chart_tail_candles).get(signal.symbol, [])
+        chart_payload = _signal_chart_payload(signal, item, chart_candles)
+        zone_snapshot = _structure_zone_snapshot(signal)
+        if chart_payload and zone_snapshot and chart_candles:
+            chart_payload["structure_zones"] = structure_zone_chart_zones(
+                zone_snapshot,
+                chart_start=chart_candles[0].open_time,
+                chart_end=chart_candles[-1].close_time,
+                min_price=min(candle.low for candle in chart_candles),
+                max_price=max(candle.high for candle in chart_candles),
+            )
         return {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
@@ -299,7 +310,7 @@ class SignalCandidatePerformanceService:
                 "created_at": signal.created_at,
                 "updated_at": signal.updated_at,
             },
-            "chart": _signal_chart_payload(signal, item, chart_candles),
+            "chart": chart_payload,
             "evidence": signal.evidence or {},
         }
 
@@ -383,6 +394,103 @@ class SignalCandidatePerformanceService:
         }
         _quality_lab_cache_set(cache_key, payload)
         return payload
+
+    def structure_zone_shadow_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=None,
+            timeframe=None,
+            symbol=None,
+            position_lock=position_lock,
+            with_shadow=False,
+        )
+        baseline = _performance_summary(evaluated)
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        lane_grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+        for item in evaluated:
+            status = str(item.get("structure_zone_status") or "ZONE_UNAVAILABLE")
+            grouped[status].append(item)
+            lane_grouped[(str(item.get("stage")), str(item.get("timeframe")), status)].append(item)
+
+        def study_row(label: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+            performance = _performance_summary(items)
+            directional_closed = int(performance.get("tp_count") or 0) + int(performance.get("sl_count") or 0)
+            sl_share = (
+                Decimal(int(performance.get("sl_count") or 0)) / Decimal(directional_closed) * Decimal("100")
+                if directional_closed
+                else None
+            )
+            return {
+                "bucket": label,
+                "sample_count": len(items),
+                "sample_share_pct": Decimal(len(items)) / Decimal(len(evaluated)) * Decimal("100") if evaluated else None,
+                "sl_share_pct": sl_share,
+                "realistic_avg_r_delta_vs_all": _decimal_delta(
+                    performance.get("realistic_avg_r_closed"),
+                    baseline.get("realistic_avg_r_closed"),
+                ),
+                "sample_status": "COMPARABLE" if len(items) >= min_sample else "NEEDS_MORE_SAMPLE",
+                **performance,
+            }
+
+        bucket_rows = [study_row(status, items) for status, items in grouped.items()]
+        bucket_rows.sort(key=lambda row: int(row.get("sample_count") or 0), reverse=True)
+        lane_rows = [
+            {
+                "stage": stage,
+                "timeframe": timeframe,
+                **study_row(status, items),
+            }
+            for (stage, timeframe, status), items in lane_grouped.items()
+        ]
+        lane_rows.sort(key=lambda row: int(row.get("sample_count") or 0), reverse=True)
+        latest_items = sorted(
+            evaluated,
+            key=lambda item: item.get("signal_timestamp") or datetime.min,
+            reverse=True,
+        )[:limit]
+        persisted_count = sum(1 for item in evaluated if item.get("structure_zone_shadow"))
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "study_scope": "all_signal_causal_structure_zone_shadow",
+            "latest_evaluation_candle_time": latest_candle_time,
+            "snapshot_coverage": {
+                "evaluated_count": len(evaluated),
+                "persisted_snapshot_count": persisted_count,
+                "missing_snapshot_count": len(evaluated) - persisted_count,
+                "coverage_pct": Decimal(persisted_count) / Decimal(len(evaluated)) * Decimal("100") if evaluated else None,
+            },
+            "baseline": baseline,
+            "by_zone_status": bucket_rows,
+            "by_stage_timeframe_zone": lane_rows,
+            "latest_signals": latest_items,
+            "skipped_by_position_lock": dict(skipped),
+            "guardrails": [
+                "Zone labels are frozen from candles closed at or before signal time.",
+                "Zone labels do not change Signal Factory decisions, entry, SL, TP, or outcomes.",
+                "ZONE_UNAVAILABLE remains unavailable and is never promoted to aligned.",
+                "Bucket comparison is observational and not a production gate.",
+            ],
+        }
 
     def mid_short_1h_shadow_forward_log(
         self,
@@ -2631,6 +2739,7 @@ class SignalCandidatePerformanceService:
             stop=stop,
             realistic_fill_quality=str(realistic_assumptions.get("realistic_fill_quality") or ""),
         )
+        structure_zone_shadow = _structure_zone_snapshot(signal)
         base = {
             "signal_id": signal.signal_id,
             "symbol": signal.symbol,
@@ -2662,6 +2771,7 @@ class SignalCandidatePerformanceService:
             "rr": abs(target - entry) / risk if risk > 0 else None,
             **realistic_assumptions,
             **quality_shadow,
+            **_structure_zone_result_fields(structure_zone_shadow),
             "result_status": "WAITING_DATA",
             "result_time_utc": None,
             "result_time_wib": None,
@@ -4452,6 +4562,48 @@ def _evidence_snapshot(signal: SignalForwardReturnLog) -> dict[str, Decimal | No
             value = evidence.get(field)
         snapshot[field] = _decimal_or_none(value)
     return snapshot
+
+
+def _structure_zone_snapshot(signal: SignalForwardReturnLog) -> dict[str, Any] | None:
+    raw_evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
+    snapshot = raw_evidence.get("structure_zone_shadow")
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def _structure_zone_result_fields(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not snapshot:
+        return {
+            "structure_zone_shadow": None,
+            "structure_zone_status": "ZONE_UNAVAILABLE",
+            "structure_zone_reason": "No persisted structure-zone snapshot exists for this signal.",
+            "structure_zone_primary_timeframe": None,
+            "structure_zone_primary_state": None,
+            "structure_zone_primary_reason": None,
+            "structure_zone_primary_zone_count": None,
+            "structure_zone_context_timeframe": None,
+            "structure_zone_context_status": None,
+            "structure_zone_context_state": None,
+            "structure_zone_context_reason": None,
+            "structure_zone_snapshot_time": None,
+        }
+    primary = snapshot.get("primary") if isinstance(snapshot.get("primary"), dict) else {}
+    context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
+    return {
+        "structure_zone_shadow": snapshot,
+        "structure_zone_status": snapshot.get("status") or "ZONE_UNAVAILABLE",
+        "structure_zone_reason": snapshot.get("reason") or "Structure-zone snapshot is unavailable.",
+        "structure_zone_primary_timeframe": snapshot.get("primary_timeframe"),
+        "structure_zone_primary_state": primary.get("state"),
+        "structure_zone_primary_reason": primary.get("reason"),
+        "structure_zone_primary_zone_count": primary.get("zone_count"),
+        "structure_zone_nearest_support_distance_atr": primary.get("nearest_support_distance_atr"),
+        "structure_zone_nearest_resistance_distance_atr": primary.get("nearest_resistance_distance_atr"),
+        "structure_zone_context_timeframe": snapshot.get("context_timeframe"),
+        "structure_zone_context_status": context.get("status"),
+        "structure_zone_context_state": context.get("state"),
+        "structure_zone_context_reason": context.get("reason"),
+        "structure_zone_snapshot_time": snapshot.get("generated_at_utc"),
+    }
 
 
 def signal_factory_v3_shadow_for_candidate(

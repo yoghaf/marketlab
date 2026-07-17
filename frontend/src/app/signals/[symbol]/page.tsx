@@ -137,6 +137,32 @@ export default async function SignalDetailPage({
         <MetricCard label="MID_SHORT 1h shadow" value={labelFor(item.quality_shadow_status || "SHADOW_NOT_APPLICABLE")} helper={item.quality_shadow_reason || "Read-only quality monitor"} tone={shadowTone(item.quality_shadow_status)} />
       </section>
 
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Structure zone shadow"
+          value={labelFor(item.structure_zone_status || "ZONE_UNAVAILABLE")}
+          helper="Observasi read-only, bukan gate Signal"
+          tone={zoneTone(item.structure_zone_status)}
+        />
+        <MetricCard
+          label={`Primary ${item.structure_zone_primary_timeframe || "TF"}`}
+          value={labelFor(item.structure_zone_primary_state || "ZONE_UNAVAILABLE")}
+          helper={item.structure_zone_primary_reason || "Snapshot struktur belum tersedia"}
+          tone={zoneTone(item.structure_zone_status)}
+        />
+        <MetricCard
+          label={`Context ${item.structure_zone_context_timeframe || "higher TF"}`}
+          value={labelFor(item.structure_zone_context_status || "ZONE_UNAVAILABLE")}
+          helper={item.structure_zone_context_reason || "Higher-timeframe context belum tersedia"}
+          tone={zoneTone(item.structure_zone_context_status)}
+        />
+        <MetricCard
+          label="Repeated zones"
+          value={item.structure_zone_primary_zone_count ?? "-"}
+          helper={`Support ${fmtAtrDistance(item.structure_zone_nearest_support_distance_atr)} | Resistance ${fmtAtrDistance(item.structure_zone_nearest_resistance_distance_atr)}`}
+        />
+      </section>
+
       <SectionCard title="Signal plan" description="Informasi inti signal. Semua angka entry/SL/TP memakai futures reference, bukan spot entry.">
         <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
           <DetailItem label="Signal ID" value={item.signal_id} />
@@ -162,6 +188,11 @@ export default async function SignalDetailPage({
           <DetailItem label="Quality reason" value={item.quality_shadow_reason || "-"} />
           <DetailItem label="Shadow range/ATR" value={formatEvidenceValue("range_ratio_vs_atr", item.quality_shadow_range_ratio_vs_atr)} />
           <DetailItem label="Shadow fill" value={item.quality_shadow_fill_quality || "-"} />
+          <DetailItem label="Structure zone status" value={item.structure_zone_status || "ZONE_UNAVAILABLE"} />
+          <DetailItem label="Structure zone reason" value={item.structure_zone_reason || "-"} />
+          <DetailItem label="Primary zone state" value={`${item.structure_zone_primary_timeframe || "-"} ${item.structure_zone_primary_state || "-"}`} />
+          <DetailItem label="Higher-TF zone state" value={`${item.structure_zone_context_timeframe || "-"} ${item.structure_zone_context_state || item.structure_zone_context_status || "-"}`} />
+          <DetailItem label="Zone snapshot time" value={fmtTime(item.structure_zone_snapshot_time)} />
           <DetailItem label="Signal time WIB" value={item.signal_time_wib || fmtTime(item.signal_timestamp)} />
           <DetailItem label="Window open" value={fmtTime(data.raw_signal.window_open_time)} />
           <DetailItem label="Window close" value={fmtTime(data.raw_signal.window_close_time)} />
@@ -272,6 +303,19 @@ function shadowTone(value?: string | null): "neutral" | "good" | "warn" | "bad" 
   if (value === "SHADOW_FAIL") return "bad";
   if (value === "SHADOW_UNAVAILABLE") return "warn";
   return "neutral";
+}
+
+function zoneTone(value?: string | null): "neutral" | "good" | "warn" | "bad" | "info" {
+  if (value === "ZONE_ALIGNED") return "good";
+  if (value === "ZONE_CONFLICT") return "bad";
+  if (value === "ZONE_NEUTRAL") return "info";
+  if (value === "ZONE_PENDING" || value === "ZONE_UNAVAILABLE") return "warn";
+  return "neutral";
+}
+
+function fmtAtrDistance(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  return `${fmtNumber(value)} ATR`;
 }
 
 function formatEvidenceValue(field: string, value?: string | number | null): string {

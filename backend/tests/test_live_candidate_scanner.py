@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.main import app
 from app.models.market import FuturesKline15m, FuturesKline1h, MarketCandidateOutcome15m, MarketSignalCandidateReadonly15m, MarketlabActiveUniverse
 from app.services.live_candidate_scanner import LiveCandidateScannerService, scanner_tier_for
+from app.services.signal_forward_return_logger import SignalForwardReturnLogger
 
 
 class LiveCandidateScannerTest(unittest.TestCase):
@@ -141,6 +142,8 @@ class LiveCandidateScannerTest(unittest.TestCase):
                 )
             )
 
+            SignalForwardReturnLogger(self.db, artifact_dir=artifact_dir).run()
+
             items = LiveCandidateScannerService(self.db, signal_factory_artifact_dir=artifact_dir).list_live()
             signal_items = LiveCandidateScannerService(
                 self.db,
@@ -162,6 +165,10 @@ class LiveCandidateScannerTest(unittest.TestCase):
         self.assertIn("V2", item["strategy_version"])
         self.assertEqual(item["shadow_strategy_version"], "SIGNAL_FACTORY_V3_SHADOW_CALIBRATION")
         self.assertEqual(item["v3_shadow_status"], "V3_SHADOW_NO_FILTER")
+        self.assertEqual(item["structure_zone_status"], "ZONE_UNAVAILABLE")
+        self.assertEqual(item["structure_zone_primary_timeframe"], "1h")
+        self.assertTrue(item["structure_zone_read_only"])
+        self.assertTrue(item["structure_zone_not_signal_gate"])
         self.assertTrue(item["not_entry_signal"])
         self.assertTrue(item["not_execution_instruction"])
 

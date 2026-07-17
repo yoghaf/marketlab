@@ -92,6 +92,7 @@ export default async function ScannerPage({ searchParams }: { searchParams: Scan
             <QuickLink href="/scanner?tier=WATCHLIST_CONTEXT&limit=75" label="Candidate" active={tier === "WATCHLIST_CONTEXT"} />
             <QuickLink href="/scanner?tier=RADAR_ONLY&limit=75" label="Radar" active={tier === "RADAR_ONLY"} />
             <QuickLink href="/scanner?tier=RISK_CONTEXT&limit=75" label="Risk Context" active={tier === "RISK_CONTEXT"} />
+            <QuickLink href="/structure-zone-shadow-study" label="Zone Shadow Study" />
             <QuickLink href="/signal-factory" label="Signal Factory raw" />
           </div>
 
@@ -166,11 +167,12 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
         {!item.is_active && <div className="mt-1"><StatusBadge value="NOT_ACTIVE" /></div>}
       </td>
       <td><StatusBadge value={item.timeframe || String(item.evidence_summary.timeframe || "15m")} /></td>
-      <td className="min-w-44">
+      <td className="min-w-56">
         <div className="space-y-1 text-xs">
           <StatusBadge value={shortStrategy(item.strategy_version)} />
           <StatusBadge value={item.v3_shadow_status || "V3_SHADOW_UNKNOWN"} />
           <StatusBadge value={item.quality_shadow_status || "SHADOW_NOT_APPLICABLE"} />
+          <StatusBadge value={item.structure_zone_status || "ZONE_PENDING"} />
           {item.v3_shadow_filter_label ? (
             <div className="text-slate-600">{item.v3_shadow_filter_label}</div>
           ) : (
@@ -179,6 +181,17 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
           {item.quality_shadow_filter_label ? (
             <div className="text-slate-600">{item.quality_shadow_filter_label}</div>
           ) : null}
+          <div className="rounded border border-line bg-field/40 p-2 text-slate-600">
+            <div className="font-semibold text-ink">
+              {item.structure_zone_primary_timeframe || "Zone"}: {labelFor(item.structure_zone_primary_state || item.structure_zone_status || "ZONE_PENDING")}
+            </div>
+            <div>{compactReason(item.structure_zone_reason || "Menunggu snapshot zona dari research cycle.", 100)}</div>
+            {item.structure_zone_context_timeframe ? (
+              <div className="mt-1 text-slate-500">
+                Context {item.structure_zone_context_timeframe}: {labelFor(item.structure_zone_context_status || "ZONE_UNAVAILABLE")}
+              </div>
+            ) : null}
+          </div>
         </div>
       </td>
       <td><StatusBadge value={item.scanner_tier} /></td>
@@ -219,7 +232,7 @@ function ScannerRow({ item }: { item: LiveScannerItem }) {
       <td>
         <Link
           className="rounded border border-line px-3 py-2 text-xs font-semibold hover:bg-field"
-          href={`/signals/${encodeURIComponent(item.symbol)}?timeframe=${encodeURIComponent(String(item.timeframe || item.evidence_summary.timeframe || "15m"))}`}
+          href={signalDetailHref(item)}
         >
           Detail
         </Link>
@@ -288,6 +301,11 @@ function DetailPanel({ item }: { item: LiveScannerItem }) {
         <DetailItem label="Risk status" value={String(item.evidence_summary.execution_risk_status ?? "-")} />
         <DetailItem label="Quality shadow" value={item.quality_shadow_status || "SHADOW_NOT_APPLICABLE"} />
         <DetailItem label="Quality shadow reason" value={item.quality_shadow_reason || "-"} />
+        <DetailItem label="Zone shadow" value={item.structure_zone_status || "ZONE_PENDING"} />
+        <DetailItem label="Primary zone state" value={`${item.structure_zone_primary_timeframe || "-"} ${item.structure_zone_primary_state || "-"}`} />
+        <DetailItem label="Zone reason" value={item.structure_zone_reason || "-"} wide />
+        <DetailItem label="Higher-TF zone" value={`${item.structure_zone_context_timeframe || "-"} ${item.structure_zone_context_status || "-"}`} />
+        <DetailItem label="Higher-TF reason" value={item.structure_zone_context_reason || "-"} wide />
         <DetailItem label="Core reasons" value={formatList(item.evidence_summary.core_reasons)} wide />
         <DetailItem label="Evidence reasons" value={formatList(item.evidence_summary.evidence_reasons)} wide />
         <DetailItem label="Risk reasons" value={formatList(item.evidence_summary.execution_risk_reasons)} wide />
@@ -340,6 +358,13 @@ function userReason(item: LiveScannerItem): string {
   if (text.includes("missing atr")) return "ATR belum tersedia";
   if (text.includes("conflict")) return "Sinyal campuran";
   return item.warning_reason || item.tier_reason || "No scanner warning";
+}
+
+function signalDetailHref(item: LiveScannerItem): string {
+  const query = new URLSearchParams();
+  query.set("timeframe", String(item.timeframe || item.evidence_summary.timeframe || "15m"));
+  if (item.signal_id) query.set("signal_id", item.signal_id);
+  return `/signals/${encodeURIComponent(item.symbol)}?${query.toString()}`;
 }
 
 function shortStrategy(value?: string | null): string {

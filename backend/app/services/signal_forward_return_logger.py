@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.market import FuturesKline15m, SignalForwardReturnLog
 from app.services.anomaly_signal_factory import DEFAULT_SIGNAL_FACTORY_DIR
+from app.services.structure_zone_shadow import StructureZoneShadowService, pending_structure_zone_shadow
 from app.services.utils import json_safe, utcnow
 
 
@@ -51,8 +52,25 @@ class SignalForwardReturnLogger:
         ready_counts = {key: 0 for key in HORIZONS}
         now = utcnow()
         generated_at = payload.get("generated_at")
-        for candidate in candidates:
-            row_payload = self._payload(candidate, generated_at, now)
+        row_payloads = [self._payload(candidate, generated_at, now) for candidate in candidates]
+        zone_snapshots = StructureZoneShadowService(self.db).snapshots_for_signals(
+            {
+                "signal_id": row_payload["signal_id"],
+                "symbol": row_payload["symbol"],
+                "timeframe": row_payload["timeframe"],
+                "signal_timestamp": row_payload["signal_timestamp"],
+                "direction": row_payload["direction"],
+                "price_at_signal": row_payload["price_at_signal"],
+            }
+            for row_payload in row_payloads
+        )
+        for row_payload in row_payloads:
+            evidence_payload = dict(row_payload.get("evidence") or {})
+            evidence_payload["structure_zone_shadow"] = zone_snapshots.get(
+                row_payload["signal_id"],
+                pending_structure_zone_shadow(),
+            )
+            row_payload["evidence"] = json_safe(evidence_payload)
             for horizon in HORIZONS:
                 ready_counts[horizon] += int(row_payload[f"status_{horizon}"] == "READY")
             action = self._upsert(row_payload, dry_run=dry_run)
@@ -88,7 +106,7 @@ class SignalForwardReturnLogger:
         window_close = _parse_dt(candidate.get("window_end"))
         artifact_time = _parse_dt(generated_at)
         signal_timestamp = window_close or window_open or now
-        signal_id = _signal_id(candidate)
+        signal_id = signal_id_for_candidate(candidate)
         signal_candle = self._candle_at(candidate.get("symbol"), signal_timestamp)
         price_at_signal = _dec(candidate.get("entry_price")) or _dec(evidence.get("entry_price")) or (
             signal_candle.close if signal_candle else None
@@ -183,7 +201,7 @@ class SignalForwardReturnLogger:
         return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _signal_id(candidate: dict[str, Any]) -> str:
+def signal_id_for_candidate(candidate: dict[str, Any]) -> str:
     raw = "|".join(
         str(candidate.get(key) or "")
         for key in ("symbol", "timeframe", "window_start", "window_end", "setup_type", "candidate_status")
