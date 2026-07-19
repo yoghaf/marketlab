@@ -53,7 +53,12 @@ while true; do
     fi
   fi
 
-  python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
+  if ! python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1; then
+    echo "[marketlab-loop] fast OHLCV aggregation failed; cycle deferred $(date -u)"
+    echo "[marketlab-loop] cycle end $(date -u)"
+    sleep "$SLEEP_SECONDS"
+    continue
+  fi
   if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
     echo "[marketlab-loop] rich futures collector start $(date -u)"
     if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then

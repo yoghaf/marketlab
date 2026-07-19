@@ -108,6 +108,8 @@ def run_cycle(
     db.add(run)
     db.commit()
     db.refresh(run)
+    run_id = run.id
+    started_at = run.started_at
     try:
         service = OhlcvAggregationService(db)
         results = service.run(
@@ -138,11 +140,17 @@ def run_cycle(
             ],
         }
     except Exception as exc:
-        run.status = "ERROR"
-        run.error_count += 1
+        db.rollback()
+        persisted_run = db.get(CollectorRun, run_id)
+        finished_at = utcnow()
+        if persisted_run is not None:
+            persisted_run.status = "ERROR"
+            persisted_run.error_count = int(persisted_run.error_count or 0) + 1
+            persisted_run.finished_at = finished_at
+            persisted_run.duration_seconds = duration_seconds(started_at, finished_at)
         db.add(
             CollectorError(
-                collector_run_id=run.id,
+                collector_run_id=run_id,
                 collector_name="ohlcv_aggregation",
                 symbol=None,
                 endpoint=None,
@@ -153,8 +161,10 @@ def run_cycle(
                 created_at=utcnow(),
             )
         )
+        db.commit()
+        db.close()
         raise
-    finally:
+    else:
         run.finished_at = utcnow()
         run.duration_seconds = duration_seconds(run.started_at, run.finished_at)
         db.commit()
@@ -168,7 +178,7 @@ def run_cycle(
             "details": run.details_json,
         }
         db.close()
-    return json_safe(payload)
+        return json_safe(payload)
 
 
 def main() -> None:
