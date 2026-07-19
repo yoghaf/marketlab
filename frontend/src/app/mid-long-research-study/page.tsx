@@ -7,6 +7,8 @@ import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   MidLongLab62Response,
+  MidLongLab63Policy,
+  MidLongLab63Response,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -40,6 +42,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     limit: String(limit)
   });
   let lab62: MidLongLab62Response | null = null;
+  let lab63: MidLongLab63Response | null = null;
   let quality: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
   let optimization: StrategyOptimizationResponse | null = null;
@@ -48,10 +51,12 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let filterError: string | null = null;
   let optimizationError: string | null = null;
   let regimeError: string | null = null;
+  let lab63Error: string | null = null;
 
-  const [labResult, artifactResult] = await Promise.allSettled([
+  const [labResult, artifactResult, lab63Result] = await Promise.allSettled([
     fetchJson<MidLongLab62Response>(`/api/signal-candidates/mid-long-1h-lab62?${labQuery.toString()}`, { revalidateSeconds: 120 }),
-    fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 300 })
+    fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 300 }),
+    fetchJson<MidLongLab63Response>("/api/signal-candidates/mid-long-1h-lab63", { revalidateSeconds: 300 })
   ]);
 
   if (labResult.status === "fulfilled") {
@@ -61,6 +66,12 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   } else {
     error = labResult.reason instanceof Error ? labResult.reason.message : "MID_LONG LAB-62 API failed";
     filterError = error;
+  }
+
+  if (lab63Result.status === "fulfilled") {
+    lab63 = lab63Result.value;
+  } else {
+    lab63Error = lab63Result.reason instanceof Error ? lab63Result.reason.message : "MID_LONG LAB-63 API failed";
   }
 
   if (artifactResult.status === "fulfilled") {
@@ -84,9 +95,9 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     <div className="space-y-5">
       <PageHeader
         title="MID_LONG 1h V2.1 Research"
-        badge="LAB-62 - READ-ONLY STARTING POINT"
-        subtitle="Jalur riset khusus MID_LONG 1h. Baseline V2, evidence TP/SL, geometry ATR/RR/timeout, dan regime dibaca terpisah dari MID_SHORT. Tidak mengubah Signal Factory, scanner, TP/SL, atau execution."
-        updatedAt={fmtTime(lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
+        badge="LAB-63 - REALISTIC TIMEOUT VALIDATION"
+        subtitle="Geometry tetap 0.75 ATR / 1R. LAB-63 membandingkan timeout 60m, 120m, 4h, dan tanpa timeout memakai fee, spread, slippage, position lock, serta chronological validation."
+        updatedAt={fmtTime(lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -129,13 +140,39 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <Info label="LAB-62 decision" value={lab62Decision(lane, bestGeometry)} />
             </div>
             <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
-              <ResearchStep status="ACTIVE" title="LAB-62" detail="Bekukan baseline V2, ukur evidence TP/SL, lalu pilih geometry shadow untuk diuji secara realistis." />
-              <ResearchStep status="NEXT" title="LAB-63" detail="Replay geometry terpilih dengan fee, spread, slippage, position lock, dan chronological validation." />
+              <ResearchStep status="COMPLETE" title="LAB-62" detail="Baseline V2 dan geometry ideal sudah dibekukan sebagai titik awal." />
+              <ResearchStep status="ACTIVE" title="LAB-63" detail="Bandingkan 60m, 120m, 4h, dan tanpa timeout dengan biaya realistis dan validation waktu." />
               <ResearchStep status="PENDING" title="LAB-64+" detail="Failure anatomy, fixed cohort, combination filter, structure, lalu forward shadow jika validation bertahan." />
             </div>
             <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-900">
               Angka geometry masih ideal dan dipilih dari grid. Angka itu tidak boleh dibandingkan langsung dengan V2 realistic R serta belum boleh menjadi rule Signal.
             </div>
+          </SectionCard>
+
+          <SectionCard
+            title="LAB-63 realistic timeout policy comparison"
+            description="Semua baris memakai entry dan ATR yang sama. Hanya batas waktu posisi yang berubah; 4h adalah reference resmi."
+          >
+            {lab63Error ? (
+              <div className="p-4 text-sm text-stale">{lab63Error}</div>
+            ) : lab63 ? (
+              <>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+                  <Info label="Fixed geometry" value={`${fmtNumber(lab63.geometry.atr_multiplier)} ATR / ${fmtNumber(lab63.geometry.reward_risk)}R`} />
+                  <Info label="Reference" value={policyLabel(lab63.reference_policy)} />
+                  <Info label="Source" value={`${lab63.split.source_signal_count} Signal`} />
+                  <Info label="Train / validation" value={`${lab63.split.train_source_count} / ${lab63.split.validation_source_count}`} />
+                  <Info label="Best observed" value={lab63.best_observed_policy?.policy_label || "Belum cukup validation"} />
+                  <Info label="Position lock" value={lab63.filters.position_lock ? "ON" : "OFF"} />
+                </div>
+                <Lab63PolicyTable rows={lab63.policies} referencePolicy={lab63.reference_policy} />
+                <div className="border-t border-line bg-blue-50 p-4 text-sm text-blue-950">
+                  Tanpa timeout tidak memakai harga candle terakhir sebagai hasil closed. Posisi yang belum menyentuh target atau stop tetap <b>OPEN</b>, R-nya hanya unrealized, dan Signal berikutnya pada simbol yang sama terkena position lock.
+                </div>
+              </>
+            ) : (
+              <div className="p-4"><EmptyState title="LAB-63 belum tersedia" detail="Tunggu artifact research cycle pertama." /></div>
+            )}
           </SectionCard>
 
           <SectionCard title="Research verdict" description="Kesimpulan praktis dari kondisi MID_LONG 1h saat ini.">
@@ -301,6 +338,67 @@ function GeometryTable({ rows }: { rows: StrategyOptimizationRow[] }) {
             <tr>
               <td colSpan={8}><EmptyState title="No geometry rows" detail="Artifact geometry MID_LONG 1h belum tersedia atau sedang dihitung." /></td>
             </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab63PolicyTable({ rows, referencePolicy }: { rows: MidLongLab63Policy[]; referencePolicy: string }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Policy</th>
+            <th>All evaluated</th>
+            <th>All TP / SL / timeout</th>
+            <th>All realistic R</th>
+            <th>Validation</th>
+            <th>Validation realistic R</th>
+            <th>Delta avg vs 4h</th>
+            <th>Validation DD</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.policy_id}>
+              <td>
+                <div className="font-semibold">{row.policy_label}</div>
+                <div className="mt-1 flex flex-wrap gap-1 text-xs">
+                  {row.policy_id === referencePolicy && <StatusBadge value="REFERENCE" />}
+                  {row.policy_id === "NO_TIMEOUT" && <StatusBadge value="OPEN_UNTIL_TP_SL" />}
+                </div>
+              </td>
+              <td>
+                <div>{row.all.evaluated_count} evaluated / {row.all.closed_count} closed</div>
+                <div className="text-xs text-slate-500">{row.all.open_count} open / {row.all.skipped_count} lock skip</div>
+              </td>
+              <td>
+                <div>{row.all.tp_count} / {row.all.sl_count} / {row.all.timeout_count}</div>
+                <div className="text-xs text-slate-500">both {row.all.both_hit_count}, incomplete {row.all.incomplete_count}</div>
+              </td>
+              <td className={Number(row.all.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>
+                <div>{fmtSigned(row.all.realistic_total_r_closed)}R</div>
+                <div className="text-xs">avg {fmtSigned(row.all.realistic_avg_r_closed)}R / med {fmtSigned(row.all.realistic_median_r_closed)}R</div>
+              </td>
+              <td>
+                <div>{row.validation.closed_count} closed / {row.validation.evaluated_count} evaluated</div>
+                <div className="text-xs text-slate-500">{row.validation.open_count} open / {row.validation.skipped_count} lock skip</div>
+              </td>
+              <td className={Number(row.validation.realistic_total_r_closed || 0) >= 0 ? "text-ready" : "text-stale"}>
+                <div>{fmtSigned(row.validation.realistic_total_r_closed)}R</div>
+                <div className="text-xs">avg {fmtSigned(row.validation.realistic_avg_r_closed)}R / med {fmtSigned(row.validation.realistic_median_r_closed)}R</div>
+              </td>
+              <td>{fmtOptionalSigned(row.validation.realistic_avg_r_delta_vs_4h)}R</td>
+              <td>{fmtSigned(row.validation.max_realistic_drawdown_r)}R</td>
+              <td><StatusBadge value={row.verdict} /></td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr><td colSpan={9}><EmptyState title="No timeout policy rows" detail="Artifact LAB-63 belum berisi hasil." /></td></tr>
           )}
         </tbody>
       </table>
@@ -526,4 +624,19 @@ function fmtSigned(value?: string | number | null) {
   if (!Number.isFinite(n)) return String(value);
   if (Math.abs(n) < 0.005) return "0";
   return `${n > 0 ? "+" : ""}${fmtNumber(n)}`;
+}
+
+function fmtOptionalSigned(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return "-";
+  return fmtSigned(value);
+}
+
+function policyLabel(policyId?: string | null) {
+  const labels: Record<string, string> = {
+    TIMEOUT_60M: "Timeout 60 menit",
+    TIMEOUT_120M: "Timeout 120 menit",
+    TIMEOUT_4H: "Timeout 4 jam",
+    NO_TIMEOUT: "Tanpa timeout"
+  };
+  return policyId ? labels[policyId] || labelFor(policyId) : "-";
 }

@@ -15,6 +15,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.services.multitimeframe_features import DEFAULT_DB_PATH  # noqa: E402
+from app.services.mid_long_geometry_validation import (  # noqa: E402
+    MidLongGeometryValidationArtifactRunner,
+)
 from app.services.strategy_optimization_artifacts import (  # noqa: E402
     DEFAULT_STRATEGY_OPTIMIZATION_ARTIFACT_DIR,
     StrategyOptimizationArtifactRunner,
@@ -66,6 +69,15 @@ def main() -> None:
             limit=max(20, args.limit),
             lane_pairs=lane_pairs,
         )
+        lab63 = MidLongGeometryValidationArtifactRunner(
+            db,
+            artifact_path=output_dir / "mid_long_lab63.json",
+        ).run(
+            include_watch_only=args.include_watch_only,
+            position_lock=not args.no_position_lock,
+            min_validation_sample=max(1, args.min_sample),
+            limit=max(20, args.limit),
+        )
 
     summary = {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -74,6 +86,12 @@ def main() -> None:
         "regime_count": len(payload.get("regime_by_lane") or {}),
         "v3_candidate_count": (payload.get("v3_shadow") or {}).get("v3_candidate_count", 0),
         "monitor_more_count": (payload.get("v3_shadow") or {}).get("monitor_more_count", 0),
+        "mid_long_lab63_path": str(output_dir / "mid_long_lab63.json"),
+        "mid_long_lab63_source_count": (lab63.get("split") or {}).get("source_signal_count", 0),
+        "mid_long_lab63_reference_policy": lab63.get("reference_policy"),
+        "mid_long_lab63_best_observed_policy": (
+            (lab63.get("best_observed_policy") or {}).get("policy_id")
+        ),
         "errors": payload.get("errors") or [],
         "read_only": True,
         "not_live_signal": True,

@@ -3736,6 +3736,88 @@ export type MidLongLab62Response = {
   guardrails: string[];
 };
 
+export type MidLongLab63Metrics = {
+  source_signal_count: number;
+  evaluated_count: number;
+  skipped_count: number;
+  skipped_counts: Record<string, number>;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  timeout_count: number;
+  positive_timeout_count: number;
+  negative_timeout_count: number;
+  open_count: number;
+  waiting_count: number;
+  incomplete_count: number;
+  missing_atr_count: number;
+  ideal_total_r_closed?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_median_r_closed?: string | number | null;
+  realistic_open_r?: string | number | null;
+  realistic_total_r_with_open?: string | number | null;
+  realism_penalty_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  spread_missing_count: number;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+  realistic_total_r_delta_vs_4h?: string | number | null;
+  realistic_avg_r_delta_vs_4h?: string | number | null;
+};
+
+export type MidLongLab63Policy = {
+  policy_id: string;
+  policy_label: string;
+  timeout_minutes?: number | null;
+  atr_multiplier: string | number;
+  reward_risk: string | number;
+  all: MidLongLab63Metrics;
+  train: MidLongLab63Metrics;
+  validation: MidLongLab63Metrics;
+  latest_results: Array<Record<string, unknown>>;
+  verdict: string;
+};
+
+export type MidLongLab63Response = {
+  generated_at_utc?: string | null;
+  lab: string;
+  study_scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  filters: {
+    epoch: string;
+    stage: string;
+    timeframe: string;
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_validation_sample: number;
+    limit: number;
+  };
+  geometry: {
+    atr_source: string;
+    atr_multiplier: string | number;
+    reward_risk: string | number;
+    entry_source: string;
+    forward_source: string;
+    realistic_model: string;
+  };
+  split: {
+    method: string;
+    source_signal_count: number;
+    train_source_count: number;
+    validation_source_count: number;
+  };
+  latest_futures_15m_close_time?: string | null;
+  reference_policy: string;
+  best_observed_policy?: MidLongLab63Policy | null;
+  policies: MidLongLab63Policy[];
+  guardrails: string[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;

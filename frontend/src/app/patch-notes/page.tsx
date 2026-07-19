@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-19",
+    version: "LAB-63",
+    title: "MID_LONG 1h Realistic Timeout Policy Validation",
+    status: "RESEARCH",
+    area: "MID_LONG 1h geometry validation",
+    summary: "Membandingkan timeout 60m, 120m, 4h, dan tanpa timeout pada geometry tetap 0.75 ATR / 1R dengan replay dan biaya realistis.",
+    changes: [
+      "Timeout 4 jam menjadi reference resmi; hasil 60m tidak lagi diasumsikan sebagai pilihan utama hanya karena unggul pada optimizer ideal.",
+      "Mode tanpa timeout mengikuti candle futures 15m closed sampai target atau stop; posisi unresolved tetap OPEN dan tidak dipaksa close pada candle terakhir.",
+      "Semua policy memakai ATR14 futures 1h causal, entry futures, fee Binance taker, spread Signal, slippage, dan position lock yang sama.",
+      "Hasil dipisahkan chronological train 70% dan validation 30%, dengan total/average/median realistic R, drawdown, open, incomplete, dan lock skip.",
+      "Missing atau gap forward candle ditandai WAITING/INCOMPLETE dan tidak boleh menghasilkan closed result palsu.",
+      "LAB-63 ikut direfresh oleh strategy optimization artifact cycle dan tersedia di halaman khusus MID_LONG 1h.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL live, outcome evaluator, atau execution."
+    ],
+    impact: "Kita dapat menilai secara langsung apakah 60 menit memang terlalu cepat, apakah 4 jam lebih masuk akal, dan apa konsekuensi operasional posisi tanpa timeout tanpa mencampur hasil unrealized ke closed R.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open LAB-63" },
+      { href: "/strategy-optimization-lab?stage=MID_LONG&timeframe=1h", label: "Geometry Archive" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-19",
     version: "LAB-62",
     title: "MID_LONG 1h V2.1 Baseline and Geometry Starting Point",
     status: "RESEARCH",

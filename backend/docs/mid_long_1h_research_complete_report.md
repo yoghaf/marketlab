@@ -3,9 +3,22 @@
 - Status: read-only research report
 - Production snapshot: 19 July 2026, approximately 17:55 WIB
 - Primary lane: `MID_LONG`, signal timeframe `1h`
-- Current formal research checkpoint: `LAB-62`
+- Current formal research checkpoint: `LAB-63`
 - Current rule status: V2 remains unchanged
 - Promotion status: not approved for live execution or rule replacement
+
+## LAB-63 Timeout Policy Validation
+
+LAB-63 keeps the candidate geometry fixed at `0.75 x ATR(14) 1h` risk and `1.0R` target. It changes only the position duration policy:
+
+- timeout after 60 minutes;
+- timeout after 120 minutes;
+- timeout after 4 hours, used as the official comparison reference;
+- no timeout, where a position remains open until target or stop is touched.
+
+All four policies use the same futures entry, causal 1h ATR, closed `AGG_READY` futures 15m path, Binance taker fee, signal spread, slippage, position lock, and chronological 70/30 split. The no-timeout policy never converts the latest candle into a completed result: unresolved positions remain `OPEN`, contribute only unrealized R, and keep the symbol lock active. Missing or gapped forward candles remain `WAITING_DATA` or `INCOMPLETE_FORWARD_DATA`.
+
+The production numbers are generated in `backend/artifacts/strategy_optimization/v1/mid_long_lab63.json`. They must be read as a timeout-policy study, not a live rule recommendation.
 
 ## 1. Executive Verdict
 

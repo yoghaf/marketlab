@@ -14,7 +14,7 @@ const labGroups = [
     title: "Research Fokus",
     links: [
       { href: "/mid-short-filter-combination-study", label: "MID_SHORT V2.1 Decision", helper: "Filter kandidat promosi" },
-      { href: "/mid-long-research-study", label: "MID_LONG 1h V2.1", helper: "LAB-62 baseline & geometry" },
+      { href: "/mid-long-research-study", label: "MID_LONG 1h V2.1", helper: "LAB-63 timeout policy" },
       { href: "/signal-misidentification-audit", label: "Misidentification Audit", helper: "Salah arah atau risk" },
       { href: "/signal-quality-lab", label: "Signal Quality Lab", helper: "Kenapa TP/SL" },
       { href: "/signal-1h-review", label: "1h Review", helper: "Long/short 1h" },
