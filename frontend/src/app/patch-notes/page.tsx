@@ -19,6 +19,28 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-19",
+    version: "LAB-65",
+    title: "MID_LONG 1h Failure Anatomy",
+    status: "RESEARCH",
+    area: "MID_LONG 1h loss diagnosis",
+    summary: "Membagi setiap loss realistis pada fixed cohort 0.75 ATR / 1R / 120m ke satu penyebab utama sebelum menguji kombinasi filter.",
+    changes: [
+      "Loss dipartisi menjadi stop-lalu-target, near-target reversal, favorable reversal, salah arah langsung, structure/regime conflict, no follow-through, timeout, cost drag, atau same-candle ambiguity.",
+      "Primary cause saling eksklusif sehingga satu loss tidak dihitung dua kali; contributor tags boleh overlap untuk diagnosis tambahan.",
+      "Forward path 15m hanya menjelaskan outcome dan tidak pernah menjadi input Signal Factory atau filter pre-entry.",
+      "Structure zone, BTC/ETH regime, spread, dan extension contributor memakai data yang tersedia pada waktu Signal.",
+      "Hasil all/train/validation, damage R, MFE/MAE, first-candle path, concentration, dan contoh Signal terbaru tersedia di halaman MID_LONG 1h.",
+      "LAB-63, LAB-64, dan LAB-65 memakai satu prepared cohort agar perbandingannya konsisten dan replay berat tidak digandakan.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL, outcome, atau execution."
+    ],
+    impact: "Riset berikutnya dapat diarahkan ke mekanisme loss yang benar-benar dominan di validation, bukan menumpuk filter berdasarkan dugaan.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open LAB-65" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-19",
     version: "LAB-64",
     title: "MID_LONG 1h TP/SL Evidence Separation",
     status: "RESEARCH",

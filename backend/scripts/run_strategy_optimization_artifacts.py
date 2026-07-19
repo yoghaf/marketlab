@@ -22,6 +22,9 @@ from app.services.mid_long_geometry_validation import (  # noqa: E402
 from app.services.mid_long_evidence_separation import (  # noqa: E402
     MidLongEvidenceSeparationArtifactRunner,
 )
+from app.services.mid_long_failure_anatomy import (  # noqa: E402
+    MidLongFailureAnatomyArtifactRunner,
+)
 from app.services.strategy_optimization_artifacts import (  # noqa: E402
     DEFAULT_STRATEGY_OPTIMIZATION_ARTIFACT_DIR,
     StrategyOptimizationArtifactRunner,
@@ -96,6 +99,16 @@ def main() -> None:
             limit=max(20, args.limit),
             prepared_dataset=prepared_mid_long,
         )
+        lab65 = MidLongFailureAnatomyArtifactRunner(
+            db,
+            artifact_path=output_dir / "mid_long_lab65.json",
+        ).run(
+            include_watch_only=args.include_watch_only,
+            position_lock=not args.no_position_lock,
+            min_failure_sample=max(1, args.min_sample),
+            limit=max(20, args.limit),
+            prepared_dataset=prepared_mid_long,
+        )
 
     summary = {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -114,6 +127,14 @@ def main() -> None:
         "mid_long_lab64_verdict": lab64.get("verdict"),
         "mid_long_lab64_stable_field_count": (
             (lab64.get("field_summary") or {}).get("stable_field_count", 0)
+        ),
+        "mid_long_lab65_path": str(output_dir / "mid_long_lab65.json"),
+        "mid_long_lab65_verdict": lab65.get("verdict"),
+        "mid_long_lab65_failure_count": (
+            ((lab65.get("failure_summary") or {}).get("all") or {}).get("count", 0)
+        ),
+        "mid_long_lab65_dominant_cause": (
+            (lab65.get("failure_summary") or {}).get("dominant_cause")
         ),
         "errors": payload.get("errors") or [],
         "read_only": True,

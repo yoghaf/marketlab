@@ -3,7 +3,7 @@
 - Status: read-only research report
 - Production snapshot: refreshed by the MarketLab research artifact cycle
 - Primary lane: `MID_LONG`, signal timeframe `1h`
-- Current formal research checkpoint: `LAB-64`
+- Current formal research checkpoint: `LAB-65`
 - Current rule status: V2 remains unchanged
 - Promotion status: not approved for live execution or rule replacement
 
@@ -32,6 +32,26 @@ The comparison is calculated separately for all rows, the first chronological 70
 - evidence availability is reported rather than silently treating missing values as neutral.
 
 Timeout rows, same-candle ambiguity, waiting rows, incomplete data, future returns, MFE, and MAE are excluded from TP-versus-SL evidence distributions. The production output is stored in `backend/artifacts/strategy_optimization/v1/mid_long_lab64.json` and exposed through `/api/signal-candidates/mid-long-1h-lab64`.
+
+## LAB-65 Failure Anatomy
+
+LAB-65 keeps the exact LAB-63/LAB-64 cohort and fixed policy: `0.75 x ATR(14) 1h`, `1.0R`, 120-minute timeout, futures entry, causal data, realistic cost model, and position lock. It does not search thresholds. It partitions every negative realistic outcome into one mutually exclusive primary cause:
+
+- stop first, then the original target is reached later within four hours;
+- near-target reversal after at least `+0.75R` favorable movement;
+- favorable movement between `+0.25R` and `+0.75R`, followed by reversal;
+- immediate wrong direction within the first two closed 15m candles;
+- structure-zone conflict visible at signal time;
+- BTC/ETH one-hour regime conflict visible at signal time;
+- no follow-through;
+- negative timeout drift;
+- cost-dominated timeout or target;
+- ambiguous target and stop in the same candle;
+- other unclassified realistic loss.
+
+Contributor tags may overlap, but primary causes cannot. Forward 15m candles after the signal are used only to explain what happened; they are never passed back into Signal Factory or used as a filter. Structure zones, BTC/ETH regime, spread, and entry-extension diagnostics are calculated only from information available at the signal timestamp. The report is split into the same chronological train/validation cohorts as LAB-63 and LAB-64.
+
+The production output is stored in `backend/artifacts/strategy_optimization/v1/mid_long_lab65.json` and exposed through `/api/signal-candidates/mid-long-1h-lab65`. Its purpose is to select the next narrow research question. It does not approve a V2.1 filter.
 
 ## 1. Executive Verdict
 
@@ -441,14 +461,15 @@ If a variant passes validation, log it alongside V2 without changing scanner out
 | Is a simple evidence filter ready? | No. |
 | Is there a promising direction? | Only a research control: 0.75 ATR, 1R, 120m was least damaging in LAB-63 validation. |
 | Should the current rule be changed now? | No. |
-| Next formal work | LAB-64 evidence separation, followed by failure anatomy and fixed-cohort filter validation. |
+| Next formal work | Use LAB-65 failure anatomy to choose one causal hypothesis, then run fixed-cohort combination validation. |
 
 The recommended order is therefore:
 
 1. Keep MID_SHORT V2.1 in one-month paper observation.
 2. Freeze current MID_LONG V2 as a control, not a promoted setup.
-3. Use LAB-64 to identify whether any pre-entry evidence remains stable in chronological validation.
-4. Build failure anatomy and fixed-cohort filter studies before considering a V2.1 shadow.
+3. Treat LAB-64 as complete: no single evidence field separated TP and SL strongly enough for direct promotion.
+4. Use LAB-65 to quantify which failure mechanism dominates and remains visible in validation.
+5. Test only the corresponding pre-entry combination on the fixed cohort before considering a V2.1 shadow.
 
 ## 15. Production Sources
 
@@ -462,6 +483,7 @@ The report was assembled from these read-only production endpoints and artifacts
 - `/api/strategy-optimization-artifacts`
 - `/api/signal-candidates/mid-long-1h-lab63`
 - `/api/signal-candidates/mid-long-1h-lab64`
+- `/api/signal-candidates/mid-long-1h-lab65`
 - `/api/signal-candidates/one-hour-v4-shadow`
 
 No Signal Factory rule, scanner decision, outcome calculation, TP/SL rule, threshold, database schema, or execution behavior was changed for this report.

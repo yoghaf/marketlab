@@ -11,6 +11,9 @@ import {
   MidLongLab63Response,
   MidLongLab64Field,
   MidLongLab64Response,
+  MidLongLab65Cause,
+  MidLongLab65Example,
+  MidLongLab65Response,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -46,6 +49,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let lab62: MidLongLab62Response | null = null;
   let lab63: MidLongLab63Response | null = null;
   let lab64: MidLongLab64Response | null = null;
+  let lab65: MidLongLab65Response | null = null;
   let quality: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
   let optimization: StrategyOptimizationResponse | null = null;
@@ -56,12 +60,14 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let regimeError: string | null = null;
   let lab63Error: string | null = null;
   let lab64Error: string | null = null;
+  let lab65Error: string | null = null;
 
-  const [labResult, artifactResult, lab63Result, lab64Result] = await Promise.allSettled([
+  const [labResult, artifactResult, lab63Result, lab64Result, lab65Result] = await Promise.allSettled([
     fetchJson<MidLongLab62Response>(`/api/signal-candidates/mid-long-1h-lab62?${labQuery.toString()}`, { revalidateSeconds: 120 }),
     fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 300 }),
     fetchJson<MidLongLab63Response>("/api/signal-candidates/mid-long-1h-lab63", { revalidateSeconds: 300 }),
-    fetchJson<MidLongLab64Response>("/api/signal-candidates/mid-long-1h-lab64", { revalidateSeconds: 300 })
+    fetchJson<MidLongLab64Response>("/api/signal-candidates/mid-long-1h-lab64", { revalidateSeconds: 300 }),
+    fetchJson<MidLongLab65Response>("/api/signal-candidates/mid-long-1h-lab65", { revalidateSeconds: 300 })
   ]);
 
   if (labResult.status === "fulfilled") {
@@ -85,6 +91,12 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     lab64Error = lab64Result.reason instanceof Error ? lab64Result.reason.message : "MID_LONG LAB-64 API failed";
   }
 
+  if (lab65Result.status === "fulfilled") {
+    lab65 = lab65Result.value;
+  } else {
+    lab65Error = lab65Result.reason instanceof Error ? lab65Result.reason.message : "MID_LONG LAB-65 API failed";
+  }
+
   if (artifactResult.status === "fulfilled") {
     const artifacts = artifactResult.value;
     optimization = artifacts.optimization_by_lane?.["MID_LONG:1h"] || null;
@@ -101,14 +113,15 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   const topFilters = filterStudy?.rows || [];
   const promising = topFilters.filter((row) => ["PROMISING_FILTER", "REDUCES_DAMAGE"].includes(row.verdict)).slice(0, 6);
   const bestGeometry = optimization?.summary.best_row || optimization?.rows?.[0] || null;
+  const dominantCause = lab65?.cause_rows?.[0] || null;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="MID_LONG 1h V2.1 Research"
-        badge="LAB-64 - TP/SL EVIDENCE SEPARATION"
-        subtitle="Cohort dan geometry dikunci ke hasil LAB-63 120m. LAB-64 menguji apakah evidence sebelum entry benar-benar membedakan TP dan SL secara konsisten pada train dan validation."
-        updatedAt={fmtTime(lab64?.generated_at_utc || lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
+        badge="LAB-65 - FAILURE ANATOMY"
+        subtitle="Cohort dan geometry tetap 0.75 ATR / 1R / 120m. LAB-65 membedah loss realistis: salah arah langsung, reversal, structure/regime conflict, timeout, dan cost drag."
+        updatedAt={fmtTime(lab65?.generated_at_utc || lab64?.generated_at_utc || lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -150,10 +163,11 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <Info label="Geometry lock" value={optimization ? (optimization.filters.position_lock ? "Position lock ON" : "Position lock OFF") : "-"} />
               <Info label="LAB-62 decision" value={lab62Decision(lane, bestGeometry)} />
             </div>
-            <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
+            <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
               <ResearchStep status="COMPLETE" title="LAB-62" detail="Baseline V2 dan geometry ideal sudah dibekukan sebagai titik awal." />
               <ResearchStep status="COMPLETE" title="LAB-63" detail="120m paling sedikit merusak validation, tetapi seluruh policy tetap negatif setelah biaya." />
-              <ResearchStep status="ACTIVE" title="LAB-64" detail="Cari evidence TP-vs-SL yang konsisten pada train dan validation sebelum membuat filter." />
+              <ResearchStep status="COMPLETE" title="LAB-64" detail="Tidak ada single evidence separator yang cukup stabil untuk langsung menjadi filter." />
+              <ResearchStep status="ACTIVE" title="LAB-65" detail="Partisi loss berdasarkan path, structure, regime, timeout, dan biaya sebelum menguji kombinasi filter." />
             </div>
             <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-900">
               Angka geometry masih ideal dan dipilih dari grid. Angka itu tidak boleh dibandingkan langsung dengan V2 realistic R serta belum boleh menjadi rule Signal.
@@ -215,6 +229,59 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               </>
             ) : (
               <div className="p-4"><EmptyState title="LAB-64 belum tersedia" detail="Tunggu research artifact cycle berikutnya." /></div>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="LAB-65 MID_LONG 1h failure anatomy"
+            description="Setiap loss realistis masuk tepat satu primary cause. Contributor boleh tumpang tindih untuk menunjukkan faktor tambahan tanpa menghitung loss dua kali."
+          >
+            {lab65Error ? (
+              <div className="p-4 text-sm text-stale">{lab65Error}</div>
+            ) : lab65 ? (
+              <>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+                  <Info label="Fixed cohort" value={`${lab65.split.source_signal_count} Signal`} />
+                  <Info label="Realistic losses" value={lab65.failure_summary.all.count} />
+                  <Info label="Validation losses" value={lab65.failure_summary.validation.count} />
+                  <Info label="Loss damage" value={`${fmtSigned(lab65.failure_summary.all.total_realistic_r)}R`} />
+                  <Info label="Dominant cause" value={dominantCause?.label || "Belum tersedia"} />
+                  <Info label="Verdict" value={labelFor(lab65.verdict)} />
+                </div>
+                {dominantCause && (
+                  <div className="border-t border-line bg-blue-50 p-4 text-sm text-blue-950">
+                    Penyebab terbesar saat ini: <b>{dominantCause.label}</b> pada {fmtNumber(dominantCause.all.share_pct)}% loss
+                    ({dominantCause.all.count} kasus). Validation memuat {dominantCause.validation.count} kasus.
+                    Ini diagnosis outcome, bukan filter Signal baru.
+                  </div>
+                )}
+                <Lab65CauseTable rows={lab65.cause_rows} />
+                <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold">Contributor overlap</h3>
+                    <div className="space-y-2">
+                      {lab65.contributor_rows.slice(0, 10).map((row) => (
+                        <div key={row.contributor} className="flex items-center justify-between gap-3 rounded border border-line bg-field px-3 py-2 text-sm">
+                          <span>{labelFor(row.contributor)}</span>
+                          <span className="shrink-0 font-semibold">{row.all_count} ({fmtNumber(row.all_share_pct)}%)</span>
+                        </div>
+                      ))}
+                      {!lab65.contributor_rows.length && <EmptyState title="No contributor rows" detail="Belum ada loss contributor." />}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold">Batas interpretasi</h3>
+                    <div className="space-y-2 text-sm text-slate-700">
+                      {lab65.guardrails.slice(0, 5).map((guardrail) => (
+                        <div key={guardrail} className="rounded border border-line bg-white px-3 py-2">{guardrail}</div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <Lab65FailureExamples rows={lab65.latest_failure_examples} />
+              </>
+            ) : (
+              <div className="p-4"><EmptyState title="LAB-65 belum tersedia" detail="Tunggu research artifact cycle berikutnya." /></div>
             )}
           </SectionCard>
 
@@ -503,6 +570,110 @@ function Lab64EvidenceTable({ rows }: { rows: MidLongLab64Field[] }) {
           ))}
           {!rows.length && (
             <tr><td colSpan={8}><EmptyState title="No evidence rows" detail="Artifact LAB-64 belum berisi field evidence." /></td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab65CauseTable({ rows }: { rows: MidLongLab65Cause[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Primary cause</th>
+            <th>All loss</th>
+            <th>Validation</th>
+            <th>Path median</th>
+            <th>Context conflicts</th>
+            <th>Damage</th>
+            <th>Research action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.cause}>
+              <td className="max-w-xs">
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.definition}</div>
+              </td>
+              <td>
+                <div>{row.all.count} ({fmtNumber(row.all.share_pct)}%)</div>
+                <div className="text-xs text-slate-500">train {row.train.count}</div>
+              </td>
+              <td>
+                <div>{row.validation.count} ({fmtNumber(row.validation.share_pct)}%)</div>
+                <div className="text-xs text-slate-500">top {row.validation.top_symbol || "-"}</div>
+              </td>
+              <td>
+                <div>MFE {fmtSigned(row.all.median_mfe_before_result_r)}R</div>
+                <div className="text-xs text-slate-500">15m {fmtSigned(row.all.median_first_15m_close_r)}R / {fmtNumber(row.all.median_time_to_result_minutes)}m</div>
+              </td>
+              <td>
+                <div>Zone {row.all.structure_conflict_count || 0}</div>
+                <div className="text-xs text-slate-500">BTC/ETH {row.all.regime_conflict_count || 0}</div>
+              </td>
+              <td className="text-stale">
+                <div>{fmtSigned(row.all.total_realistic_r)}R</div>
+                <div className="text-xs">avg {fmtSigned(row.all.avg_realistic_r)}R</div>
+              </td>
+              <td className="max-w-sm text-sm text-slate-600">{row.research_action}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr><td colSpan={7}><EmptyState title="No failure causes" detail="Tidak ada realistic loss pada cohort ini." /></td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab65FailureExamples({ rows }: { rows: MidLongLab65Example[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <div className="px-4 py-3 text-sm font-semibold">Latest audited loss examples</div>
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Signal WIB</th>
+            <th>Symbol</th>
+            <th>Result</th>
+            <th>Primary cause</th>
+            <th>Forward path</th>
+            <th>Pre-entry context</th>
+            <th>Contributors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 15).map((row) => (
+            <tr key={row.signal_id}>
+              <td>{fmtTime(row.signal_timestamp)}</td>
+              <td>
+                <Link className="font-semibold text-blue-700 hover:underline" href={`/signals/${row.symbol}?signal_id=${row.signal_id}`}>{row.symbol}</Link>
+              </td>
+              <td>
+                <StatusBadge value={row.result_status} />
+                <div className="mt-1 text-xs">{fmtSigned(row.realistic_realized_r)}R</div>
+              </td>
+              <td><StatusBadge value={row.failure_primary_cause} /></td>
+              <td>
+                <div>MFE {fmtSigned(row.mfe_before_result_r)}R / MAE {fmtSigned(row.mae_before_result_r)}R</div>
+                <div className="text-xs text-slate-500">15m {fmtSigned(row.first_15m_close_r)}R / result {fmtNumber(row.time_to_result_minutes)}m</div>
+              </td>
+              <td>
+                <div>{labelFor(row.structure_status)}</div>
+                <div className="text-xs text-slate-500">Regime conflict {row.regime_conflict ? "yes" : "no"}</div>
+              </td>
+              <td className="max-w-sm text-xs text-slate-600">
+                {(row.failure_contributors || []).map((item) => labelFor(item)).join(", ") || "No additional contributor"}
+              </td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr><td colSpan={7}><EmptyState title="No failure examples" detail="Belum ada realistic loss untuk diaudit." /></td></tr>
           )}
         </tbody>
       </table>

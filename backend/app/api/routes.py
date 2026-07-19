@@ -36,6 +36,7 @@ from app.services.live_candidate_scanner import LiveCandidateScannerService
 from app.services.market_regime_study import DEFAULT_ARTIFACT_DIR as DEFAULT_MARKET_REGIME_STUDY_DIR
 from app.services.mid_long_geometry_validation import MidLongGeometryValidationArtifactService
 from app.services.mid_long_evidence_separation import MidLongEvidenceSeparationArtifactService
+from app.services.mid_long_failure_anatomy import MidLongFailureAnatomyArtifactService
 from app.services.ohlcv_aggregation import OhlcvAggregationService
 from app.services.outcome_summary_readonly_15m import OutcomeSummaryReadonly15mService
 from app.services.outcome_tracker_15m import OutcomeTracker15mService
@@ -554,6 +555,14 @@ def signal_candidates_mid_long_1h_lab64():
         return json_safe(MidLongEvidenceSeparationArtifactService().summary())
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="MID_LONG 1h LAB-64 artifact is not available yet") from exc
+
+
+@router.get("/api/signal-candidates/mid-long-1h-lab65")
+def signal_candidates_mid_long_1h_lab65():
+    try:
+        return json_safe(MidLongFailureAnatomyArtifactService().summary())
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="MID_LONG 1h LAB-65 artifact is not available yet") from exc
 
 
 @router.get("/api/signal-candidates/structure-zone-shadow-study")

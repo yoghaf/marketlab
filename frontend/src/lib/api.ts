@@ -3903,6 +3903,121 @@ export type MidLongLab64Response = {
   guardrails: string[];
 };
 
+export type MidLongLab65FailureStats = {
+  count: number;
+  share_pct?: string | number | null;
+  total_realistic_r?: string | number | null;
+  avg_realistic_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  median_mfe_before_result_r?: string | number | null;
+  median_mae_before_result_r?: string | number | null;
+  median_first_15m_close_r?: string | number | null;
+  median_first_30m_close_r?: string | number | null;
+  median_time_to_result_minutes?: string | number | null;
+  target_after_stop_count?: number;
+  structure_conflict_count?: number;
+  regime_conflict_count?: number;
+  entry_extension_high_count?: number;
+  top_symbol?: string | null;
+  top_symbol_count?: number;
+  top_symbol_share_pct?: string | number | null;
+  evidence_medians?: Record<string, string | number | null>;
+};
+
+export type MidLongLab65Cause = {
+  cause: string;
+  label: string;
+  definition: string;
+  research_action: string;
+  all: MidLongLab65FailureStats;
+  train: MidLongLab65FailureStats;
+  validation: MidLongLab65FailureStats;
+};
+
+export type MidLongLab65Example = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp?: string | null;
+  result_status: string;
+  result_time_utc?: string | null;
+  realistic_realized_r?: string | number | null;
+  failure_primary_cause: string;
+  failure_contributors: string[];
+  result_candle_index?: number | null;
+  time_to_result_minutes?: string | number | null;
+  mfe_before_result_r?: string | number | null;
+  mae_before_result_r?: string | number | null;
+  first_15m_close_r?: string | number | null;
+  after_sl_would_hit_target_within_4h?: boolean;
+  structure_status?: string | null;
+  regime_conflict?: boolean;
+  evidence?: Record<string, string | number | null>;
+};
+
+export type MidLongLab65Response = {
+  generated_at_utc?: string | null;
+  lab: string;
+  study_scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  filters: {
+    epoch: string;
+    stage: string;
+    timeframe: string;
+    direction: string;
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_failure_sample: number;
+    limit: number;
+  };
+  policy: {
+    policy_id: string;
+    timeout_minutes: number;
+    atr_source: string;
+    atr_multiplier: string | number;
+    reward_risk: string | number;
+    forward_source: string;
+    realistic_model: string;
+  };
+  split: {
+    method: string;
+    source_signal_count: number;
+    train_source_count: number;
+    validation_source_count: number;
+  };
+  latest_futures_15m_close_time?: string | null;
+  outcome_summary: {
+    all: MidLongLab63Metrics;
+    train: MidLongLab63Metrics;
+    validation: MidLongLab63Metrics;
+  };
+  failure_summary: {
+    all: MidLongLab65FailureStats;
+    train: MidLongLab65FailureStats;
+    validation: MidLongLab65FailureStats;
+    dominant_cause?: string | null;
+    dominant_cause_share_pct?: string | number | null;
+  };
+  train_thresholds: {
+    method: string;
+    values: Record<string, string | number | null>;
+  };
+  cause_rows: MidLongLab65Cause[];
+  contributor_rows: Array<{
+    contributor: string;
+    all_count: number;
+    all_share_pct?: string | number | null;
+    train_count: number;
+    validation_count: number;
+  }>;
+  outcome_path_rows: Array<Record<string, string | number | null>>;
+  latest_failure_examples: MidLongLab65Example[];
+  verdict: string;
+  next_research_targets: Array<Record<string, unknown>>;
+  guardrails: string[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;
