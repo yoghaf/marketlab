@@ -3712,6 +3712,30 @@ export type SignalQualityLabResponse = {
   open_signals: SignalPerformanceItem[];
 };
 
+export type MidLongLab62Response = {
+  generated_at_utc?: string | null;
+  lab: string;
+  study_scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  closed_only_snapshot: boolean;
+  snapshot_coverage: {
+    source_1h_rows: number;
+    source_1h_total: number;
+    mid_long_1h_rows: number;
+    is_truncated: boolean;
+  };
+  quality: SignalQualityLabResponse;
+  filter_study: SignalFilterStudyResponse;
+  snapshot?: {
+    source?: string | null;
+    filename?: string | null;
+    generated_at_utc?: string | null;
+  } | null;
+  guardrails: string[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;

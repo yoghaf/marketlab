@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-19",
+    version: "LAB-62",
+    title: "MID_LONG 1h V2.1 Baseline and Geometry Starting Point",
+    status: "RESEARCH",
+    area: "MID_LONG 1h dedicated research lane",
+    summary: "Memulai jalur V2.1 MID_LONG 1h secara terpisah dengan baseline V2 realistis, evidence TP/SL, geometry ATR/RR/timeout, dan market regime sebagai hipotesis read-only.",
+    changes: [
+      "Halaman /mid-long-research-study sekarang menjadi workspace khusus MID_LONG 1h dan tidak mencampur cohort MID_SHORT.",
+      "Baseline V2 menampilkan sample, TP/SL, ideal R, realistic R, SL share, evidence gap, serta simbol profit/loss utama.",
+      "Geometry candidate menampilkan ATR multiplier, RR, timeout, TP/SL/both, timeout outcome, total/average/median R, dan drawdown.",
+      "Regime split untuk geometry terbaik menampilkan kondisi market yang membantu atau merusak sebagai diagnosis in-sample, bukan hard gate.",
+      "Roadmap resmi dimulai dari LAB-62, dilanjutkan realistic geometry validation, failure anatomy, fixed cohort discovery, filter walk-forward, lalu shadow forward jika lolos.",
+      "Angka optimizer ideal diberi pemisah dan warning agar tidak dibandingkan langsung dengan V2 realistic R.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL, outcome evaluator, atau execution."
+    ],
+    impact: "Riset MID_LONG 1h sekarang punya halaman dan urutan eksperimen sendiri. Kandidat awal 0.75 ATR / 1R / timeout pendek dapat diuji tanpa mengganggu MID_SHORT V2.1 atau rule live.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open LAB-62" },
+      { href: "/strategy-optimization-lab?stage=MID_LONG&timeframe=1h", label: "Geometry Archive" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-19",
     version: "LAB-61",
     title: "MID_SHORT V2.1 Closed-candle Dynamic Exit Study",
     status: "RESEARCH",

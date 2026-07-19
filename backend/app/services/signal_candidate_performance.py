@@ -370,50 +370,18 @@ class SignalCandidatePerformanceService:
             position_lock=position_lock,
             with_shadow=False,
         )
-        aggregate = self._aggregate(evaluated, skipped)
-        closed = [item for item in evaluated if item["result_status"] in COMPLETED_OUTCOMES and item.get("realized_r") is not None]
-        best = sorted(closed, key=lambda item: Decimal(item["realized_r"]), reverse=True)[:limit]
-        worst = sorted(closed, key=lambda item: Decimal(item["realized_r"]))[:limit]
-        open_items = sorted(
-            [item for item in evaluated if item["result_status"] == "OPEN" and item.get("unrealized_r") is not None],
-            key=lambda item: Decimal(item["unrealized_r"]),
-            reverse=True,
-        )[:limit]
-
-        payload = {
-            "generated_at_utc": utcnow(),
-            "epoch": epoch,
-            "filters": {
-                "include_watch_only": include_watch_only,
-                "position_lock": position_lock,
-                "stage": stage,
-                "timeframe": timeframe,
-                "min_sample": min_sample,
-                "limit": limit,
-            },
-            "read_only": True,
-            "not_live_signal": True,
-            "not_execution_instruction": True,
-            "strategy_version": LIVE_STRATEGY_VERSION,
-            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
-            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
-            "latest_evaluation_candle_time": latest_candle_time,
-            "latest_futures_15m_close_time": latest_candle_time,
-            "aggregate": aggregate,
-            "drawdown": _drawdown_summary(evaluated),
-            "by_stage": _bucket_rows(evaluated, key="stage", min_sample=min_sample),
-            "by_confidence": _bucket_rows(evaluated, key="confidence_tier", min_sample=min_sample),
-            "by_timeframe": _bucket_rows(evaluated, key="timeframe", min_sample=min_sample),
-            "by_volume_rank": _volume_rank_rows(evaluated, min_sample=min_sample),
-            "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
-            "profit_loss_research": _v2_profit_loss_research(evaluated, min_sample=min_sample, limit=limit),
-            "mid_short_1h_refinement": _v2_mid_short_1h_refinement(evaluated, min_sample=min_sample, limit=limit),
-            "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
-            "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
-            "best_signals": best,
-            "worst_signals": worst,
-            "open_signals": open_items,
-        }
+        payload = build_quality_lab_payload(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            min_sample=min_sample,
+            limit=limit,
+        )
         _quality_lab_cache_set(cache_key, payload)
         return payload
 
@@ -2129,68 +2097,18 @@ class SignalCandidatePerformanceService:
             position_lock=position_lock,
             with_shadow=False,
         )
-        baseline = _filter_study_row(
-            filter_id="BASELINE",
-            label=f"Baseline {timeframe} {stage}",
-            expression="no additional filter",
-            family="BASELINE",
-            items=evaluated,
-            source_count=len(evaluated),
-            missing_data_count=0,
-            required_fields=(),
-            baseline_perf=None,
+        return build_filter_study_payload(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
             min_sample=min_sample,
+            limit=limit,
         )
-        rows = [baseline]
-        for spec in _filter_study_specs():
-            passed: list[dict[str, Any]] = []
-            missing_data_count = 0
-            for item in evaluated:
-                evidence = item.get("evidence_snapshot") or {}
-                if any(evidence.get(field) is None for field in spec.required_fields):
-                    missing_data_count += 1
-                    continue
-                if spec.predicate(item):
-                    passed.append(item)
-            rows.append(
-                _filter_study_row(
-                    filter_id=spec.filter_id,
-                    label=spec.label,
-                    expression=spec.expression,
-                    family=spec.family,
-                    items=passed,
-                    source_count=len(evaluated),
-                    missing_data_count=missing_data_count,
-                    required_fields=spec.required_fields,
-                    baseline_perf=baseline,
-                    min_sample=min_sample,
-                )
-            )
-        rows = [rows[0], *_sort_filter_rows(rows[1:])[:limit]]
-        return {
-            "generated_at_utc": utcnow(),
-            "epoch": epoch,
-            "filters": {
-                "include_watch_only": include_watch_only,
-                "position_lock": position_lock,
-                "stage": stage,
-                "timeframe": timeframe,
-                "min_sample": min_sample,
-                "limit": limit,
-            },
-            "read_only": True,
-            "not_live_signal": True,
-            "not_execution_instruction": True,
-            "strategy_version": LIVE_STRATEGY_VERSION,
-            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
-            "study_scope": "read_only_filter_study",
-            "evaluation_candle_interval": "15m_closed_plus_1m_tail",
-            "latest_evaluation_candle_time": latest_candle_time,
-            "latest_futures_15m_close_time": latest_candle_time,
-            "skipped_by_position_lock": dict(skipped),
-            "baseline": baseline,
-            "rows": rows,
-        }
 
     def one_hour_filter_candidate_study(
         self,
@@ -3243,6 +3161,151 @@ def aggregate_signal_performance_items(items: list[dict[str, Any]], skipped: Cou
         "by_timeframe": dict(by_timeframe),
         "by_timeframe_performance": timeframe_perf,
         "by_confidence": dict(by_confidence),
+    }
+
+
+def build_quality_lab_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: Counter[str] | dict[str, int] | None,
+    latest_candle_time: Any,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    stage: str | None,
+    timeframe: str | None,
+    min_sample: int,
+    limit: int,
+    source: str = "live_compute",
+) -> dict[str, Any]:
+    skipped_counter = Counter(skipped or {})
+    closed = [
+        item
+        for item in evaluated
+        if item.get("result_status") in COMPLETED_OUTCOMES and item.get("realized_r") is not None
+    ]
+    best = sorted(closed, key=lambda item: Decimal(item["realized_r"]), reverse=True)[:limit]
+    worst = sorted(closed, key=lambda item: Decimal(item["realized_r"]))[:limit]
+    open_items = sorted(
+        [item for item in evaluated if item.get("result_status") == "OPEN" and item.get("unrealized_r") is not None],
+        key=lambda item: Decimal(item["unrealized_r"]),
+        reverse=True,
+    )[:limit]
+    latest_dt = _parse_dt(latest_candle_time)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "stage": stage,
+            "timeframe": timeframe,
+            "min_sample": min_sample,
+            "limit": limit,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+        "evaluation_candle_interval": "15m_closed_plus_1m_tail",
+        "source": source,
+        "latest_evaluation_candle_time": latest_dt,
+        "latest_futures_15m_close_time": latest_dt,
+        "aggregate": aggregate_signal_performance_items(evaluated, skipped_counter),
+        "drawdown": _drawdown_summary(evaluated),
+        "by_stage": _bucket_rows(evaluated, key="stage", min_sample=min_sample),
+        "by_confidence": _bucket_rows(evaluated, key="confidence_tier", min_sample=min_sample),
+        "by_timeframe": _bucket_rows(evaluated, key="timeframe", min_sample=min_sample),
+        "by_volume_rank": _volume_rank_rows(evaluated, min_sample=min_sample),
+        "evidence_fields": _evidence_field_rows(evaluated, min_sample=min_sample),
+        "profit_loss_research": _v2_profit_loss_research(evaluated, min_sample=min_sample, limit=limit),
+        "mid_short_1h_refinement": _v2_mid_short_1h_refinement(evaluated, min_sample=min_sample, limit=limit),
+        "top_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=True),
+        "weak_symbols": _bucket_rows(evaluated, key="symbol", min_sample=min_sample, limit=limit, reverse=False),
+        "best_signals": best,
+        "worst_signals": worst,
+        "open_signals": open_items,
+    }
+
+
+def build_filter_study_payload(
+    *,
+    evaluated: list[dict[str, Any]],
+    skipped: Counter[str] | dict[str, int] | None,
+    latest_candle_time: Any,
+    epoch: str,
+    include_watch_only: bool,
+    position_lock: bool,
+    stage: str,
+    timeframe: str,
+    min_sample: int,
+    limit: int,
+    source: str = "live_compute",
+) -> dict[str, Any]:
+    baseline = _filter_study_row(
+        filter_id="BASELINE",
+        label=f"Baseline {timeframe} {stage}",
+        expression="no additional filter",
+        family="BASELINE",
+        items=evaluated,
+        source_count=len(evaluated),
+        missing_data_count=0,
+        required_fields=(),
+        baseline_perf=None,
+        min_sample=min_sample,
+    )
+    rows = [baseline]
+    for spec in _filter_study_specs():
+        passed: list[dict[str, Any]] = []
+        missing_data_count = 0
+        for item in evaluated:
+            evidence = item.get("evidence_snapshot") or {}
+            if any(evidence.get(field) is None for field in spec.required_fields):
+                missing_data_count += 1
+                continue
+            if spec.predicate(item):
+                passed.append(item)
+        rows.append(
+            _filter_study_row(
+                filter_id=spec.filter_id,
+                label=spec.label,
+                expression=spec.expression,
+                family=spec.family,
+                items=passed,
+                source_count=len(evaluated),
+                missing_data_count=missing_data_count,
+                required_fields=spec.required_fields,
+                baseline_perf=baseline,
+                min_sample=min_sample,
+            )
+        )
+    rows = [rows[0], *_sort_filter_rows(rows[1:])[:limit]]
+    latest_dt = _parse_dt(latest_candle_time)
+    return {
+        "generated_at_utc": utcnow(),
+        "epoch": epoch,
+        "filters": {
+            "include_watch_only": include_watch_only,
+            "position_lock": position_lock,
+            "stage": stage,
+            "timeframe": timeframe,
+            "min_sample": min_sample,
+            "limit": limit,
+        },
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "strategy_version": LIVE_STRATEGY_VERSION,
+        "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+        "study_scope": "read_only_filter_study",
+        "evaluation_candle_interval": "15m_closed_plus_1m_tail",
+        "source": source,
+        "latest_evaluation_candle_time": latest_dt,
+        "latest_futures_15m_close_time": latest_dt,
+        "skipped_by_position_lock": dict(Counter(skipped or {})),
+        "baseline": baseline,
+        "rows": rows,
     }
 
 

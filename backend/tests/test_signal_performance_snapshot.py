@@ -25,8 +25,10 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         signal_time = datetime(2026, 1, 1, 0, 15)
         db.add(_signal("s1", "AAAUSDT", signal_time, "LONG", "EARLY_LONG", "100", "90", "115"))
         db.add(_signal("s2", "BBBUSDT", signal_time, "SHORT", "MID_SHORT", "100", "110", "85", timeframe="1h"))
+        db.add(_signal("s3", "CCCUSDT", signal_time, "LONG", "MID_LONG", "100", "90", "115", timeframe="1h"))
         db.add(_candle("AAAUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
         db.add(_candle("BBBUSDT", signal_time, signal_time + timedelta(minutes=15), high="101", low="84", close="85"))
+        db.add(_candle("CCCUSDT", signal_time, signal_time + timedelta(minutes=15), high="116", low="99", close="115"))
         db.commit()
 
         result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
@@ -34,8 +36,8 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
             forward_integrity_limit=25,
         )
 
-    assert result["performance_items"] == 2
-    assert result["performance_1h_items"] == 1
+    assert result["performance_items"] == 3
+    assert result["performance_1h_items"] == 2
     assert (tmp_path / PERFORMANCE_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
@@ -50,16 +52,17 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     one_hour_filter = service.one_hour_filter_candidate_study(min_sample=1, limit=5)
     one_hour_walk_forward = service.one_hour_walk_forward_study(min_sample=1, limit=5)
     one_hour_v4_shadow = service.one_hour_v4_shadow_monitor(min_sample=1, limit=5)
+    lab62 = service.mid_long_1h_lab62(min_sample=1, limit=5)
     v3_filter_map = service.v3_shadow_filter_map()
 
     assert performance["cache"]["source"] == "artifact_snapshot"
     assert performance["snapshot"]["read_model"] == "artifact_snapshot"
     assert performance["filters"]["limit"] == 1
-    assert performance["aggregate"]["tp_count"] == 2
+    assert performance["aggregate"]["tp_count"] == 3
     assert len(performance["items"]) == 1
     assert performance_1h["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert performance_1h["filters"]["timeframe"] == "1h"
-    assert performance_1h["aggregate"]["tp_count"] == 1
+    assert performance_1h["aggregate"]["tp_count"] == 2
     assert len(performance_1h["items"]) == 1
     assert integrity["cache"]["source"] == "artifact_snapshot"
     assert integrity["snapshot"]["filename"] == FORWARD_INTEGRITY_FILE
@@ -76,6 +79,12 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert one_hour_v4_shadow["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert one_hour_v4_shadow["study_scope"] == "one_hour_v4_shadow_forward_monitor_read_only"
     assert one_hour_v4_shadow["summary"]["read"] == "V4_NO_FILTER_SELECTED"
+    assert lab62["lab"] == "LAB-62"
+    assert lab62["closed_only_snapshot"] is True
+    assert lab62["snapshot_coverage"]["mid_long_1h_rows"] == 1
+    assert lab62["snapshot_coverage"]["is_truncated"] is False
+    assert lab62["quality"]["aggregate"]["tp_count"] == 1
+    assert lab62["filter_study"]["baseline"]["sample_count"] == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map
 

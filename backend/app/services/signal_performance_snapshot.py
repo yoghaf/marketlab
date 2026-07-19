@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.services.multitimeframe_features import REPO_ROOT
 from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
+    build_filter_study_payload,
     build_misidentification_audit_payload,
     build_one_hour_filter_candidate_study_payload,
     build_one_hour_v4_shadow_monitor_payload,
     build_one_hour_walk_forward_payload,
+    build_quality_lab_payload,
     build_v3_shadow_filter_map,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
@@ -26,6 +28,7 @@ FORWARD_INTEGRITY_FILE = "forward_integrity.json"
 PERFORMANCE_1H_FILE = "performance_closed_1h.json"
 FORWARD_INTEGRITY_1H_FILE = "forward_integrity_1h.json"
 DEFAULT_PERFORMANCE_LIMIT = 500
+DEFAULT_PERFORMANCE_1H_LIMIT = 5000
 DEFAULT_FORWARD_INTEGRITY_LIMIT = 200
 
 
@@ -45,7 +48,12 @@ class SignalPerformanceSnapshotRunner:
     ) -> dict[str, Any]:
         service = SignalCandidatePerformanceService(self.db)
         performance = _performance_payload(service, epoch=epoch, timeframe=None, limit=max(1, performance_limit))
-        performance_1h = _performance_payload(service, epoch=epoch, timeframe="1h", limit=max(1, performance_limit))
+        performance_1h = _performance_payload(
+            service,
+            epoch=epoch,
+            timeframe="1h",
+            limit=max(DEFAULT_PERFORMANCE_1H_LIMIT, performance_limit),
+        )
         forward_integrity = _forward_integrity_payload(service, epoch=epoch, timeframe=None, limit=max(1, forward_integrity_limit))
         forward_integrity_1h = _forward_integrity_payload(
             service,
@@ -203,6 +211,59 @@ class SignalPerformanceSnapshotService:
         )
         study["snapshot"] = payload.get("snapshot")
         return study
+
+    def mid_long_1h_lab62(self, *, min_sample: int, limit: int) -> dict[str, Any]:
+        payload = self._read(PERFORMANCE_1H_FILE)
+        aggregate = payload.get("aggregate") or {}
+        source_items = list(payload.get("items") or [])
+        evaluated = [item for item in source_items if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"]
+        filters = payload.get("filters") or {}
+        latest_candle_time = payload.get("latest_futures_15m_close_time") or payload.get("latest_evaluation_candle_time")
+        common = {
+            "evaluated": evaluated,
+            "skipped": {},
+            "latest_candle_time": latest_candle_time,
+            "epoch": str(payload.get("epoch") or OBSERVATION_EPOCH),
+            "include_watch_only": bool(filters.get("include_watch_only", False)),
+            "position_lock": bool(filters.get("position_lock", True)),
+            "min_sample": max(1, min_sample),
+            "limit": max(1, limit),
+            "source": "signal_performance_snapshot_1h",
+        }
+        quality = build_quality_lab_payload(
+            **common,
+            stage="MID_LONG",
+            timeframe="1h",
+        )
+        filter_study = build_filter_study_payload(
+            **common,
+            stage="MID_LONG",
+            timeframe="1h",
+        )
+        source_total = int(aggregate.get("signals_evaluated") or len(source_items))
+        return {
+            "generated_at_utc": (payload.get("snapshot") or {}).get("generated_at_utc") or payload.get("generated_at_utc"),
+            "lab": "LAB-62",
+            "study_scope": "mid_long_1h_v21_baseline_and_geometry_starting_point",
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "closed_only_snapshot": True,
+            "snapshot_coverage": {
+                "source_1h_rows": len(source_items),
+                "source_1h_total": source_total,
+                "mid_long_1h_rows": len(evaluated),
+                "is_truncated": len(source_items) < source_total,
+            },
+            "quality": quality,
+            "filter_study": filter_study,
+            "snapshot": payload.get("snapshot"),
+            "guardrails": [
+                "LAB-62 reads a closed-signal artifact refreshed by the research loop.",
+                "Geometry artifacts remain ideal-path research until realistic validation is complete.",
+                "No Signal Factory rule, scanner decision, TP/SL, or execution behavior changes.",
+            ],
+        }
 
     def _read(self, filename: str) -> dict[str, Any]:
         path = self.artifact_dir / filename

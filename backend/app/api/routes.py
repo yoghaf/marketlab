@@ -520,6 +520,24 @@ def signal_candidates_quality_lab(
     return payload
 
 
+@router.get("/api/signal-candidates/mid-long-1h-lab62")
+def signal_candidates_mid_long_1h_lab62(
+    min_sample: int = 20,
+    limit: int = 50,
+):
+    normalized_limit = max(1, min(limit, 100))
+    normalized_min_sample = max(1, min(min_sample, 100))
+    try:
+        return json_safe(
+            SignalPerformanceSnapshotService().mid_long_1h_lab62(
+                min_sample=normalized_min_sample,
+                limit=normalized_limit,
+            )
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="MID_LONG 1h LAB-62 snapshot is not available yet") from exc
+
+
 @router.get("/api/signal-candidates/structure-zone-shadow-study")
 def signal_candidates_structure_zone_shadow_study(
     include_watch_only: bool = False,
