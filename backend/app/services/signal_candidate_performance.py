@@ -1380,6 +1380,90 @@ class SignalCandidatePerformanceService:
             ],
         }
 
+    def mid_short_1h_v21_dynamic_exit_study(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        min_sample: int = 20,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        annotated, skipped, latest_candle_time, normalized_shadow_status, forward_candles = (
+            self._mid_short_1h_anatomy_dataset(
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                shadow_status="SHADOW_PASS",
+                include_failure_anatomy=False,
+            )
+        )
+        fixed_cohort = _apply_named_second_filter(annotated, "TAKER_SELL_GE_52")
+        signal_times = [
+            value
+            for value in (_parse_dt(item.get("signal_timestamp")) for item in fixed_cohort)
+            if value is not None
+        ]
+        symbols = {str(item.get("symbol") or "") for item in fixed_cohort if item.get("symbol")}
+        min_signal_time = min(signal_times, default=None)
+        max_signal_time = max(signal_times, default=None)
+        one_hour_candles = self._load_1h_candles(
+            symbols,
+            start_time=(min_signal_time - timedelta(hours=264)) if min_signal_time is not None else None,
+            end_time=(max_signal_time + timedelta(hours=4)) if max_signal_time is not None else None,
+        )
+        study = _mid_short_v21_dynamic_exit_study(
+            fixed_cohort,
+            one_hour_candles=one_hour_candles,
+            forward_candles=forward_candles,
+            min_sample=min_sample,
+            limit=limit,
+        )
+        return {
+            "generated_at_utc": utcnow(),
+            "epoch": epoch,
+            "filters": {
+                "include_watch_only": include_watch_only,
+                "position_lock": position_lock,
+                "stage": "MID_SHORT",
+                "timeframe": "1h",
+                "shadow_status": normalized_shadow_status,
+                "base_filter_id": "TAKER_SELL_GE_52",
+                "min_sample": min_sample,
+                "limit": limit,
+            },
+            "read_only": True,
+            "not_live_signal": True,
+            "not_execution_instruction": True,
+            "artifact_type": "mid_short_1h_v21_dynamic_exit_study",
+            "study_scope": "read_only_mid_short_1h_v21_causal_dynamic_exit",
+            "source_table": (
+                "signal_forward_return_logs + futures_klines_15m + futures_klines_1m + futures_klines_1h"
+            ),
+            "strategy_version": LIVE_STRATEGY_VERSION,
+            "shadow_strategy_version": SHADOW_STRATEGY_VERSION,
+            "base_filter": {
+                "filter_id": "TAKER_SELL_GE_52",
+                "label": "MID_SHORT 1h SHADOW_PASS + taker sell >= 52%",
+                "expression": (
+                    "stage == MID_SHORT AND timeframe == 1h AND SHADOW_PASS "
+                    "AND kline_taker_sell_ratio >= 0.52"
+                ),
+            },
+            "latest_evaluation_candle_time": latest_candle_time,
+            "latest_futures_15m_close_time": latest_candle_time,
+            "skipped_by_position_lock": dict(skipped),
+            **study,
+            "guardrails": [
+                "LAB-61 reads exactly the fixed LAB-59/LAB-60 V2.1 cohort; no signal is added or removed per variant.",
+                "A support-reclaim decision uses only a fully closed futures 15m candle and a causal 1h zone known at signal time.",
+                "TP or SL touched before the decision candle closes remains terminal; the study never rewrites that result.",
+                "A simulated dynamic exit fills at the next available futures candle open, never at the trigger candle close.",
+                "The latest 1m tail may provide a next-open fill but can never create the 15m reclaim decision.",
+                "No Signal Factory rule, scanner decision, threshold, logged TP/SL, outcome logic, or execution path is changed.",
+            ],
+        }
+
     def mid_short_1h_structure_zone_case(
         self,
         *,
@@ -8499,6 +8583,651 @@ def _lab60_case_row(item: dict[str, Any]) -> dict[str, Any]:
                 "stop_risk_multiple": result.get("stop_risk_multiple"),
                 "geometry_status": result.get("geometry_status"),
                 "adjusted": bool(result.get("adjusted")),
+            }
+            for variant_id, result in results.items()
+            if isinstance(result, dict)
+        },
+    }
+
+
+LAB61_DYNAMIC_EXIT_VARIANTS = (
+    (
+        "CONTROL_LOGGED",
+        "Logged V2.1 exit",
+        "Keep the existing V2.1 target and stop for the full four-hour path.",
+    ),
+    (
+        "EXIT_FIRST_SUPPORT_RECLAIM",
+        "Exit after first support reclaim",
+        "After a closed bullish 15m candle touches blocking support and closes above it, exit at the next candle open.",
+    ),
+    (
+        "EXIT_CONFIRMED_SUPPORT_REVERSAL",
+        "Exit after confirmed reclaim",
+        "Require the next closed 15m candle to close above the reclaim candle high, then exit at the following candle open.",
+    ),
+    (
+        "EXIT_SUPPORT_RECLAIM_AFTER_0_50R",
+        "Exit reclaim after +0.50R",
+        "Use the first support reclaim only after the short path has already reached at least +0.50R, then exit at the next open.",
+    ),
+    (
+        "SUPPORT_FRONT_0_10ATR",
+        "Static target before support",
+        "LAB-60 comparator: move target above blocking support plus 0.10 ATR without adding a dynamic exit.",
+    ),
+)
+
+
+def _mid_short_v21_dynamic_exit_study(
+    items: list[dict[str, Any]],
+    *,
+    one_hour_candles: dict[str, list[PerfCandle]],
+    forward_candles: dict[str, list[PerfCandle]],
+    min_sample: int,
+    limit: int,
+) -> dict[str, Any]:
+    primary_config = next(
+        config for config in LAB56_ZONE_CONFIGS if config.config_id == LAB56_PRIMARY_CONFIG_ID
+    )
+    sorted_one_hour = {
+        symbol: sorted(rows, key=lambda candle: candle.close_time)
+        for symbol, rows in one_hour_candles.items()
+    }
+    sorted_forward = {
+        symbol: sorted(rows, key=lambda candle: (candle.open_time, candle.close_time))
+        for symbol, rows in forward_candles.items()
+    }
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        symbol = str(item.get("symbol") or "")
+        signal_time = _parse_dt(item.get("signal_timestamp"))
+        structure = _lab56_structure_context(
+            item,
+            one_hour_candles=sorted_one_hour.get(symbol, []),
+            four_hour_candles=[],
+            config=primary_config,
+            include_four_hour_confluence=False,
+        )
+        with_structure = {**item, **structure}
+        with_path = {**with_structure, **_lab59_target_path_context(with_structure)}
+        future = _lab60_future_four_hours(
+            sorted_forward.get(symbol, []),
+            signal_time=signal_time,
+        )
+        results = {
+            variant_id: _lab61_evaluate_dynamic_exit(
+                with_path,
+                variant_id=variant_id,
+                prepared_future_4h=future,
+            )
+            for variant_id, _label, _method in LAB61_DYNAMIC_EXIT_VARIANTS
+        }
+        enriched.append(
+            {
+                **with_path,
+                "_lab61_dynamic_exit_results": results,
+                "_lab60_path_sequence": _lab60_path_sequence(with_path, future),
+            }
+        )
+
+    ordered, train, validation, validation_cutoff = _lab53_chronological_split(enriched)
+    split_items = {"all": ordered, "train": train, "validation": validation}
+    control_perf = {
+        split: _lab61_dynamic_exit_performance(rows, "CONTROL_LOGGED")
+        for split, rows in split_items.items()
+    }
+    variant_rows = [
+        _lab61_dynamic_exit_variant_row(
+            variant_id=variant_id,
+            label=label,
+            method=method,
+            split_items=split_items,
+            control_perf=control_perf,
+            min_sample=min_sample,
+        )
+        for variant_id, label, method in LAB61_DYNAMIC_EXIT_VARIANTS
+    ]
+    eligible = [
+        row
+        for row in variant_rows
+        if row["variant_id"] != "CONTROL_LOGGED"
+        and row["validation"].get("avg_realistic_r_delta_vs_control") is not None
+    ]
+    ranked = sorted(
+        eligible,
+        key=lambda row: (
+            _decimal_or_zero(row["validation"].get("avg_realistic_r_delta_vs_control")),
+            _decimal_or_zero(row["validation"].get("max_drawdown_delta_vs_control")),
+            -int(row["validation"].get("tp_sacrificed_count") or 0),
+        ),
+        reverse=True,
+    )
+    best_variant = ranked[0] if ranked else None
+    original_closed = sum(1 for item in ordered if item.get("result_status") in COMPLETED_OUTCOMES)
+    validation_original_closed = sum(
+        1 for item in validation if item.get("result_status") in COMPLETED_OUTCOMES
+    )
+    readiness_status = (
+        "READY_FOR_READ_ONLY_COMPARISON"
+        if original_closed >= 120 and validation_original_closed >= max(12, min_sample)
+        else "MONITOR_MORE"
+    )
+    case_rows = [
+        _lab61_dynamic_exit_case_row(item)
+        for item in sorted(
+            ordered,
+            key=lambda row: (
+                _parse_dt(row.get("signal_timestamp")) or datetime.min,
+                str(row.get("symbol") or ""),
+            ),
+            reverse=True,
+        )[:limit]
+    ]
+    return {
+        "study_id": "LAB_61_MID_SHORT_1H_V21_DYNAMIC_EXIT",
+        "method": (
+            "LAB-61 keeps the LAB-59/LAB-60 V2.1 cohort fixed and observes every closed futures 15m candle after entry. "
+            "A dynamic exit can be decided only after a bullish candle touches causal blocking support and closes back above it. "
+            "The simulated fill is the next available candle open, while any TP/SL reached before that decision remains final."
+        ),
+        "definitions": {
+            "fixed_cohort": "MID_SHORT 1h + SHADOW_PASS + taker sell >= 52%",
+            "blocking_support": "Repeated causal 1h support with logged target below support and entry above support.",
+            "support_reclaim": "Closed bullish 15m candle intersects support and closes above the support upper edge.",
+            "confirmed_reversal": "The next closed 15m candle closes above the reclaim candle high.",
+            "decision_cadence": "Closed futures 15m candles only; 1m candles cannot create a trigger.",
+            "fill_rule": "Exit at the first available futures candle open at or after the decision close.",
+            "terminal_precedence": "TP/SL inside the trigger or confirmation candle wins before any dynamic exit.",
+            "evaluation_horizon": "Four hours after signal close.",
+        },
+        "summary": {
+            "fixed_cohort_count": len(ordered),
+            "fixed_cohort_closed_count": original_closed,
+            "train_count": len(train),
+            "validation_count": len(validation),
+            "validation_closed_count": validation_original_closed,
+            "validation_cutoff_utc": validation_cutoff,
+            "zone_available_count": sum(
+                1 for item in ordered if item.get("structure_state") != "1H_ZONE_UNAVAILABLE"
+            ),
+            "blocking_support_count": sum(
+                1 for item in ordered if _lab61_blocking_support(item) is not None
+            ),
+            "first_reclaim_trigger_count": _lab61_trigger_count(
+                ordered, "EXIT_FIRST_SUPPORT_RECLAIM"
+            ),
+            "confirmed_reversal_trigger_count": _lab61_trigger_count(
+                ordered, "EXIT_CONFIRMED_SUPPORT_REVERSAL"
+            ),
+            "reclaim_after_0_50r_trigger_count": _lab61_trigger_count(
+                ordered, "EXIT_SUPPORT_RECLAIM_AFTER_0_50R"
+            ),
+            "readiness_target_closed": 120,
+            "readiness_status": readiness_status,
+            "best_validation_variant_id": best_variant.get("variant_id") if best_variant else None,
+            "best_validation_verdict": best_variant.get("verdict") if best_variant else None,
+            "best_validation_avg_r_delta": (
+                best_variant["validation"].get("avg_realistic_r_delta_vs_control")
+                if best_variant
+                else None
+            ),
+            "study_verdict": _lab61_study_verdict(readiness_status, best_variant),
+            "recommended_action": _lab61_recommended_action(readiness_status, best_variant),
+        },
+        "control": control_perf,
+        "variant_rows": variant_rows,
+        "case_rows": case_rows,
+        "research_answers": {
+            "can_support_reclaim_reduce_full_stop_losses": (
+                "Read SL avoided and R saved in validation; a lower loss count is not enough if TP sacrifice or drawdown worsens."
+            ),
+            "does_the_study_exit_on_the_trigger_close": (
+                "No. The trigger candle must close first and the simulation fills at the next available candle open."
+            ),
+            "can_the_1m_tail_create_a_reclaim": (
+                "No. The 1m tail can only provide the next-open fill after a closed 15m decision."
+            ),
+            "does_this_change_v2_1": (
+                "No. LAB-61 is a read-only counterfactual over logged V2.1 signals and outcomes."
+            ),
+        },
+        "limitations": [
+            "Repeated candle zones approximate structure and are not order-book liquidity or resting orders.",
+            "A closed-candle decision reacts after confirmation and cannot claim the trigger candle close as an executable fill.",
+            "The four-hour horizon does not prove behavior outside the observed window.",
+            "Any apparent improvement must survive a later forward-only checkpoint before a rule proposal.",
+        ],
+    }
+
+
+def _lab61_blocking_support(item: dict[str, Any]) -> dict[str, Decimal] | None:
+    support = item.get("nearest_support")
+    if not isinstance(support, dict):
+        return None
+    entry = _decimal_or_none_any(item.get("entry"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    lower = _decimal_or_none_any(support.get("lower"))
+    upper = _decimal_or_none_any(support.get("upper"))
+    center = _decimal_or_none_any(support.get("center"))
+    if entry is None or target is None or lower is None or upper is None:
+        return None
+    if not target < upper < entry or lower > upper:
+        return None
+    return {"lower": lower, "upper": upper, "center": center or ((lower + upper) / Decimal("2"))}
+
+
+def _lab61_is_support_reclaim(candle: PerfCandle, support: dict[str, Decimal]) -> bool:
+    intersects = candle.low <= support["upper"] and candle.high >= support["lower"]
+    return intersects and candle.close > candle.open and candle.close > support["upper"]
+
+
+def _lab61_next_fill_candle(
+    future: list[PerfCandle],
+    *,
+    decision_close: datetime,
+) -> PerfCandle | None:
+    candidates = [candle for candle in future if candle.open_time >= decision_close]
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda candle: (
+            candle.open_time,
+            0 if candle.source_interval == "1m" else 1,
+            candle.close_time,
+        ),
+    )
+
+
+def _lab61_evaluate_dynamic_exit(
+    item: dict[str, Any],
+    *,
+    variant_id: str,
+    prepared_future_4h: list[PerfCandle],
+) -> dict[str, Any]:
+    if variant_id in {"CONTROL_LOGGED", "SUPPORT_FRONT_0_10ATR"}:
+        result = _lab60_evaluate_variant(
+            item,
+            variant_id=variant_id,
+            prepared_future_4h=prepared_future_4h,
+        )
+        return {
+            **result,
+            "dynamic_action_taken": False,
+            "trigger_status": "STATIC_COMPARATOR" if variant_id != "CONTROL_LOGGED" else "CONTROL",
+            "trigger_time_utc": None,
+            "fill_time_utc": None,
+            "fill_price": None,
+        }
+
+    control = _lab60_evaluate_variant(
+        item,
+        variant_id="CONTROL_LOGGED",
+        prepared_future_4h=prepared_future_4h,
+    )
+    entry = _decimal_or_none_any(item.get("entry"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    stop = _decimal_or_none_any(item.get("stop_loss"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    support = _lab61_blocking_support(item)
+
+    def no_action(trigger_status: str, reason: str, **extra: Any) -> dict[str, Any]:
+        return {
+            **control,
+            "dynamic_action_taken": False,
+            "trigger_status": trigger_status,
+            "trigger_reason": reason,
+            "trigger_time_utc": None,
+            "fill_time_utc": None,
+            "fill_price": None,
+            "control_status": control.get("status"),
+            "control_realistic_r": control.get("realistic_r"),
+            **extra,
+        }
+
+    if entry is None or risk is None or risk <= 0 or stop is None or target is None or signal_time is None:
+        return no_action("MISSING_CONTEXT", "Entry, risk, target, stop, or signal time is unavailable.")
+    if support is None:
+        return no_action("NO_BLOCKING_SUPPORT", "No causal repeated 1h support blocks the logged short target.")
+    decision_candles = [
+        candle
+        for candle in prepared_future_4h
+        if candle.source_interval == "15m"
+        and candle.open_time >= signal_time
+        and candle.close_time <= signal_time + timedelta(hours=4)
+    ]
+    if not decision_candles:
+        return no_action("NO_CLOSED_15M_DECISION_DATA", "No closed futures 15m candle is available after entry.")
+
+    cumulative_mfe = Decimal("0")
+    pending_reclaim: PerfCandle | None = None
+    for candle in decision_candles:
+        cumulative_mfe = max(cumulative_mfe, (entry - candle.low) / risk)
+        tp_hit = candle.low <= target
+        sl_hit = candle.high >= stop
+        if tp_hit or sl_hit:
+            return no_action(
+                "TERMINAL_BEFORE_DYNAMIC_EXIT",
+                "The logged target or stop was touched before a causal dynamic-exit fill could occur.",
+                terminal_decision_candle_time_utc=candle.close_time,
+                mfe_r_at_terminal=cumulative_mfe,
+            )
+
+        decision_candle: PerfCandle | None = None
+        trigger_status = ""
+        if variant_id == "EXIT_CONFIRMED_SUPPORT_REVERSAL" and pending_reclaim is not None:
+            if candle.close > pending_reclaim.high:
+                decision_candle = candle
+                trigger_status = "CONFIRMED_SUPPORT_REVERSAL"
+            pending_reclaim = None
+
+        reclaim = _lab61_is_support_reclaim(candle, support)
+        if decision_candle is None and reclaim:
+            if variant_id == "EXIT_FIRST_SUPPORT_RECLAIM":
+                decision_candle = candle
+                trigger_status = "FIRST_SUPPORT_RECLAIM"
+            elif variant_id == "EXIT_SUPPORT_RECLAIM_AFTER_0_50R" and cumulative_mfe >= Decimal("0.50"):
+                decision_candle = candle
+                trigger_status = "SUPPORT_RECLAIM_AFTER_0_50R"
+            elif variant_id == "EXIT_CONFIRMED_SUPPORT_REVERSAL":
+                pending_reclaim = candle
+
+        if decision_candle is None:
+            continue
+        fill = _lab61_next_fill_candle(
+            prepared_future_4h,
+            decision_close=decision_candle.close_time,
+        )
+        if fill is None:
+            return no_action(
+                "TRIGGERED_WAITING_NEXT_OPEN",
+                "A closed 15m trigger exists, but the next futures candle open is not available yet.",
+                trigger_time_utc=decision_candle.close_time,
+                trigger_candle={
+                    "open": decision_candle.open,
+                    "high": decision_candle.high,
+                    "low": decision_candle.low,
+                    "close": decision_candle.close,
+                },
+                cumulative_mfe_r=cumulative_mfe,
+            )
+        ideal_r = (entry - fill.open) / risk
+        status = {
+            "EXIT_FIRST_SUPPORT_RECLAIM": "EARLY_EXIT_SUPPORT_RECLAIM",
+            "EXIT_CONFIRMED_SUPPORT_REVERSAL": "EARLY_EXIT_CONFIRMED_REVERSAL",
+            "EXIT_SUPPORT_RECLAIM_AFTER_0_50R": "EARLY_EXIT_RECLAIM_AFTER_0_50R",
+        }[variant_id]
+        realistic = _realistic_result_fields(
+            item,
+            entry=entry,
+            exit_reference=fill.open,
+            risk=risk,
+            direction="SHORT",
+            ideal_status=status,
+            ideal_r=ideal_r,
+        )
+        return {
+            "status": status,
+            "result_time_utc": fill.open_time,
+            "ideal_r": ideal_r,
+            "realistic_r": realistic.get("realistic_realized_r"),
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "risk": risk,
+            "target_rr": (entry - target) / risk,
+            "stop_risk_multiple": Decimal("1"),
+            "geometry_status": "CONTROL_LOGGED",
+            "adjusted": False,
+            "dynamic_action_taken": True,
+            "trigger_status": trigger_status,
+            "trigger_reason": "Closed futures 15m support-reclaim rule passed; fill uses the next candle open.",
+            "trigger_time_utc": decision_candle.close_time,
+            "fill_time_utc": fill.open_time,
+            "fill_price": fill.open,
+            "fill_source_interval": fill.source_interval,
+            "trigger_candle": {
+                "open": decision_candle.open,
+                "high": decision_candle.high,
+                "low": decision_candle.low,
+                "close": decision_candle.close,
+            },
+            "support_zone": support,
+            "cumulative_mfe_r": cumulative_mfe,
+            "control_status": control.get("status"),
+            "control_realistic_r": control.get("realistic_r"),
+        }
+
+    return no_action(
+        "NO_DYNAMIC_TRIGGER",
+        "No qualifying closed 15m support reclaim completed before the four-hour path ended.",
+        cumulative_mfe_r=cumulative_mfe,
+    )
+
+
+def _lab61_dynamic_exit_performance(items: list[dict[str, Any]], variant_id: str) -> dict[str, Any]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+        ),
+    )
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    statuses: Counter[str] = Counter()
+    trigger_statuses: Counter[str] = Counter()
+    for item in ordered:
+        results = item.get("_lab61_dynamic_exit_results")
+        result = results.get(variant_id) if isinstance(results, dict) else None
+        if not isinstance(result, dict):
+            statuses["MISSING_CONTEXT"] += 1
+            continue
+        statuses[str(result.get("status") or "MISSING_CONTEXT")] += 1
+        trigger_statuses[str(result.get("trigger_status") or "UNKNOWN")] += 1
+        if result.get("realistic_r") is not None:
+            pairs.append((item, result))
+    values = [Decimal(result["realistic_r"]) for _item, result in pairs]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    early = [(item, result) for item, result in pairs if result.get("dynamic_action_taken")]
+    symbol_counts = Counter(str(item.get("symbol") or "") for item, _result in pairs)
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    terminal_count = (
+        statuses["TP_HIT"]
+        + statuses["SL_HIT"]
+        + statuses["BOTH_HIT_SAME_CANDLE"]
+        + sum(count for status, count in statuses.items() if status.startswith("EARLY_EXIT_"))
+    )
+    return {
+        "source_count": len(ordered),
+        "evaluated_count": len(pairs),
+        "waiting_count": statuses["WAITING_4H"],
+        "missing_count": statuses["MISSING_CONTEXT"],
+        "terminal_count": terminal_count,
+        "tp_count": statuses["TP_HIT"],
+        "sl_count": statuses["SL_HIT"],
+        "both_count": statuses["BOTH_HIT_SAME_CANDLE"],
+        "neither_count": statuses["NEITHER_4H"],
+        "early_exit_count": len(early),
+        "early_exit_positive_count": sum(1 for _item, result in early if Decimal(result["realistic_r"]) > 0),
+        "early_exit_negative_count": sum(1 for _item, result in early if Decimal(result["realistic_r"]) < 0),
+        "early_exit_nonnegative_count": sum(1 for _item, result in early if Decimal(result["realistic_r"]) >= 0),
+        "total_realistic_r": sum(values, Decimal("0")),
+        "avg_realistic_r": _avg_decimal(values),
+        "median_realistic_r": _percentile_decimal(values, Decimal("0.50")),
+        "max_drawdown_r": max_drawdown,
+        "status_counts": dict(statuses),
+        "trigger_status_counts": dict(trigger_statuses),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(pairs)) * Decimal("100") if pairs else None,
+    }
+
+
+def _lab61_dynamic_exit_variant_row(
+    *,
+    variant_id: str,
+    label: str,
+    method: str,
+    split_items: dict[str, list[dict[str, Any]]],
+    control_perf: dict[str, dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    performance = {
+        split: _lab61_dynamic_exit_performance(rows, variant_id)
+        for split, rows in split_items.items()
+    }
+    for split in ("all", "train", "validation"):
+        current = performance[split]
+        control = control_perf[split]
+        current["total_realistic_r_delta_vs_control"] = _decimal_delta(
+            current.get("total_realistic_r"), control.get("total_realistic_r")
+        )
+        current["avg_realistic_r_delta_vs_control"] = _decimal_delta(
+            current.get("avg_realistic_r"), control.get("avg_realistic_r")
+        )
+        current["max_drawdown_delta_vs_control"] = _decimal_delta(
+            current.get("max_drawdown_r"), control.get("max_drawdown_r")
+        )
+        current.update(_lab61_dynamic_exit_transition(split_items[split], variant_id))
+    row = {
+        "variant_id": variant_id,
+        "label": label,
+        "method": method,
+        **performance,
+    }
+    row["verdict"] = _lab61_variant_verdict(row, min_sample=min_sample)
+    return row
+
+
+def _lab61_dynamic_exit_transition(items: list[dict[str, Any]], variant_id: str) -> dict[str, Any]:
+    counts: Counter[str] = Counter()
+    saved = Decimal("0")
+    sacrificed = Decimal("0")
+    loss_statuses = {"SL_HIT", "BOTH_HIT_SAME_CANDLE"}
+    for item in items:
+        results = item.get("_lab61_dynamic_exit_results")
+        if not isinstance(results, dict):
+            continue
+        control = results.get("CONTROL_LOGGED")
+        variant = results.get(variant_id)
+        if not isinstance(control, dict) or not isinstance(variant, dict):
+            continue
+        control_r = _decimal_or_none_any(control.get("realistic_r"))
+        variant_r = _decimal_or_none_any(variant.get("realistic_r"))
+        if control_r is None or variant_r is None:
+            continue
+        dynamic = bool(variant.get("dynamic_action_taken"))
+        control_status = str(control.get("status") or "")
+        if dynamic and control_status == "TP_HIT":
+            counts["tp_sacrificed_count"] += 1
+            sacrificed += max(Decimal("0"), control_r - variant_r)
+        if dynamic and control_status in loss_statuses and variant_r > control_r:
+            counts["sl_avoided_count"] += 1
+            saved += variant_r - control_r
+        if dynamic and control_status not in loss_statuses and variant_r < control_r:
+            counts["nonloss_degraded_count"] += 1
+        if dynamic and variant_r > control_r:
+            counts["improved_row_count"] += 1
+        if dynamic and variant_r < control_r:
+            counts["degraded_row_count"] += 1
+    return {
+        "tp_sacrificed_count": counts["tp_sacrificed_count"],
+        "sl_avoided_count": counts["sl_avoided_count"],
+        "nonloss_degraded_count": counts["nonloss_degraded_count"],
+        "improved_row_count": counts["improved_row_count"],
+        "degraded_row_count": counts["degraded_row_count"],
+        "r_saved_from_control_losses": saved,
+        "r_sacrificed_from_control_tps": sacrificed,
+    }
+
+
+def _lab61_variant_verdict(row: dict[str, Any], *, min_sample: int) -> str:
+    if row.get("variant_id") == "CONTROL_LOGGED":
+        return "CURRENT_CONTROL"
+    all_perf = row["all"]
+    validation = row["validation"]
+    if (
+        int(all_perf.get("evaluated_count") or 0) < 120
+        or int(validation.get("evaluated_count") or 0) < max(12, min_sample)
+    ):
+        return "MONITOR_MORE"
+    train_delta = _decimal_or_none_any(row["train"].get("avg_realistic_r_delta_vs_control"))
+    validation_delta = _decimal_or_none_any(validation.get("avg_realistic_r_delta_vs_control"))
+    drawdown_delta = _decimal_or_none_any(validation.get("max_drawdown_delta_vs_control"))
+    if (
+        train_delta is not None
+        and train_delta > 0
+        and validation_delta is not None
+        and validation_delta > 0
+        and drawdown_delta is not None
+        and drawdown_delta >= 0
+        and int(validation.get("sl_avoided_count") or 0) >= int(validation.get("tp_sacrificed_count") or 0)
+    ):
+        return "VALIDATION_IMPROVES_RESEARCH_ONLY"
+    if validation_delta is not None and validation_delta > 0:
+        return "VALIDATION_ONLY_MONITOR"
+    if train_delta is not None and train_delta > 0:
+        return "TRAIN_ONLY"
+    return "NO_CLEAR_GAIN"
+
+
+def _lab61_study_verdict(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "V21_DYNAMIC_EXIT_MONITOR_MORE"
+    if best_variant and best_variant.get("verdict") == "VALIDATION_IMPROVES_RESEARCH_ONLY":
+        return "DYNAMIC_EXIT_FORWARD_CHECKPOINT_REQUIRED"
+    return "NO_DYNAMIC_EXIT_PROMOTION"
+
+
+def _lab61_recommended_action(readiness_status: str, best_variant: dict[str, Any] | None) -> str:
+    if readiness_status != "READY_FOR_READ_ONLY_COMPARISON":
+        return "Collect at least 120 closed fixed-cohort outcomes; keep V2.1 exits unchanged."
+    if best_variant and best_variant.get("verdict") == "VALIDATION_IMPROVES_RESEARCH_ONLY":
+        return "Monitor this definition in a new forward-only shadow lane before proposing any exit-rule change."
+    return "Keep the current V2.1 exit behavior; the closed-candle dynamic variants have not justified promotion."
+
+
+def _lab61_trigger_count(items: list[dict[str, Any]], variant_id: str) -> int:
+    return sum(
+        1
+        for item in items
+        if isinstance(item.get("_lab61_dynamic_exit_results"), dict)
+        and bool(item["_lab61_dynamic_exit_results"].get(variant_id, {}).get("dynamic_action_taken"))
+    )
+
+
+def _lab61_dynamic_exit_case_row(item: dict[str, Any]) -> dict[str, Any]:
+    base = _lab59_case_row(item)
+    results = (
+        item.get("_lab61_dynamic_exit_results")
+        if isinstance(item.get("_lab61_dynamic_exit_results"), dict)
+        else {}
+    )
+    return {
+        **base,
+        "path_sequence": item.get("_lab60_path_sequence"),
+        "dynamic_exit_results": {
+            variant_id: {
+                "status": result.get("status"),
+                "realistic_r": result.get("realistic_r"),
+                "dynamic_action_taken": bool(result.get("dynamic_action_taken")),
+                "trigger_status": result.get("trigger_status"),
+                "trigger_reason": result.get("trigger_reason"),
+                "trigger_time_utc": result.get("trigger_time_utc"),
+                "fill_time_utc": result.get("fill_time_utc"),
+                "fill_price": result.get("fill_price"),
+                "fill_source_interval": result.get("fill_source_interval"),
+                "cumulative_mfe_r": result.get("cumulative_mfe_r"),
+                "control_status": result.get("control_status"),
+                "control_realistic_r": result.get("control_realistic_r"),
             }
             for variant_id, result in results.items()
             if isinstance(result, dict)

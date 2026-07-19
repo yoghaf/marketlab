@@ -10,6 +10,9 @@ import {
   MarketRegimeStudyBucket,
   MarketRegimeStudyResponse,
   MidShortStructureStateRow,
+  MidShortV21DynamicExitResponse,
+  MidShortV21DynamicExitResult,
+  MidShortV21DynamicExitVariant,
   MidShortV21ExitVariant,
   MidShortV21StructureInteractionResponse,
   MidShortV21StructureExitResponse,
@@ -52,7 +55,8 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   const activeLab = firstParam(params.lab);
   const showV21Structure = activeLab === "structure-v21";
   const showV21Exit = activeLab === "exit-v21";
-  const focusedLab = showV21Structure || showV21Exit;
+  const showV21DynamicExit = activeLab === "dynamic-exit-v21";
+  const focusedLab = showV21Structure || showV21Exit || showV21DynamicExit;
   const minSample = normalizeNumber(firstParam(params.min_sample), 5, 1, 100);
   const limit = normalizeNumber(firstParam(params.limit), 25, 5, 100);
   const query = new URLSearchParams({
@@ -69,11 +73,13 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
   let marketRegimeStudy: MarketRegimeStudyResponse | null = null;
   let v21StructureStudy: MidShortV21StructureInteractionResponse | null = null;
   let v21ExitStudy: MidShortV21StructureExitResponse | null = null;
+  let v21DynamicExitStudy: MidShortV21DynamicExitResponse | null = null;
   let error: string | null = null;
   let filterStudyError: string | null = null;
   let marketRegimeError: string | null = null;
   let v21StructureError: string | null = null;
   let v21ExitError: string | null = null;
+  let v21DynamicExitError: string | null = null;
   if (!focusedLab) {
     try {
       data = await fetchJson<SignalQualityLabResponse>(`/api/signal-candidates/quality-lab?${query.toString()}`, { revalidateSeconds: 120 });
@@ -131,6 +137,43 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
       v21ExitError = err instanceof Error ? err.message : "V2.1 Structure Exit API failed";
     }
   }
+  if (showV21DynamicExit) {
+    const dynamicExitQuery = new URLSearchParams({
+      include_watch_only: String(includeWatchOnly),
+      position_lock: String(positionLock),
+      min_sample: String(Math.max(20, minSample)),
+      limit: String(limit)
+    });
+    try {
+      v21DynamicExitStudy = await fetchJson<MidShortV21DynamicExitResponse>(
+        `/api/signal-candidates/mid-short-1h-v2-1-dynamic-exit-study?${dynamicExitQuery.toString()}`,
+        { revalidateSeconds: 300 }
+      );
+    } catch (err) {
+      v21DynamicExitError = err instanceof Error ? err.message : "V2.1 Dynamic Exit API failed";
+    }
+  }
+
+  if (showV21DynamicExit) {
+    return (
+      <div className="space-y-5">
+        <PageHeader
+          title="Signal Quality Lab / LAB-61"
+          badge="READ-ONLY DYNAMIC EXIT"
+          subtitle="MID_SHORT 1h V2.1: menguji exit setelah reclaim support pada candle 15m closed. Fill selalu open candle berikutnya dan tidak mengubah Signal live."
+          updatedAt={fmtTime(v21DynamicExitStudy?.generated_at_utc)}
+        />
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=exit-v21">Open LAB-60 Exit Path</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=structure-v21">Open LAB-59 Structure</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
+        </div>
+        <V21DynamicExitPanel data={v21DynamicExitStudy} error={v21DynamicExitError} />
+      </div>
+    );
+  }
 
   if (showV21Exit) {
     return (
@@ -144,6 +187,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=structure-v21">Open LAB-59 Structure</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=dynamic-exit-v21">Open LAB-61 Dynamic Exit</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
         </div>
@@ -165,6 +209,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab">Back to Quality Lab</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=exit-v21">Open LAB-60 Exit Path</Link>
+          <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=dynamic-exit-v21">Open LAB-61 Dynamic Exit</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-structure-zone-study">Open LAB-56 Zone Evidence</Link>
           <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/patch-notes">Patch Notes</Link>
         </div>
@@ -192,6 +237,7 @@ export default async function SignalQualityLabPage({ searchParams }: { searchPar
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-misidentification-audit">Open Misidentification Audit</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-short-filter-combination-study">Open V2.1 Decision</Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=exit-v21">Open LAB-60 Exit Path</Link>
+        <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-quality-lab?lab=dynamic-exit-v21">Open LAB-61 Dynamic Exit</Link>
         <Link
           className={`rounded-md border px-3 py-2 font-semibold ${showV21Structure ? "border-primary bg-primary text-white" : "border-line bg-white hover:bg-field"}`}
           href={showV21Structure ? "/signal-quality-lab" : "/signal-quality-lab?lab=structure-v21"}
@@ -559,6 +605,186 @@ function V21StructureInteractionPanel({
           </table>
         </div>
       </CollapsiblePanel>
+    </div>
+  );
+}
+
+function V21DynamicExitPanel({
+  data,
+  error
+}: {
+  data: MidShortV21DynamicExitResponse | null;
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <SectionCard title="LAB-61 Dynamic Exit" description="Studi fixed-cohort gagal dimuat.">
+        <div className="p-4 text-sm text-stale">{error}</div>
+      </SectionCard>
+    );
+  }
+  if (!data) {
+    return (
+      <SectionCard title="LAB-61 Dynamic Exit" description="Menunggu payload studi read-only.">
+        <EmptyState title="No LAB-61 data" detail="Buka ulang setelah endpoint studi tersedia." />
+      </SectionCard>
+    );
+  }
+
+  const summary = data.summary;
+  return (
+    <div className="space-y-4" id="v21-dynamic-exit-study">
+      <section className="rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-ink">LAB-61 Closed-candle Dynamic Exit</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Menguji apakah bullish reclaim pada support dapat mengurangi full stop. Keputusan menunggu candle 15m close; fill simulasi memakai open candle berikutnya.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <StatusBadge value={summary.readiness_status} />
+              <StatusBadge value={summary.study_verdict} />
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-px bg-line sm:grid-cols-2 xl:grid-cols-6">
+          <LabMetric label="Fixed cohort" value={String(summary.fixed_cohort_count)} detail={`${summary.fixed_cohort_closed_count} original closed`} />
+          <LabMetric label="Blocking support" value={`${summary.blocking_support_count}/${summary.fixed_cohort_count}`} detail={`${summary.zone_available_count} punya causal zone`} />
+          <LabMetric label="First reclaim" value={String(summary.first_reclaim_trigger_count)} detail="Closed 15m trigger" />
+          <LabMetric label="Confirmed" value={String(summary.confirmed_reversal_trigger_count)} detail="Next 15m confirms" />
+          <LabMetric label="After +0.50R" value={String(summary.reclaim_after_0_50r_trigger_count)} detail="Reclaim setelah favorable move" />
+          <LabMetric label="Best validation" value={summary.best_validation_variant_id || "-"} detail={`${fmtSigned(summary.best_validation_avg_r_delta)}R vs control`} />
+        </div>
+        <div className="border-t border-line p-4 text-sm">
+          <div className="font-semibold text-ink">Keputusan riset</div>
+          <p className="mt-1 text-slate-700">{summary.recommended_action}</p>
+          <p className="mt-2 text-xs text-slate-500">Read-only: logged entry, SL, TP, scanner, dan hasil produksi tidak diubah.</p>
+        </div>
+      </section>
+
+      <CollapsiblePanel
+        title="Dynamic exit comparison"
+        description="Bandingkan R, drawdown, SL yang berhasil dikurangi, dan TP yang terpotong. Semua variant memakai cohort dan chronology split yang sama."
+        defaultOpen
+      >
+        <V21DynamicExitVariantTable rows={data.variant_rows} />
+      </CollapsiblePanel>
+
+      <section className="rounded-md border border-line bg-white">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="font-bold text-ink">Cara membaca LAB-61</h2>
+          <p className="mt-1 text-sm text-slate-600">Trigger banyak belum tentu bagus. Variant harus menyimpan R pada loss tanpa terlalu banyak memangkas TP dan tanpa memperburuk drawdown validation.</p>
+        </div>
+        <div className="grid gap-3 p-4 lg:grid-cols-2 xl:grid-cols-4">
+          {Object.entries(data.research_answers).map(([key, value]) => (
+            <div className="rounded border border-line bg-field/40 p-3" key={key}>
+              <div className="text-xs font-semibold uppercase text-slate-500">{key.replaceAll("_", " ")}</div>
+              <div className="mt-1 text-sm text-slate-700">{value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <CollapsiblePanel
+        title="Latest fixed-cohort trigger evidence"
+        description="Setiap baris memperlihatkan apakah reclaim terjadi, kapan keputusan selesai, open berapa yang dipakai sebagai fill, dan perbandingannya terhadap control."
+      >
+        <div className="table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>Time WIB</th>
+                <th>Symbol</th>
+                <th>Logged</th>
+                <th>Path</th>
+                <th>First reclaim</th>
+                <th>Confirmed reclaim</th>
+                <th>Reclaim after +0.50R</th>
+                <th>Static support target</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.case_rows.map((row) => (
+                <tr key={row.signal_id}>
+                  <td>{row.signal_time_wib || fmtTime(row.signal_timestamp)}</td>
+                  <td className="font-semibold">{row.symbol}</td>
+                  <td><StatusBadge value={row.result_status} /><div className="mt-1 text-xs">{fmtSigned(row.realistic_realized_r)}R</div></td>
+                  <td><StatusBadge value={row.path_sequence?.path_status || "MISSING_CONTEXT"} /></td>
+                  <td><DynamicExitCaseRead result={row.dynamic_exit_results.EXIT_FIRST_SUPPORT_RECLAIM} /></td>
+                  <td><DynamicExitCaseRead result={row.dynamic_exit_results.EXIT_CONFIRMED_SUPPORT_REVERSAL} /></td>
+                  <td><DynamicExitCaseRead result={row.dynamic_exit_results.EXIT_SUPPORT_RECLAIM_AFTER_0_50R} /></td>
+                  <td><DynamicExitCaseRead result={row.dynamic_exit_results.SUPPORT_FRONT_0_10ATR} /></td>
+                  <td><Link className="font-semibold text-primary hover:underline" href={row.detail_href}>Open</Link></td>
+                </tr>
+              ))}
+              {!data.case_rows.length ? (
+                <tr><td colSpan={9}><EmptyState title="No V2.1 cases" detail="Belum ada fixed-cohort signal untuk ditampilkan." /></td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </CollapsiblePanel>
+
+      <SectionCard title="Study limits" description="Batas interpretasi sebelum hasil dianggap berguna.">
+        <div className="grid gap-2 p-4 md:grid-cols-2">
+          {data.limitations.map((item) => <div className="rounded border border-line bg-field/40 p-3 text-sm text-slate-700" key={item}>{item}</div>)}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function V21DynamicExitVariantTable({ rows }: { rows: MidShortV21DynamicExitVariant[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th>Verdict</th>
+            <th>All triggers + / -</th>
+            <th>All R / avg / DD</th>
+            <th>Validation n / triggers</th>
+            <th>Validation R / delta</th>
+            <th>Validation DD / delta</th>
+            <th>SL reduced / TP cut</th>
+            <th>R saved / sacrificed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.variant_id}>
+              <td><div className="font-semibold">{row.label}</div><div className="mt-1 max-w-sm text-xs text-slate-500">{row.method}</div></td>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td>{row.all.early_exit_count} / {row.all.early_exit_positive_count} / {row.all.early_exit_negative_count}</td>
+              <td>{fmtSigned(row.all.total_realistic_r)}R / {fmtSigned(row.all.avg_realistic_r)}R / {fmtSigned(row.all.max_drawdown_r)}R</td>
+              <td>{row.validation.evaluated_count}/{row.validation.source_count} / {row.validation.early_exit_count}</td>
+              <td>{fmtSigned(row.validation.total_realistic_r)}R / {fmtSigned(row.validation.avg_realistic_r_delta_vs_control)}R</td>
+              <td>{fmtSigned(row.validation.max_drawdown_r)}R / {fmtSigned(row.validation.max_drawdown_delta_vs_control)}R</td>
+              <td>{row.validation.sl_avoided_count} / {row.validation.tp_sacrificed_count}</td>
+              <td>{fmtSigned(row.validation.r_saved_from_control_losses)}R / {fmtSigned(row.validation.r_sacrificed_from_control_tps)}R</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DynamicExitCaseRead({ result }: { result?: MidShortV21DynamicExitResult }) {
+  if (!result) return <span className="text-slate-500">-</span>;
+  return (
+    <div className="min-w-36 text-xs">
+      <StatusBadge value={result.trigger_status || result.status} />
+      <div className="mt-1 font-semibold">{fmtSigned(result.realistic_r)}R</div>
+      {result.dynamic_action_taken ? (
+        <div className="mt-1 text-slate-500">Fill {fmtNumber(result.fill_price)} at {fmtTime(result.fill_time_utc)}</div>
+      ) : (
+        <div className="mt-1 text-slate-500">Control retained</div>
+      )}
     </div>
   );
 }

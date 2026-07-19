@@ -18,6 +18,30 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-19",
+    version: "LAB-61",
+    title: "MID_SHORT V2.1 Closed-candle Dynamic Exit Study",
+    status: "RESEARCH",
+    area: "V2.1 fixed-cohort exit diagnostics",
+    summary: "Menguji apakah reclaim support setelah posisi terbuka dapat mengurangi full stop tanpa memakai candle masa depan dan tanpa mengubah V2.1 live.",
+    changes: [
+      "Cohort tetap sama dengan LAB-59/LAB-60: MID_SHORT 1h, SHADOW_PASS, taker sell minimal 52%, dan position lock identik.",
+      "Trigger reclaim hanya boleh berasal dari candle futures 15m yang sudah closed dan support 1h causal yang sudah diketahui saat Signal terbentuk.",
+      "Tiga variasi dynamic exit dibandingkan: first reclaim, confirmation candle berikutnya, serta reclaim setelah posisi pernah mencapai +0.50R.",
+      "Simulasi tidak memakai close trigger sebagai fill; exit selalu dihitung dari open candle berikutnya dengan fee, spread, dan slippage yang sama.",
+      "Jika TP atau SL tersentuh sebelum keputusan selesai, hasil terminal itu tetap dipakai dan tidak boleh ditimpa oleh dynamic exit.",
+      "Static target before support dari LAB-60 ikut ditampilkan sebagai comparator pada fixed cohort yang sama.",
+      "Hasil dipisah all/train/chronological validation dan menampilkan SL reduced, TP cut, R saved, R sacrificed, serta drawdown.",
+      "Patch ini tidak mengubah Signal Factory, scanner, threshold, logged entry/SL/TP, outcome evaluator, atau execution."
+    ],
+    impact: "Kita sekarang bisa mengukur apakah pemantauan candle saat posisi aktif benar-benar mengurangi kerugian atau justru terlalu cepat memotong Signal yang akhirnya mencapai target.",
+    links: [
+      { href: "/signal-quality-lab?lab=dynamic-exit-v21", label: "Open LAB-61" },
+      { href: "/signal-quality-lab?lab=exit-v21", label: "LAB-60 Exit Path" },
+      { href: "/signal-quality-lab?lab=structure-v21", label: "LAB-59 Structure" }
+    ]
+  },
+  {
     date: "2026-07-17",
     version: "LAB-60",
     title: "MID_SHORT V2.1 Structure-aware Exit Path Study",

@@ -2423,6 +2423,118 @@ export type MidShortV21StructureExitResponse = {
   guardrails: string[];
 };
 
+export type MidShortV21DynamicExitPerformance = {
+  source_count: number;
+  evaluated_count: number;
+  waiting_count: number;
+  missing_count: number;
+  terminal_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_count: number;
+  neither_count: number;
+  early_exit_count: number;
+  early_exit_positive_count: number;
+  early_exit_negative_count: number;
+  early_exit_nonnegative_count: number;
+  total_realistic_r: string | number;
+  avg_realistic_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  max_drawdown_r: string | number;
+  status_counts: Record<string, number>;
+  trigger_status_counts: Record<string, number>;
+  top_symbol?: string | null;
+  top_symbol_count: number;
+  top_symbol_share_pct?: string | number | null;
+  total_realistic_r_delta_vs_control?: string | number | null;
+  avg_realistic_r_delta_vs_control?: string | number | null;
+  max_drawdown_delta_vs_control?: string | number | null;
+  tp_sacrificed_count: number;
+  sl_avoided_count: number;
+  nonloss_degraded_count: number;
+  improved_row_count: number;
+  degraded_row_count: number;
+  r_saved_from_control_losses: string | number;
+  r_sacrificed_from_control_tps: string | number;
+};
+
+export type MidShortV21DynamicExitVariant = {
+  variant_id: string;
+  label: string;
+  method: string;
+  all: MidShortV21DynamicExitPerformance;
+  train: MidShortV21DynamicExitPerformance;
+  validation: MidShortV21DynamicExitPerformance;
+  verdict: string;
+};
+
+export type MidShortV21DynamicExitResult = {
+  status: string;
+  realistic_r?: string | number | null;
+  dynamic_action_taken: boolean;
+  trigger_status?: string | null;
+  trigger_reason?: string | null;
+  trigger_time_utc?: string | null;
+  fill_time_utc?: string | null;
+  fill_price?: string | number | null;
+  fill_source_interval?: string | null;
+  cumulative_mfe_r?: string | number | null;
+  control_status?: string | null;
+  control_realistic_r?: string | number | null;
+};
+
+export type MidShortV21DynamicExitCase = MidShortV21StructureCase & {
+  path_sequence: MidShortV21PathSequence;
+  dynamic_exit_results: Record<string, MidShortV21DynamicExitResult>;
+};
+
+export type MidShortV21DynamicExitResponse = {
+  generated_at_utc: string;
+  epoch: string;
+  filters: {
+    include_watch_only: boolean;
+    position_lock: boolean;
+    stage: string;
+    timeframe: string;
+    shadow_status: string;
+    base_filter_id: string;
+    min_sample: number;
+    limit: number;
+  };
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  study_id: string;
+  method: string;
+  definitions: Record<string, string>;
+  summary: {
+    fixed_cohort_count: number;
+    fixed_cohort_closed_count: number;
+    train_count: number;
+    validation_count: number;
+    validation_closed_count: number;
+    validation_cutoff_utc?: string | null;
+    zone_available_count: number;
+    blocking_support_count: number;
+    first_reclaim_trigger_count: number;
+    confirmed_reversal_trigger_count: number;
+    reclaim_after_0_50r_trigger_count: number;
+    readiness_target_closed: number;
+    readiness_status: string;
+    best_validation_variant_id?: string | null;
+    best_validation_verdict?: string | null;
+    best_validation_avg_r_delta?: string | number | null;
+    study_verdict: string;
+    recommended_action: string;
+  };
+  control: Record<string, MidShortV21DynamicExitPerformance>;
+  variant_rows: MidShortV21DynamicExitVariant[];
+  case_rows: MidShortV21DynamicExitCase[];
+  research_answers: Record<string, string>;
+  limitations: string[];
+  guardrails: string[];
+};
+
 export type MidShortFailureAnatomyResponse = {
   generated_at_utc: string;
   epoch: string;

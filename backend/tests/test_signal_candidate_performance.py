@@ -24,8 +24,10 @@ from app.services.signal_candidate_performance import (
     _lab60_path_sequence,
     _lab60_resistance_back_stop,
     _lab60_support_front_target,
+    _lab61_evaluate_dynamic_exit,
     _mid_short_v21_structure_interaction_study,
     _mid_short_v21_structure_exit_study,
+    _mid_short_v21_dynamic_exit_study,
     _mid_short_atr_context,
     _mid_short_counterfactual_exit,
     _lab55_evaluate_confirmation_config,
@@ -2303,6 +2305,204 @@ def test_lab60_structure_exit_study_keeps_one_fixed_cohort_for_every_variant() -
     assert support_variant["all"]["geometry_adjusted_count"] == 4
     assert study["path_summary"]["tp_first_count"] == 2
     assert study["path_summary"]["sl_first_count"] == 2
+
+
+def test_lab61_first_support_reclaim_exits_at_next_open_and_avoids_later_stop() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "nearest_support": {"lower": Decimal("94"), "upper": Decimal("95"), "center": Decimal("94.5")},
+        "realistic_futures_spread_pct": Decimal("0"),
+    }
+    future = [
+        PerfCandle(
+            signal_time,
+            signal_time + timedelta(minutes=15),
+            Decimal("94.5"),
+            Decimal("97"),
+            Decimal("94"),
+            Decimal("96"),
+        ),
+        PerfCandle(
+            signal_time + timedelta(minutes=15),
+            signal_time + timedelta(minutes=30),
+            Decimal("96.2"),
+            Decimal("111"),
+            Decimal("96"),
+            Decimal("110"),
+        ),
+    ]
+
+    control = _lab61_evaluate_dynamic_exit(
+        item,
+        variant_id="CONTROL_LOGGED",
+        prepared_future_4h=future,
+    )
+    dynamic = _lab61_evaluate_dynamic_exit(
+        item,
+        variant_id="EXIT_FIRST_SUPPORT_RECLAIM",
+        prepared_future_4h=future,
+    )
+
+    assert control["status"] == "SL_HIT"
+    assert dynamic["status"] == "EARLY_EXIT_SUPPORT_RECLAIM"
+    assert dynamic["dynamic_action_taken"] is True
+    assert dynamic["trigger_time_utc"] == signal_time + timedelta(minutes=15)
+    assert dynamic["fill_time_utc"] == signal_time + timedelta(minutes=15)
+    assert dynamic["fill_price"] == Decimal("96.2")
+    assert dynamic["realistic_r"] > control["realistic_r"]
+
+
+def test_lab61_confirmed_reclaim_waits_for_confirmation_and_following_open() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "nearest_support": {"lower": Decimal("94"), "upper": Decimal("95"), "center": Decimal("94.5")},
+        "realistic_futures_spread_pct": Decimal("0"),
+    }
+    future = [
+        PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("94.5"), Decimal("97"), Decimal("94"), Decimal("96")),
+        PerfCandle(signal_time + timedelta(minutes=15), signal_time + timedelta(minutes=30), Decimal("96"), Decimal("99"), Decimal("95.5"), Decimal("98")),
+        PerfCandle(signal_time + timedelta(minutes=30), signal_time + timedelta(minutes=45), Decimal("98.2"), Decimal("101"), Decimal("97"), Decimal("100")),
+    ]
+
+    result = _lab61_evaluate_dynamic_exit(
+        item,
+        variant_id="EXIT_CONFIRMED_SUPPORT_REVERSAL",
+        prepared_future_4h=future,
+    )
+
+    assert result["status"] == "EARLY_EXIT_CONFIRMED_REVERSAL"
+    assert result["trigger_time_utc"] == signal_time + timedelta(minutes=30)
+    assert result["fill_time_utc"] == signal_time + timedelta(minutes=30)
+    assert result["fill_price"] == Decimal("98.2")
+
+
+def test_lab61_terminal_hit_on_trigger_candle_cannot_be_rewritten() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "nearest_support": {"lower": Decimal("94"), "upper": Decimal("95"), "center": Decimal("94.5")},
+        "realistic_futures_spread_pct": Decimal("0"),
+    }
+    future = [
+        PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("94.5"), Decimal("111"), Decimal("94"), Decimal("96")),
+        PerfCandle(signal_time + timedelta(minutes=15), signal_time + timedelta(minutes=30), Decimal("96"), Decimal("97"), Decimal("90"), Decimal("92")),
+    ]
+
+    result = _lab61_evaluate_dynamic_exit(
+        item,
+        variant_id="EXIT_FIRST_SUPPORT_RECLAIM",
+        prepared_future_4h=future,
+    )
+
+    assert result["status"] == "SL_HIT"
+    assert result["dynamic_action_taken"] is False
+    assert result["trigger_status"] == "TERMINAL_BEFORE_DYNAMIC_EXIT"
+
+
+def test_lab61_reclaim_after_half_r_requires_favorable_progress() -> None:
+    signal_time = datetime(2026, 1, 1, 0, 0)
+    item = {
+        "signal_timestamp": signal_time,
+        "entry": Decimal("100"),
+        "risk": Decimal("10"),
+        "stop_loss": Decimal("110"),
+        "take_profit": Decimal("85"),
+        "nearest_support": {"lower": Decimal("94"), "upper": Decimal("95"), "center": Decimal("94.5")},
+        "realistic_futures_spread_pct": Decimal("0"),
+    }
+    future = [
+        PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("94.5"), Decimal("97"), Decimal("94"), Decimal("96")),
+        PerfCandle(signal_time + timedelta(minutes=15), signal_time + timedelta(minutes=30), Decimal("96.1"), Decimal("100"), Decimal("96"), Decimal("99")),
+    ]
+
+    result = _lab61_evaluate_dynamic_exit(
+        item,
+        variant_id="EXIT_SUPPORT_RECLAIM_AFTER_0_50R",
+        prepared_future_4h=future,
+    )
+
+    assert result["dynamic_action_taken"] is True
+    assert result["trigger_status"] == "SUPPORT_RECLAIM_AFTER_0_50R"
+    assert result["cumulative_mfe_r"] == Decimal("0.6")
+
+
+def test_lab61_dynamic_exit_study_keeps_fixed_cohort_and_reports_tradeoffs() -> None:
+    start = datetime(2026, 1, 1, 0, 0)
+    source = []
+    forward: dict[str, list[PerfCandle]] = {}
+    for index in range(4):
+        signal_time = start + timedelta(hours=index * 5)
+        symbol = f"D{index}USDT"
+        source.append(
+            {
+                "signal_id": f"D{index}",
+                "symbol": symbol,
+                "signal_timestamp": signal_time,
+                "signal_time_wib": "controlled",
+                "result_time_utc": signal_time + timedelta(hours=1),
+                "result_status": "SL_HIT",
+                "entry": Decimal("100"),
+                "risk": Decimal("10"),
+                "stop_loss": Decimal("110"),
+                "take_profit": Decimal("85"),
+                "realistic_realized_r": Decimal("-1.05"),
+                "realistic_futures_spread_pct": Decimal("0"),
+                "evidence_snapshot": {"kline_taker_sell_ratio": Decimal("0.55")},
+            }
+        )
+        forward[symbol] = [
+            PerfCandle(signal_time, signal_time + timedelta(minutes=15), Decimal("94.5"), Decimal("97"), Decimal("94"), Decimal("96")),
+            PerfCandle(signal_time + timedelta(minutes=15), signal_time + timedelta(minutes=30), Decimal("96.2"), Decimal("111"), Decimal("96"), Decimal("110")),
+        ]
+
+    def context(_row: dict, **_kwargs) -> dict:
+        return {
+            "structure_state": "AT_1H_SUPPORT",
+            "structure_reason": "controlled",
+            "atr_1h_at_signal": Decimal("10"),
+            "one_hour_history_count": 100,
+            "zone_count_1h": 2,
+            "nearest_support": {"center": Decimal("94.5"), "lower": Decimal("94"), "upper": Decimal("95")},
+            "nearest_resistance": {"center": Decimal("107"), "lower": Decimal("106"), "upper": Decimal("108")},
+            "nearest_support_distance_atr": Decimal("0.55"),
+            "nearest_resistance_distance_atr": Decimal("0.7"),
+            "state_zone": None,
+            "four_hour_confluence_status": "FOUR_H_CONTEXT_NOT_EVALUATED",
+            "four_hour_confluence_reason": "controlled",
+            "_lab56_zones": [],
+        }
+
+    with patch("app.services.signal_candidate_performance._lab56_structure_context", side_effect=context):
+        study = _mid_short_v21_dynamic_exit_study(
+            source,
+            one_hour_candles={},
+            forward_candles=forward,
+            min_sample=1,
+            limit=10,
+        )
+
+    assert study["summary"]["fixed_cohort_count"] == 4
+    assert study["summary"]["first_reclaim_trigger_count"] == 4
+    assert len(study["variant_rows"]) == 5
+    assert {row["all"]["source_count"] for row in study["variant_rows"]} == {4}
+    reclaim = next(row for row in study["variant_rows"] if row["variant_id"] == "EXIT_FIRST_SUPPORT_RECLAIM")
+    assert reclaim["all"]["early_exit_count"] == 4
+    assert reclaim["all"]["sl_avoided_count"] == 4
+    assert reclaim["all"]["r_saved_from_control_losses"] > 0
 
 
 def test_mid_short_sl_failure_classification_separates_direction_entry_regime_and_followthrough() -> None:
