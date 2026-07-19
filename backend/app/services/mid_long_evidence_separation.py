@@ -32,13 +32,7 @@ DEFAULT_ARTIFACT_PATH = (
 )
 
 LAB64_EVIDENCE_FIELDS: tuple[tuple[str, str], ...] = (
-    ("core_score", "Core score"),
-    ("evidence_score", "Evidence score"),
-    ("evidence_data_completeness", "Evidence completeness"),
     *tuple(EVIDENCE_FIELDS),
-    ("body_pct", "Body %"),
-    ("upper_wick_pct", "Upper wick %"),
-    ("lower_wick_pct", "Lower wick %"),
     ("funding_rate", "Funding rate"),
 )
 

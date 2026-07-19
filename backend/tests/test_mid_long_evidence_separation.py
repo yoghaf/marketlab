@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.models.market import FuturesKline15m, FuturesKline1h, SignalForwardReturnLog
 from app.services.mid_long_evidence_separation import (
+    LAB64_EVIDENCE_FIELDS,
     MidLongEvidenceSeparationArtifactRunner,
     MidLongEvidenceSeparationArtifactService,
     MidLongEvidenceSeparationService,
@@ -66,6 +67,11 @@ def test_lab64_auc_handles_ties_without_direction_bias() -> None:
         [Decimal("1"), Decimal("2")],
     )
     assert auc == Decimal("0.5")
+
+
+def test_lab64_evidence_field_catalog_has_no_duplicate_fields() -> None:
+    field_names = [field for field, _label in LAB64_EVIDENCE_FIELDS]
+    assert len(field_names) == len(set(field_names))
 
 
 def test_lab64_service_uses_fixed_120m_outcomes_and_signal_time_evidence() -> None:
