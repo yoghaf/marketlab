@@ -32,6 +32,7 @@ const patches: PatchItem[] = [
       "Jika TP atau SL tersentuh sebelum keputusan selesai, hasil terminal itu tetap dipakai dan tidak boleh ditimpa oleh dynamic exit.",
       "Static target before support dari LAB-60 ikut ditampilkan sebagai comparator pada fixed cohort yang sama.",
       "Hasil dipisah all/train/chronological validation dan menampilkan SL reduced, TP cut, R saved, R sacrificed, serta drawdown.",
+      "Halaman LAB-61 sekarang menampilkan full-cohort result eksplisit untuk seluruh 112 Signal per varian, terpisah jelas dari checkpoint validation 34 Signal.",
       "Patch ini tidak mengubah Signal Factory, scanner, threshold, logged entry/SL/TP, outcome evaluator, atau execution."
     ],
     impact: "Kita sekarang bisa mengukur apakah pemantauan candle saat posisi aktif benar-benar mengurangi kerugian atau justru terlalu cepat memotong Signal yang akhirnya mencapai target.",

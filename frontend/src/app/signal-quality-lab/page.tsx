@@ -664,9 +664,41 @@ function V21DynamicExitPanel({
         </div>
       </section>
 
+      <section>
+        <div className="mb-3">
+          <h2 className="font-bold text-ink">Full cohort result: seluruh 112 Signal</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Setiap varian di bawah diperiksa pada seluruh fixed cohort. Trigger hanya menunjukkan berapa Signal yang benar-benar mengaktifkan dynamic exit; Signal lain tetap memakai hasil control.
+          </p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {data.variant_rows.map((row) => (
+            <article className="rounded-md border border-line bg-white p-4" key={row.variant_id}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-ink">{row.label}</h3>
+                  <p className="mt-1 text-xs text-slate-500">{row.method}</p>
+                </div>
+                <StatusBadge value={row.verdict} />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-3 text-sm">
+                <CohortRead label="Diperiksa" value={`${row.all.evaluated_count}/${row.all.source_count}`} detail="Seluruh fixed cohort" />
+                <CohortRead label="Total R" value={`${fmtSigned(row.all.total_realistic_r)}R`} detail={`${fmtSigned(row.all.total_realistic_r_delta_vs_control)}R vs control`} />
+                <CohortRead label="TP / SL" value={`${row.all.tp_count} / ${row.all.sl_count}`} detail={`${row.all.neither_count} neither 4h`} />
+                <CohortRead label="Dynamic exit" value={String(row.all.early_exit_count)} detail={`${row.all.early_exit_positive_count} positif / ${row.all.early_exit_negative_count} negatif`} />
+                <CohortRead label="Drawdown" value={`${fmtSigned(row.all.max_drawdown_r)}R`} detail={`${fmtSigned(row.all.max_drawdown_delta_vs_control)}R vs control`} />
+                <CohortRead label="Trade-off" value={`${row.all.sl_avoided_count} SL saved`} detail={`${row.all.tp_sacrificed_count} TP terpotong`} />
+                <CohortRead label="R diselamatkan" value={`${fmtSigned(row.all.r_saved_from_control_losses)}R`} detail="Dari control loss" />
+                <CohortRead label="R dikorbankan" value={`${fmtSigned(row.all.r_sacrificed_from_control_tps)}R`} detail="Dari control TP" />
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <CollapsiblePanel
         title="Dynamic exit comparison"
-        description="Bandingkan R, drawdown, SL yang berhasil dikurangi, dan TP yang terpotong. Semua variant memakai cohort dan chronology split yang sama."
+        description="Kolom All memakai seluruh 112 Signal. Kolom validation hanya checkpoint 34 Signal terbaru dan tidak menggantikan hasil full cohort."
         defaultOpen
       >
         <V21DynamicExitVariantTable rows={data.variant_rows} />
@@ -744,32 +776,44 @@ function V21DynamicExitVariantTable({ rows }: { rows: MidShortV21DynamicExitVari
         <thead>
           <tr>
             <th>Variant</th>
-            <th>Verdict</th>
-            <th>All triggers + / -</th>
-            <th>All R / avg / DD</th>
+            <th>All n</th>
+            <th>All TP / SL / exit / neither</th>
+            <th>All trigger + / -</th>
+            <th>All R / delta</th>
+            <th>All DD / delta</th>
+            <th>All SL saved / TP cut</th>
+            <th>All R saved / sacrificed</th>
             <th>Validation n / triggers</th>
             <th>Validation R / delta</th>
-            <th>Validation DD / delta</th>
-            <th>SL reduced / TP cut</th>
-            <th>R saved / sacrificed</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.variant_id}>
-              <td><div className="font-semibold">{row.label}</div><div className="mt-1 max-w-sm text-xs text-slate-500">{row.method}</div></td>
-              <td><StatusBadge value={row.verdict} /></td>
+              <td><div className="font-semibold">{row.label}</div><div className="mt-1"><StatusBadge value={row.verdict} /></div><div className="mt-1 max-w-sm text-xs text-slate-500">{row.method}</div></td>
+              <td className="font-semibold">{row.all.evaluated_count}/{row.all.source_count}</td>
+              <td>{row.all.tp_count} / {row.all.sl_count} / {row.all.early_exit_count} / {row.all.neither_count}</td>
               <td>{row.all.early_exit_count} / {row.all.early_exit_positive_count} / {row.all.early_exit_negative_count}</td>
-              <td>{fmtSigned(row.all.total_realistic_r)}R / {fmtSigned(row.all.avg_realistic_r)}R / {fmtSigned(row.all.max_drawdown_r)}R</td>
+              <td>{fmtSigned(row.all.total_realistic_r)}R / {fmtSigned(row.all.total_realistic_r_delta_vs_control)}R</td>
+              <td>{fmtSigned(row.all.max_drawdown_r)}R / {fmtSigned(row.all.max_drawdown_delta_vs_control)}R</td>
+              <td>{row.all.sl_avoided_count} / {row.all.tp_sacrificed_count}</td>
+              <td>{fmtSigned(row.all.r_saved_from_control_losses)}R / {fmtSigned(row.all.r_sacrificed_from_control_tps)}R</td>
               <td>{row.validation.evaluated_count}/{row.validation.source_count} / {row.validation.early_exit_count}</td>
               <td>{fmtSigned(row.validation.total_realistic_r)}R / {fmtSigned(row.validation.avg_realistic_r_delta_vs_control)}R</td>
-              <td>{fmtSigned(row.validation.max_drawdown_r)}R / {fmtSigned(row.validation.max_drawdown_delta_vs_control)}R</td>
-              <td>{row.validation.sl_avoided_count} / {row.validation.tp_sacrificed_count}</td>
-              <td>{fmtSigned(row.validation.r_saved_from_control_losses)}R / {fmtSigned(row.validation.r_sacrificed_from_control_tps)}R</td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function CohortRead({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase text-slate-500">{label}</div>
+      <div className="mt-1 font-bold text-ink">{value}</div>
+      <div className="mt-0.5 text-xs text-slate-500">{detail}</div>
     </div>
   );
 }
