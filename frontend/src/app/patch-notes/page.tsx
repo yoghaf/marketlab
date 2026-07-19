@@ -19,6 +19,29 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-19",
+    version: "LAB-64",
+    title: "MID_LONG 1h TP/SL Evidence Separation",
+    status: "RESEARCH",
+    area: "MID_LONG 1h signal quality",
+    summary: "Menguji evidence sebelum entry yang membedakan TP dari SL pada cohort tetap LAB-63 0.75 ATR / 1R / 120m dengan chronological validation.",
+    changes: [
+      "LAB-64 memakai source Signal, entry futures, ATR causal, forward candle, biaya realistis, dan position lock yang sama dengan LAB-63.",
+      "TP/SL distribution tidak mencampur timeout, same-candle ambiguity, waiting, incomplete, MFE, MAE, atau future return sebagai input evidence.",
+      "Setiap field menampilkan availability, median dan quartile TP/SL, AUC, separation strength, serta arah pada train dan validation.",
+      "Field yang berubah arah antara train dan validation ditandai DIRECTION_FLIPPED dan tidak boleh dijadikan filter.",
+      "Core score, evidence score, completeness, price/volume/ATR, taker, OI, funding, spread, positioning, dan spot/futures evidence diaudit bersama.",
+      "LAB-63 dan LAB-64 berbagi satu prepared candle dataset agar research-loop tidak menggandakan replay berat.",
+      "Patch ini tidak mengubah Signal Factory, scanner, candidate, threshold, entry, TP/SL, outcome, atau execution."
+    ],
+    impact: "Kita dapat membedakan evidence yang hanya tampak bagus pada seluruh sampel dari evidence yang tetap searah pada validation sebelum memulai fixed-cohort filter study.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open LAB-64" },
+      { href: "/signal-quality-lab?stage=MID_LONG&timeframe=1h", label: "Quality Archive" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-19",
     version: "LAB-63",
     title: "MID_LONG 1h Realistic Timeout Policy Validation",
     status: "RESEARCH",

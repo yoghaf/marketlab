@@ -17,6 +17,10 @@ if str(BACKEND_DIR) not in sys.path:
 from app.services.multitimeframe_features import DEFAULT_DB_PATH  # noqa: E402
 from app.services.mid_long_geometry_validation import (  # noqa: E402
     MidLongGeometryValidationArtifactRunner,
+    MidLongGeometryValidationService,
+)
+from app.services.mid_long_evidence_separation import (  # noqa: E402
+    MidLongEvidenceSeparationArtifactRunner,
 )
 from app.services.strategy_optimization_artifacts import (  # noqa: E402
     DEFAULT_STRATEGY_OPTIMIZATION_ARTIFACT_DIR,
@@ -69,6 +73,9 @@ def main() -> None:
             limit=max(20, args.limit),
             lane_pairs=lane_pairs,
         )
+        prepared_mid_long = MidLongGeometryValidationService(db).prepare_dataset(
+            include_watch_only=args.include_watch_only,
+        )
         lab63 = MidLongGeometryValidationArtifactRunner(
             db,
             artifact_path=output_dir / "mid_long_lab63.json",
@@ -77,6 +84,17 @@ def main() -> None:
             position_lock=not args.no_position_lock,
             min_validation_sample=max(1, args.min_sample),
             limit=max(20, args.limit),
+            prepared_dataset=prepared_mid_long,
+        )
+        lab64 = MidLongEvidenceSeparationArtifactRunner(
+            db,
+            artifact_path=output_dir / "mid_long_lab64.json",
+        ).run(
+            include_watch_only=args.include_watch_only,
+            position_lock=not args.no_position_lock,
+            min_group_sample=max(1, args.min_sample),
+            limit=max(20, args.limit),
+            prepared_dataset=prepared_mid_long,
         )
 
     summary = {
@@ -91,6 +109,11 @@ def main() -> None:
         "mid_long_lab63_reference_policy": lab63.get("reference_policy"),
         "mid_long_lab63_best_observed_policy": (
             (lab63.get("best_observed_policy") or {}).get("policy_id")
+        ),
+        "mid_long_lab64_path": str(output_dir / "mid_long_lab64.json"),
+        "mid_long_lab64_verdict": lab64.get("verdict"),
+        "mid_long_lab64_stable_field_count": (
+            (lab64.get("field_summary") or {}).get("stable_field_count", 0)
         ),
         "errors": payload.get("errors") or [],
         "read_only": True,

@@ -9,6 +9,8 @@ import {
   MidLongLab62Response,
   MidLongLab63Policy,
   MidLongLab63Response,
+  MidLongLab64Field,
+  MidLongLab64Response,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -43,6 +45,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   });
   let lab62: MidLongLab62Response | null = null;
   let lab63: MidLongLab63Response | null = null;
+  let lab64: MidLongLab64Response | null = null;
   let quality: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
   let optimization: StrategyOptimizationResponse | null = null;
@@ -52,11 +55,13 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let optimizationError: string | null = null;
   let regimeError: string | null = null;
   let lab63Error: string | null = null;
+  let lab64Error: string | null = null;
 
-  const [labResult, artifactResult, lab63Result] = await Promise.allSettled([
+  const [labResult, artifactResult, lab63Result, lab64Result] = await Promise.allSettled([
     fetchJson<MidLongLab62Response>(`/api/signal-candidates/mid-long-1h-lab62?${labQuery.toString()}`, { revalidateSeconds: 120 }),
     fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 300 }),
-    fetchJson<MidLongLab63Response>("/api/signal-candidates/mid-long-1h-lab63", { revalidateSeconds: 300 })
+    fetchJson<MidLongLab63Response>("/api/signal-candidates/mid-long-1h-lab63", { revalidateSeconds: 300 }),
+    fetchJson<MidLongLab64Response>("/api/signal-candidates/mid-long-1h-lab64", { revalidateSeconds: 300 })
   ]);
 
   if (labResult.status === "fulfilled") {
@@ -72,6 +77,12 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     lab63 = lab63Result.value;
   } else {
     lab63Error = lab63Result.reason instanceof Error ? lab63Result.reason.message : "MID_LONG LAB-63 API failed";
+  }
+
+  if (lab64Result.status === "fulfilled") {
+    lab64 = lab64Result.value;
+  } else {
+    lab64Error = lab64Result.reason instanceof Error ? lab64Result.reason.message : "MID_LONG LAB-64 API failed";
   }
 
   if (artifactResult.status === "fulfilled") {
@@ -95,9 +106,9 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     <div className="space-y-5">
       <PageHeader
         title="MID_LONG 1h V2.1 Research"
-        badge="LAB-63 - REALISTIC TIMEOUT VALIDATION"
-        subtitle="Geometry tetap 0.75 ATR / 1R. LAB-63 membandingkan timeout 60m, 120m, 4h, dan tanpa timeout memakai fee, spread, slippage, position lock, serta chronological validation."
-        updatedAt={fmtTime(lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
+        badge="LAB-64 - TP/SL EVIDENCE SEPARATION"
+        subtitle="Cohort dan geometry dikunci ke hasil LAB-63 120m. LAB-64 menguji apakah evidence sebelum entry benar-benar membedakan TP dan SL secara konsisten pada train dan validation."
+        updatedAt={fmtTime(lab64?.generated_at_utc || lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -141,8 +152,8 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
             </div>
             <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-3">
               <ResearchStep status="COMPLETE" title="LAB-62" detail="Baseline V2 dan geometry ideal sudah dibekukan sebagai titik awal." />
-              <ResearchStep status="ACTIVE" title="LAB-63" detail="Bandingkan 60m, 120m, 4h, dan tanpa timeout dengan biaya realistis dan validation waktu." />
-              <ResearchStep status="PENDING" title="LAB-64+" detail="Failure anatomy, fixed cohort, combination filter, structure, lalu forward shadow jika validation bertahan." />
+              <ResearchStep status="COMPLETE" title="LAB-63" detail="120m paling sedikit merusak validation, tetapi seluruh policy tetap negatif setelah biaya." />
+              <ResearchStep status="ACTIVE" title="LAB-64" detail="Cari evidence TP-vs-SL yang konsisten pada train dan validation sebelum membuat filter." />
             </div>
             <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-900">
               Angka geometry masih ideal dan dipilih dari grid. Angka itu tidak boleh dibandingkan langsung dengan V2 realistic R serta belum boleh menjadi rule Signal.
@@ -172,6 +183,38 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               </>
             ) : (
               <div className="p-4"><EmptyState title="LAB-63 belum tersedia" detail="Tunggu artifact research cycle pertama." /></div>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="LAB-64 TP vs SL evidence separation"
+            description="Outcome dikunci ke 0.75 ATR / 1R / 120m. AUC menunjukkan peluang nilai evidence pada TP lebih tinggi daripada SL; 50% berarti tidak ada separation."
+          >
+            {lab64Error ? (
+              <div className="p-4 text-sm text-stale">{lab64Error}</div>
+            ) : lab64 ? (
+              <>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+                  <Info label="Fixed cohort" value={`${lab64.split.source_signal_count} Signal`} />
+                  <Info label="Validation TP / SL" value={`${lab64.outcome_summary.validation.tp_count} / ${lab64.outcome_summary.validation.sl_count}`} />
+                  <Info label="Stable fields" value={`${lab64.field_summary.stable_field_count} / ${lab64.field_summary.field_count}`} />
+                  <Info label="Moderate / weak" value={`${lab64.field_summary.moderate_field_count} / ${lab64.field_summary.weak_field_count}`} />
+                  <Info label="Direction flipped" value={lab64.field_summary.direction_flip_count} />
+                  <Info label="Verdict" value={labelFor(lab64.verdict)} />
+                </div>
+                {lab64.best_observed_field && (
+                  <div className="border-t border-line bg-blue-50 p-4 text-sm text-blue-950">
+                    Evidence observasi teratas: <b>{lab64.best_observed_field.label}</b>. {lab64.best_observed_field.research_read}
+                    Ini belum menjadi threshold atau filter Signal.
+                  </div>
+                )}
+                <Lab64EvidenceTable rows={lab64.field_rows} />
+                <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-950">
+                  Median mentah tidak dipakai untuk meranking lintas field karena unitnya berbeda. Prioritas ditentukan dari AUC, kecukupan sample, dan arah yang tetap sama pada chronological train/validation.
+                </div>
+              </>
+            ) : (
+              <div className="p-4"><EmptyState title="LAB-64 belum tersedia" detail="Tunggu research artifact cycle berikutnya." /></div>
             )}
           </SectionCard>
 
@@ -213,10 +256,10 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
           </section>
 
           <section className="grid gap-4 xl:grid-cols-2">
-            <SectionCard title="TP vs SL evidence" description="Field yang paling membedakan TP dari SL untuk MID_LONG 1h.">
+            <SectionCard title="Logged V2 evidence archive (LAB-62)" description="Median lama dari outcome V2 logged. Gunakan LAB-64 di atas untuk chronological separation pada geometry tetap.">
               <EvidenceTable rows={quality?.evidence_fields || []} />
             </SectionCard>
-            <SectionCard title="Filter candidates" description="Filter read-only yang diuji terhadap baseline MID_LONG 1h.">
+            <SectionCard title="Legacy in-sample filter candidates" description="Hipotesis lama terhadap baseline V2; belum dianggap valid sampai diretest pada fixed cohort setelah LAB-64.">
               {filterError ? (
                 <div className="p-4 text-sm text-stale">{filterError}</div>
               ) : (
@@ -225,7 +268,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
             </SectionCard>
           </section>
 
-          <SectionCard title="Full filter ranking" description="Cari filter dengan sample cukup, R membaik, SL share turun, dan concentration tidak terlalu tinggi.">
+          <SectionCard title="Legacy full filter ranking" description="Arsip eksplorasi in-sample LAB-62. Baris ini bukan hasil LAB-64 dan tidak dipromosikan.">
             {filterError ? (
               <div className="p-4 text-sm text-stale">{filterError}</div>
             ) : (
@@ -399,6 +442,67 @@ function Lab63PolicyTable({ rows, referencePolicy }: { rows: MidLongLab63Policy[
           ))}
           {!rows.length && (
             <tr><td colSpan={9}><EmptyState title="No timeout policy rows" detail="Artifact LAB-63 belum berisi hasil." /></td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab64EvidenceTable({ rows }: { rows: MidLongLab64Field[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Evidence</th>
+            <th>Availability</th>
+            <th>All TP / SL median</th>
+            <th>Train AUC</th>
+            <th>Validation TP / SL median</th>
+            <th>Validation AUC</th>
+            <th>Consistency</th>
+            <th>Research read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td>
+                <div>{row.validation.available_count} / {row.validation.source_count}</div>
+                <div className="text-xs text-slate-500">{fmtNumber(row.validation.available_pct)}% validation</div>
+              </td>
+              <td>
+                <div>{fmtNumber(row.all.tp_median)} / {fmtNumber(row.all.sl_median)}</div>
+                <div className="text-xs text-slate-500">n {row.all.tp_count} / {row.all.sl_count}</div>
+              </td>
+              <td>
+                <div>{fmtAuc(row.train.auc_tp_above_sl)}</div>
+                <div className="text-xs text-slate-500">{labelFor(row.train_direction)}</div>
+              </td>
+              <td>
+                <div>{fmtNumber(row.validation.tp_median)} / {fmtNumber(row.validation.sl_median)}</div>
+                <div className="text-xs text-slate-500">n {row.validation.tp_count} / {row.validation.sl_count}</div>
+              </td>
+              <td>
+                <div>{fmtAuc(row.validation.auc_tp_above_sl)}</div>
+                <div className="text-xs text-slate-500">strength {fmtPercentRatio(row.validation.separation_strength)}</div>
+              </td>
+              <td>
+                <StatusBadge value={row.verdict} />
+                <div className="mt-1 text-xs text-slate-500">
+                  {row.direction_consistent == null ? "Belum dapat dinilai" : row.direction_consistent ? "Arah konsisten" : "Arah berubah"}
+                </div>
+              </td>
+              <td className="max-w-md text-sm text-slate-600">{row.research_read}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr><td colSpan={8}><EmptyState title="No evidence rows" detail="Artifact LAB-64 belum berisi field evidence." /></td></tr>
           )}
         </tbody>
       </table>
@@ -629,6 +733,18 @@ function fmtSigned(value?: string | number | null) {
 function fmtOptionalSigned(value?: string | number | null) {
   if (value === null || value === undefined || value === "") return "-";
   return fmtSigned(value);
+}
+
+function fmtAuc(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return "-";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : String(value);
+}
+
+function fmtPercentRatio(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return "-";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? `${(parsed * 100).toFixed(1)}%` : String(value);
 }
 
 function policyLabel(policyId?: string | null) {

@@ -1,9 +1,9 @@
 # MID_LONG 1h Research Report
 
 - Status: read-only research report
-- Production snapshot: 19 July 2026, approximately 17:55 WIB
+- Production snapshot: refreshed by the MarketLab research artifact cycle
 - Primary lane: `MID_LONG`, signal timeframe `1h`
-- Current formal research checkpoint: `LAB-63`
+- Current formal research checkpoint: `LAB-64`
 - Current rule status: V2 remains unchanged
 - Promotion status: not approved for live execution or rule replacement
 
@@ -19,6 +19,19 @@ LAB-63 keeps the candidate geometry fixed at `0.75 x ATR(14) 1h` risk and `1.0R`
 All four policies use the same futures entry, causal 1h ATR, closed `AGG_READY` futures 15m path, Binance taker fee, signal spread, slippage, position lock, and chronological 70/30 split. The no-timeout policy never converts the latest candle into a completed result: unresolved positions remain `OPEN`, contribute only unrealized R, and keep the symbol lock active. Missing or gapped forward candles remain `WAITING_DATA` or `INCOMPLETE_FORWARD_DATA`.
 
 The production numbers are generated in `backend/artifacts/strategy_optimization/v1/mid_long_lab63.json`. They must be read as a timeout-policy study, not a live rule recommendation.
+
+## LAB-64 TP/SL Evidence Separation
+
+LAB-64 fixes the research geometry to the least-damaging LAB-63 validation policy: `0.75 x ATR(14) 1h`, `1.0R`, and a 120-minute timeout. It then compares evidence captured before entry for `TP_HIT` versus `SL_HIT` rows.
+
+The comparison is calculated separately for all rows, the first chronological 70% train rows, and the latest 30% validation rows. Median gaps are shown for readability, but ranking uses AUC because raw deltas from percentage, ratio, spread, and score fields cannot be compared directly. A field is only considered stable when:
+
+- TP and SL both have enough values in train and validation;
+- the relationship points in the same direction in both periods;
+- the separation remains measurable in validation;
+- evidence availability is reported rather than silently treating missing values as neutral.
+
+Timeout rows, same-candle ambiguity, waiting rows, incomplete data, future returns, MFE, and MAE are excluded from TP-versus-SL evidence distributions. The production output is stored in `backend/artifacts/strategy_optimization/v1/mid_long_lab64.json` and exposed through `/api/signal-candidates/mid-long-1h-lab64`.
 
 ## 1. Executive Verdict
 
@@ -41,18 +54,7 @@ The current definition therefore receives this verdict:
 
 `MID_LONG_1H_V2_NEGATIVE_BUT_GEOMETRY_SHADOW_PROMISING`
 
-The promising part is not the current V2 signal. It is a separate ideal-path hypothesis found by the ATR/RR/timeout study:
-
-- Risk distance: `0.75 x ATR(14) 1h`
-- Target: `1.0R`
-- Maximum observation horizon: `60 minutes`
-- Ideal sample: 642 evaluated signals
-- Ideal total: `+37.25R`
-- Ideal average: `+0.058R`
-- Ideal median: `+0.042R`
-- Ideal maximum drawdown: `-14.87R`
-
-This result must not be promoted yet. It was selected from a parameter grid on the same historical sample, excludes realistic fee/spread/slippage, and has not passed a chronological out-of-sample validation. The correct next project is a `MID_LONG 1h V2.1 shadow` study that validates this geometry first, not an immediate change to the live rule.
+LAB-63 subsequently proved that geometry alone does not repair the lane after realistic costs. The 120-minute policy reduced validation damage compared with the four-hour reference, but remained negative. The 60-minute policy was weaker in validation, while four-hour and no-timeout policies also remained negative. LAB-64 therefore investigates signal selection quality before any V2.1 shadow proposal.
 
 ## 2. Important Cohort Differences
 
@@ -437,16 +439,16 @@ If a variant passes validation, log it alongside V2 without changing scanner out
 | Can it be used as-is? | No. |
 | Is there enough data to continue research? | Yes. |
 | Is a simple evidence filter ready? | No. |
-| Is there a promising direction? | Yes: tighter risk, 1R target, and 60-120m timeout. |
+| Is there a promising direction? | Only a research control: 0.75 ATR, 1R, 120m was least damaging in LAB-63 validation. |
 | Should the current rule be changed now? | No. |
-| Next formal work | MID_LONG 1h V2.1 geometry shadow with realistic costs and chronological validation. |
+| Next formal work | LAB-64 evidence separation, followed by failure anatomy and fixed-cohort filter validation. |
 
 The recommended order is therefore:
 
 1. Keep MID_SHORT V2.1 in one-month paper observation.
 2. Freeze current MID_LONG V2 as a control, not a promoted setup.
-3. Build and validate a geometry-only MID_LONG V2.1 shadow.
-4. Add regime or evidence filters only after geometry survives out-of-sample testing.
+3. Use LAB-64 to identify whether any pre-entry evidence remains stable in chronological validation.
+4. Build failure anatomy and fixed-cohort filter studies before considering a V2.1 shadow.
 
 ## 15. Production Sources
 
@@ -458,6 +460,8 @@ The report was assembled from these read-only production endpoints and artifacts
 - `/api/signal-candidates/misidentification-audit`
 - `/api/signal-candidates/market-regime-study`
 - `/api/strategy-optimization-artifacts`
+- `/api/signal-candidates/mid-long-1h-lab63`
+- `/api/signal-candidates/mid-long-1h-lab64`
 - `/api/signal-candidates/one-hour-v4-shadow`
 
 No Signal Factory rule, scanner decision, outcome calculation, TP/SL rule, threshold, database schema, or execution behavior was changed for this report.

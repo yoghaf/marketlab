@@ -46,6 +46,9 @@ class Lab63Signal:
     signal_timestamp: datetime
     entry: Decimal
     evidence: dict[str, Any]
+    core_score: Decimal | None = None
+    evidence_score: Decimal | None = None
+    evidence_data_completeness: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,17 @@ class Lab63Context:
     latest_symbol_close_time: datetime | None
 
 
+@dataclass(frozen=True)
+class Lab63PreparedDataset:
+    epoch: str
+    include_watch_only: bool
+    signals: list[Lab63Signal]
+    contexts: list[Lab63Context]
+    latest_candle_time: datetime | None
+    train_ids: set[str]
+    validation_ids: set[str]
+
+
 class MidLongGeometryValidationService:
     """Realistic, read-only timeout comparison for MID_LONG 1h."""
 
@@ -79,10 +93,17 @@ class MidLongGeometryValidationService:
         position_lock: bool = True,
         min_validation_sample: int = 20,
         limit: int = 25,
+        prepared_dataset: Lab63PreparedDataset | None = None,
     ) -> dict[str, Any]:
-        signals = self._load_signals(epoch=epoch, include_watch_only=include_watch_only)
-        contexts, latest_candle_time = self._load_contexts(signals)
-        train_ids, validation_ids = _chronological_split(signals)
+        prepared = prepared_dataset or self.prepare_dataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+        )
+        signals = prepared.signals
+        contexts = prepared.contexts
+        latest_candle_time = prepared.latest_candle_time
+        train_ids = prepared.train_ids
+        validation_ids = prepared.validation_ids
 
         policy_rows: list[dict[str, Any]] = []
         for policy_id, timeout_minutes in POLICIES:
@@ -182,6 +203,25 @@ class MidLongGeometryValidationService:
             ],
         }
 
+    def prepare_dataset(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+    ) -> Lab63PreparedDataset:
+        signals = self._load_signals(epoch=epoch, include_watch_only=include_watch_only)
+        contexts, latest_candle_time = self._load_contexts(signals)
+        train_ids, validation_ids = _chronological_split(signals)
+        return Lab63PreparedDataset(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            signals=signals,
+            contexts=contexts,
+            latest_candle_time=latest_candle_time,
+            train_ids=train_ids,
+            validation_ids=validation_ids,
+        )
+
     def _load_signals(self, *, epoch: str, include_watch_only: bool) -> list[Lab63Signal]:
         query = (
             select(
@@ -190,6 +230,9 @@ class MidLongGeometryValidationService:
                 SignalForwardReturnLog.signal_timestamp,
                 SignalForwardReturnLog.price_at_signal,
                 SignalForwardReturnLog.evidence,
+                SignalForwardReturnLog.core_score,
+                SignalForwardReturnLog.evidence_score,
+                SignalForwardReturnLog.evidence_data_completeness,
             )
             .where(
                 SignalForwardReturnLog.candidate_status == "SIGNAL_CANDIDATE",
@@ -218,6 +261,17 @@ class MidLongGeometryValidationService:
                     signal_timestamp=_naive(item["signal_timestamp"]),
                     entry=Decimal(item["price_at_signal"]),
                     evidence=dict(evidence),
+                    core_score=(Decimal(item["core_score"]) if item["core_score"] is not None else None),
+                    evidence_score=(
+                        Decimal(item["evidence_score"])
+                        if item["evidence_score"] is not None
+                        else None
+                    ),
+                    evidence_data_completeness=(
+                        int(item["evidence_data_completeness"])
+                        if item["evidence_data_completeness"] is not None
+                        else None
+                    ),
                 )
             )
         return output

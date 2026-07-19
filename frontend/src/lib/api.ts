@@ -3818,6 +3818,91 @@ export type MidLongLab63Response = {
   guardrails: string[];
 };
 
+export type MidLongLab64FieldStats = {
+  source_count: number;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  delta_tp_minus_sl?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  auc_tp_above_sl?: string | number | null;
+  separation_strength?: string | number | null;
+};
+
+export type MidLongLab64Field = {
+  field: string;
+  label: string;
+  all: MidLongLab64FieldStats;
+  train: MidLongLab64FieldStats;
+  validation: MidLongLab64FieldStats;
+  train_direction?: string | null;
+  validation_direction?: string | null;
+  direction_consistent?: boolean | null;
+  verdict: string;
+  research_read: string;
+};
+
+export type MidLongLab64Response = {
+  generated_at_utc?: string | null;
+  lab: string;
+  study_scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  filters: {
+    epoch: string;
+    stage: string;
+    timeframe: string;
+    direction: string;
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_group_sample: number;
+    limit: number;
+  };
+  policy: {
+    policy_id: string;
+    timeout_minutes: number;
+    atr_source: string;
+    atr_multiplier: string | number;
+    reward_risk: string | number;
+    realistic_model: string;
+  };
+  split: {
+    method: string;
+    source_signal_count: number;
+    train_source_count: number;
+    validation_source_count: number;
+  };
+  latest_futures_15m_close_time?: string | null;
+  outcome_summary: {
+    all: MidLongLab63Metrics;
+    train: MidLongLab63Metrics;
+    validation: MidLongLab63Metrics;
+  };
+  field_summary: {
+    field_count: number;
+    stable_field_count: number;
+    moderate_field_count: number;
+    weak_field_count: number;
+    direction_flip_count: number;
+    insufficient_count: number;
+    no_clear_separation_count: number;
+  };
+  verdict: string;
+  best_observed_field?: MidLongLab64Field | null;
+  field_rows: MidLongLab64Field[];
+  latest_tp_examples: Array<Record<string, unknown>>;
+  latest_sl_examples: Array<Record<string, unknown>>;
+  guardrails: string[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;
