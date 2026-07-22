@@ -44,7 +44,8 @@ is_due() {
 
 mark_run() {
   local name="$1"
-  date +%s > "$STATE_DIR/${name}.last_run"
+  local timestamp="${2:-$(date +%s)}"
+  echo "$timestamp" > "$STATE_DIR/${name}.last_run"
 }
 
 run_step() {
@@ -130,10 +131,11 @@ while true; do
   fi
 
   if is_due "fast_pipeline" "$FAST_PIPELINE_INTERVAL_SECONDS"; then
+    fast_started_at="$(date +%s)"
     fast_limit="$(due_window_limit "fast_pipeline" "$FAST_PIPELINE_INTERVAL_SECONDS" "$FAST_LIMIT_WINDOWS" "$FAST_CATCHUP_LIMIT_WINDOWS")"
     echo "[marketlab-loop] fast pipeline start limit_windows=$fast_limit $(date -u)"
     if run_fast_pipeline "$fast_limit"; then
-      mark_run "fast_pipeline"
+      mark_run "fast_pipeline" "$fast_started_at"
       echo "[marketlab-loop] fast pipeline end $(date -u)"
     else
       echo "[marketlab-loop] fast pipeline failed; marker not advanced $(date -u)"
@@ -143,10 +145,11 @@ while true; do
   fi
 
   if is_due "four_hour_pipeline" "$FOUR_HOUR_INTERVAL_SECONDS"; then
+    four_hour_started_at="$(date +%s)"
     four_hour_limit="$(due_window_limit "four_hour_pipeline" "$FOUR_HOUR_INTERVAL_SECONDS" "$FOUR_HOUR_LIMIT_WINDOWS" "$FOUR_HOUR_CATCHUP_LIMIT_WINDOWS")"
     echo "[marketlab-loop] 4h maintenance start limit_windows=$four_hour_limit $(date -u)"
     if run_long_pipeline "4h" "$four_hour_limit"; then
-      mark_run "four_hour_pipeline"
+      mark_run "four_hour_pipeline" "$four_hour_started_at"
       echo "[marketlab-loop] 4h maintenance end $(date -u)"
     else
       echo "[marketlab-loop] 4h maintenance failed; marker not advanced $(date -u)"
@@ -154,10 +157,11 @@ while true; do
   fi
 
   if is_due "daily_pipeline" "$DAILY_INTERVAL_SECONDS"; then
+    daily_started_at="$(date +%s)"
     daily_limit="$(due_window_limit "daily_pipeline" "$DAILY_INTERVAL_SECONDS" "$DAILY_LIMIT_WINDOWS" "$DAILY_CATCHUP_LIMIT_WINDOWS")"
     echo "[marketlab-loop] 24h maintenance start limit_windows=$daily_limit $(date -u)"
     if run_long_pipeline "24h" "$daily_limit"; then
-      mark_run "daily_pipeline"
+      mark_run "daily_pipeline" "$daily_started_at"
       echo "[marketlab-loop] 24h maintenance end $(date -u)"
     else
       echo "[marketlab-loop] 24h maintenance failed; marker not advanced $(date -u)"
@@ -165,9 +169,10 @@ while true; do
   fi
 
   if is_due "full_research" "$FULL_RESEARCH_INTERVAL_SECONDS"; then
+    full_research_started_at="$(date +%s)"
     echo "[marketlab-loop] optimization research cycle start $(date -u)"
     if python scripts/run_marketlab_research_cycle.py --mode optimization; then
-      mark_run "full_research"
+      mark_run "full_research" "$full_research_started_at"
       echo "[marketlab-loop] optimization research cycle end $(date -u)"
     else
       echo "[marketlab-loop] optimization research cycle failed $(date -u)"

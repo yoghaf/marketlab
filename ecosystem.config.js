@@ -58,7 +58,7 @@ module.exports = {
       interpreter: "bash",
       env: {
         APP_ENV: "production",
-        MARKETLAB_LOOP_SLEEP_SECONDS: "300",
+        MARKETLAB_LOOP_SLEEP_SECONDS: "120",
         MARKETLAB_UNIVERSE_INTERVAL_SECONDS: "3600",
       },
     },
