@@ -18,6 +18,8 @@ FOUR_HOUR_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_FOUR_HOUR_CATCHUP_LIMIT_WINDOWS:-8}
 DAILY_LIMIT_WINDOWS="${MARKETLAB_DAILY_LIMIT_WINDOWS:-2}"
 DAILY_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_DAILY_CATCHUP_LIMIT_WINDOWS:-4}"
 STATE_DIR="${MARKETLAB_LOOP_STATE_DIR:-../data}"
+STEP_RETRIES="${MARKETLAB_STEP_RETRIES:-2}"
+STEP_RETRY_DELAY_SECONDS="${MARKETLAB_STEP_RETRY_DELAY_SECONDS:-10}"
 
 mkdir -p "$STATE_DIR"
 
@@ -44,6 +46,25 @@ is_due() {
 mark_run() {
   local name="$1"
   date +%s > "$STATE_DIR/${name}.last_run"
+}
+
+run_step() {
+  local label="$1"
+  shift
+  local attempt=1
+
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if (( attempt >= STEP_RETRIES )); then
+      echo "[marketlab-loop] $label failed after $attempt attempt(s) $(date -u)"
+      return 1
+    fi
+    echo "[marketlab-loop] $label failed; retrying in ${STEP_RETRY_DELAY_SECONDS}s $(date -u)"
+    sleep "$STEP_RETRY_DELAY_SECONDS"
+    attempt=$((attempt + 1))
+  done
 }
 
 due_window_limit() {
@@ -74,7 +95,7 @@ due_window_limit() {
 
 run_fast_pipeline() {
   local limit_windows="$1"
-  python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "ohlcv 15m/1h" python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$limit_windows" --cycles 1 || return 1
   if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
     echo "[marketlab-loop] rich futures collector start $(date -u)"
     if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then
@@ -86,14 +107,14 @@ run_fast_pipeline() {
   else
     echo "[marketlab-loop] rich futures collector skipped by cadence $(date -u)"
   fi
-  python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_feature_builder_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_feature_builder_1h.py --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_feature_context_join.py --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_psychology_labeler_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_signal_candidate_classifier_readonly_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
-  python scripts/run_outcome_tracker_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "rich alignment 15m/1h" python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "snapshot/funding alignment 15m/1h" python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "feature builder 15m" python scripts/run_feature_builder_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "feature builder 1h" python scripts/run_feature_builder_1h.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "feature context join" python scripts/run_feature_context_join.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "psychology labeler" python scripts/run_psychology_labeler_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "candidate classifier" python scripts/run_signal_candidate_classifier_readonly_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  run_step "outcome tracker" python scripts/run_outcome_tracker_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
   if ! python scripts/run_marketlab_research_cycle.py --mode light; then
     echo "[marketlab-loop] light research cycle failed $(date -u)"
   fi
@@ -102,9 +123,9 @@ run_fast_pipeline() {
 run_long_pipeline() {
   local timeframe="$1"
   local limit_windows="$2"
-  python scripts/run_ohlcv_aggregation.py --timeframes "$timeframe" --markets futures spot --limit-windows "$limit_windows" --cycles 1 \
-    && python scripts/run_rich_5m_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1 \
-    && python scripts/run_snapshot_funding_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1
+  run_step "ohlcv $timeframe" python scripts/run_ohlcv_aggregation.py --timeframes "$timeframe" --markets futures spot --limit-windows "$limit_windows" --cycles 1 \
+    && run_step "rich alignment $timeframe" python scripts/run_rich_5m_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1 \
+    && run_step "snapshot/funding alignment $timeframe" python scripts/run_snapshot_funding_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1
 }
 
 while true; do

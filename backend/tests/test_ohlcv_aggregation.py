@@ -79,6 +79,21 @@ class OhlcvAggregationTest(unittest.TestCase):
         self.assertEqual(row.aggregation_status, "AGG_INCOMPLETE")
         self.assertGreater(row.volume, Decimal("0"))
 
+    def test_rerun_does_not_rewrite_unchanged_closed_window(self) -> None:
+        start = datetime(2020, 1, 1, 0, 0, tzinfo=UTC)
+        self._insert_1m_rows(start, count=15)
+        service = OhlcvAggregationService(self.db)
+
+        service.run(timeframes=["15m"], markets=["futures"])
+        row = self.db.scalar(select(FuturesKline15m).where(FuturesKline15m.symbol == "TESTUSDT"))
+        first_updated_at = row.updated_at
+
+        service.run(timeframes=["15m"], markets=["futures"])
+        self.db.refresh(row)
+
+        self.assertEqual(row.updated_at, first_updated_at)
+        self.assertEqual(row.aggregation_status, "AGG_READY")
+
     def test_unclosed_window_cannot_be_ready(self) -> None:
         future_start = datetime.now(UTC).replace(second=0, microsecond=0) + timedelta(hours=1)
         self._insert_1m_rows(future_start, count=15)

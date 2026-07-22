@@ -132,6 +132,7 @@ class OhlcvAggregationService:
                 inserted += int(action == "inserted")
                 updated += int(action == "updated")
                 status_counts["AGG_MISSING_SPOT"] += 1
+                self._commit_symbol(dry_run)
                 continue
 
             statement = select(source_model).where(source_model.symbol == symbol)
@@ -155,6 +156,7 @@ class OhlcvAggregationService:
                 inserted += int(action == "inserted")
                 updated += int(action == "updated")
                 status_counts["AGG_WARMUP"] += 1
+                self._commit_symbol(dry_run)
                 continue
 
             window_opens = sorted(grouped)
@@ -169,6 +171,8 @@ class OhlcvAggregationService:
                 inserted += int(action == "inserted")
                 updated += int(action == "updated")
                 status_counts[payload["aggregation_status"]] += 1
+
+            self._commit_symbol(dry_run)
 
         return AggregationResult(
             market=market,
@@ -255,12 +259,31 @@ class OhlcvAggregationService:
         if dry_run:
             return "updated" if row else "inserted"
         if row:
+            if self._row_matches(row, values):
+                return "updated"
             for key, value in values.items():
                 if key != "created_at":
                     setattr(row, key, value)
             return "updated"
         self.db.add(model(**values))
         return "inserted"
+
+    def _commit_symbol(self, dry_run: bool) -> None:
+        if not dry_run:
+            self.db.commit()
+
+    @staticmethod
+    def _row_matches(row: Any, values: dict[str, Any]) -> bool:
+        for key, value in values.items():
+            if key in {"created_at", "updated_at"}:
+                continue
+            current = getattr(row, key)
+            if isinstance(current, datetime) and isinstance(value, datetime):
+                if _as_utc(current) != _as_utc(value):
+                    return False
+            elif current != value:
+                return False
+        return True
 
     def _active_symbols(self, symbols: list[str] | None) -> list[str]:
         query = (

@@ -326,6 +326,9 @@ class MarketCollector:
                     try:
                         payload = await fetcher(client, symbol)
                         _merge_counts(counts, storer(symbol, payload))
+                        # Snapshot endpoints are fetched serially. Persist each
+                        # symbol so the transaction does not span later HTTP calls.
+                        self.db.commit()
                     except BinanceClientError as exc:
                         errors += 1
                         self._record_error(run, collector_name, symbol, exc)
@@ -370,6 +373,9 @@ class MarketCollector:
                             fetched_candle_count += len(payload)
                             symbol_fetched += len(payload)
                             _merge_counts(counts, self._store_kline(model, symbol, payload))
+                            # Release SQLite's single-writer lock before the next
+                            # network request or symbol is processed.
+                            self.db.commit()
                             request_start_ms = request_end_ms + KLINE_INTERVAL_MS
 
                         gap_ranges.append(
