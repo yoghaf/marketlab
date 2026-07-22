@@ -6,7 +6,6 @@ source .venv/bin/activate
 
 SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-900}"
 UNIVERSE_INTERVAL_SECONDS="${MARKETLAB_UNIVERSE_INTERVAL_SECONDS:-3600}"
-RICH_INTERVAL_SECONDS="${MARKETLAB_RICH_INTERVAL_SECONDS:-1800}"
 FAST_PIPELINE_INTERVAL_SECONDS="${MARKETLAB_FAST_PIPELINE_INTERVAL_SECONDS:-900}"
 FOUR_HOUR_INTERVAL_SECONDS="${MARKETLAB_FOUR_HOUR_INTERVAL_SECONDS:-14400}"
 DAILY_INTERVAL_SECONDS="${MARKETLAB_DAILY_INTERVAL_SECONDS:-86400}"
@@ -96,17 +95,6 @@ due_window_limit() {
 run_fast_pipeline() {
   local limit_windows="$1"
   run_step "ohlcv 15m/1h" python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$limit_windows" --cycles 1 || return 1
-  if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
-    echo "[marketlab-loop] rich futures collector start $(date -u)"
-    if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then
-      mark_run "rich_futures"
-      echo "[marketlab-loop] rich futures collector end $(date -u)"
-    else
-      echo "[marketlab-loop] rich futures collector failed $(date -u)"
-    fi
-  else
-    echo "[marketlab-loop] rich futures collector skipped by cadence $(date -u)"
-  fi
   run_step "rich alignment 15m/1h" python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
   run_step "snapshot/funding alignment 15m/1h" python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
   run_step "feature builder 15m" python scripts/run_feature_builder_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1

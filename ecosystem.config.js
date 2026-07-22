@@ -42,6 +42,16 @@ module.exports = {
       },
     },
     {
+      name: "marketlab-rich-loop",
+      cwd: "/var/www/marketlab/backend",
+      script: ".venv/bin/python",
+      args: "scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 0 --interval-seconds 1800",
+      interpreter: "none",
+      env: {
+        APP_ENV: "production",
+      },
+    },
+    {
       name: "marketlab-research-loop",
       cwd: "/var/www/marketlab",
       script: "backend/scripts/run_marketlab_research_loop.sh",
@@ -50,7 +60,6 @@ module.exports = {
         APP_ENV: "production",
         MARKETLAB_LOOP_SLEEP_SECONDS: "300",
         MARKETLAB_UNIVERSE_INTERVAL_SECONDS: "3600",
-        MARKETLAB_RICH_INTERVAL_SECONDS: "1800",
       },
     },
   ],

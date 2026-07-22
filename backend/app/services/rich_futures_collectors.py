@@ -163,6 +163,7 @@ class RichFuturesCollector:
                         if rows:
                             for item in rows:
                                 _merge_counts(counts, self._store_funding_history(symbol, item))
+                            self.db.commit()
                         gap_ranges.append(
                             {
                                 "symbol": symbol,
@@ -224,6 +225,9 @@ class RichFuturesCollector:
                             symbol_fetched += len(rows)
                             for item in rows:
                                 _merge_counts(counts, storer(symbol, item))
+                            # Do not keep SQLite's writer lock while the next
+                            # Binance request is being throttled or retried.
+                            self.db.commit()
                             request_start_ms = request_end_ms + period_ms
                         gap_ranges.append(
                             {
