@@ -94,7 +94,7 @@ class OhlcvAggregationService:
                         func.max(model.close_time),
                     ).group_by(model.aggregation_status)
                 ).all()
-                table_counts = {status: 0 for status in AGG_STATUSES}
+                table_counts = {}
                 latest_times = []
                 for status, count, latest_time in rows:
                     table_counts[status] = count

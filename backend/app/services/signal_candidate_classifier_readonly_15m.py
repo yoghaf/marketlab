@@ -120,11 +120,11 @@ class SignalCandidateClassifierReadonly15mService:
             "classifier_blocked_count": status_counts["CLASSIFIER_BLOCKED"],
             "candidate_type_counts": [
                 {"type": candidate_type, "count": count}
-                for candidate_type, count in sorted(type_counts.items(), key=lambda item: item[1], reverse=True)
+                for candidate_type, count in sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
             ],
             "direction_counts": [
                 {"direction": direction, "count": count}
-                for direction, count in sorted(direction_counts.items(), key=lambda item: item[1], reverse=True)
+                for direction, count in sorted(direction_counts.items())
             ],
         }
 
