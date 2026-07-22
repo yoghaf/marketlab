@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
@@ -113,6 +113,7 @@ class LiveCandidateScannerService:
             include_blocked=include_blocked,
             include_inactive=include_inactive,
         )
+        outcomes = self._outcomes_by_candidate([row for row, _actual, _universe in rows])
         raw_items: list[dict[str, Any]] = []
         normalized_tier = tier.upper() if tier else None
         normalized_type = candidate_type.upper() if candidate_type else None
@@ -124,6 +125,7 @@ class LiveCandidateScannerService:
                     universe,
                     include_blocked=include_blocked,
                     include_inactive=include_inactive,
+                    outcome=outcomes.get((row.symbol, row.window_open_time)),
                 )
             )
         raw_items.extend(
@@ -314,59 +316,42 @@ class LiveCandidateScannerService:
             MarketlabActiveUniverse | None,
         ]
     ]:
-        latest_actual_ranked = (
-            select(
-                MarketSignalCandidateReadonly15m.id.label("id"),
-                MarketSignalCandidateReadonly15m.symbol.label("symbol"),
-                func.row_number()
-                .over(
-                    partition_by=MarketSignalCandidateReadonly15m.symbol,
-                    order_by=(
-                        desc(MarketSignalCandidateReadonly15m.window_close_time),
-                        desc(MarketSignalCandidateReadonly15m.window_open_time),
-                        desc(MarketSignalCandidateReadonly15m.id),
-                    ),
-                )
-                .label("row_rank"),
+        actual_source = aliased(MarketSignalCandidateReadonly15m)
+        usable_source = aliased(MarketSignalCandidateReadonly15m)
+        latest_actual_id = (
+            select(actual_source.id)
+            .where(actual_source.symbol == MarketlabActiveUniverse.symbol)
+            .order_by(
+                desc(actual_source.window_close_time),
+                desc(actual_source.window_open_time),
+                desc(actual_source.id),
             )
-            .subquery()
+            .limit(1)
+            .correlate(MarketlabActiveUniverse)
+            .scalar_subquery()
         )
-        latest_usable_ranked = (
-            select(
-                MarketSignalCandidateReadonly15m.id.label("id"),
-                MarketSignalCandidateReadonly15m.symbol.label("symbol"),
-                func.row_number()
-                .over(
-                    partition_by=MarketSignalCandidateReadonly15m.symbol,
-                    order_by=(
-                        desc(MarketSignalCandidateReadonly15m.window_close_time),
-                        desc(MarketSignalCandidateReadonly15m.window_open_time),
-                        desc(MarketSignalCandidateReadonly15m.id),
-                    ),
-                )
-                .label("row_rank"),
+        latest_usable_id = (
+            select(usable_source.id)
+            .where(
+                usable_source.symbol == MarketlabActiveUniverse.symbol,
+                _usable_candidate_filter(usable_source),
             )
-            .where(_usable_candidate_filter(MarketSignalCandidateReadonly15m))
-            .subquery()
+            .order_by(
+                desc(usable_source.window_close_time),
+                desc(usable_source.window_open_time),
+                desc(usable_source.id),
+            )
+            .limit(1)
+            .correlate(MarketlabActiveUniverse)
+            .scalar_subquery()
         )
         latest_actual = aliased(MarketSignalCandidateReadonly15m)
         latest_usable = aliased(MarketSignalCandidateReadonly15m)
         query = (
             select(latest_actual, latest_usable, MarketlabActiveUniverse)
-            .join(latest_actual_ranked, latest_actual.id == latest_actual_ranked.c.id)
-            .join(
-                MarketlabActiveUniverse,
-                latest_actual.symbol == MarketlabActiveUniverse.symbol,
-                isouter=include_inactive,
-            )
-            .join(
-                latest_usable_ranked,
-                (latest_usable_ranked.c.symbol == latest_actual.symbol)
-                & (latest_usable_ranked.c.row_rank == 1),
-                isouter=True,
-            )
-            .join(latest_usable, latest_usable.id == latest_usable_ranked.c.id, isouter=True)
-            .where(latest_actual_ranked.c.row_rank == 1)
+            .select_from(MarketlabActiveUniverse)
+            .join(latest_actual, latest_actual.id == latest_actual_id)
+            .join(latest_usable, latest_usable.id == latest_usable_id, isouter=True)
         )
         if not include_inactive:
             query = query.where(MarketlabActiveUniverse.is_active.is_(True))
@@ -389,9 +374,9 @@ class LiveCandidateScannerService:
         universe: MarketlabActiveUniverse | None,
         include_blocked: bool,
         include_inactive: bool,
+        outcome: MarketCandidateOutcome15m | None,
     ) -> dict[str, Any]:
         tier = scanner_tier_for(candidate.candidate_type, candidate.classifier_status)
-        outcome = self._matching_outcome(candidate)
         signal_plan = self._signal_candidate_plan(candidate)
         if signal_plan["signal_status"] == "SIGNAL_CANDIDATE":
             tier = ScannerTier(
@@ -665,15 +650,21 @@ class LiveCandidateScannerService:
             )
         return sum(ranges, Decimal("0")) / Decimal(period)
 
-    def _matching_outcome(self, candidate: MarketSignalCandidateReadonly15m) -> MarketCandidateOutcome15m | None:
-        return self.db.scalar(
-            select(MarketCandidateOutcome15m)
-            .where(
-                MarketCandidateOutcome15m.symbol == candidate.symbol,
-                MarketCandidateOutcome15m.candidate_window_open_time == candidate.window_open_time,
+    def _outcomes_by_candidate(
+        self,
+        candidates: list[MarketSignalCandidateReadonly15m],
+    ) -> dict[tuple[str, datetime], MarketCandidateOutcome15m]:
+        if not candidates:
+            return {}
+        symbols = {candidate.symbol for candidate in candidates}
+        window_opens = {candidate.window_open_time for candidate in candidates}
+        rows = self.db.scalars(
+            select(MarketCandidateOutcome15m).where(
+                MarketCandidateOutcome15m.symbol.in_(symbols),
+                MarketCandidateOutcome15m.candidate_window_open_time.in_(window_opens),
             )
-            .limit(1)
-        )
+        ).all()
+        return {(row.symbol, row.candidate_window_open_time): row for row in rows}
 
 
 def _evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:

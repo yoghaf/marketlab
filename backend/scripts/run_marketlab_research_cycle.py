@@ -8,12 +8,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
 ARTIFACT_DIR = BACKEND_DIR / "artifacts"
+sys.path.insert(0, str(BACKEND_DIR))
+
+from app.services.run_lock import JsonRunLock  # noqa: E402
+
+
 LOCK_PATH = REPO_ROOT / "data" / "marketlab_research_cycle.lock"
 LOCK_STALE_SECONDS = int(os.getenv("MARKETLAB_RESEARCH_LOCK_STALE_SECONDS", "7200"))
+RESEARCH_LOCK = JsonRunLock(
+    LOCK_PATH,
+    "marketlab_research_cycle",
+    stale_seconds=LOCK_STALE_SECONDS,
+)
 
 CORE_STEPS = [
     ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
@@ -106,64 +115,11 @@ def parse_mode() -> str:
 
 
 def acquire_lock() -> bool:
-    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        if not remove_stale_lock(LOCK_PATH, LOCK_STALE_SECONDS):
-            return False
-        try:
-            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps({"pid": os.getpid(), "started_at_utc": iso_utc()}))
-    return True
+    return RESEARCH_LOCK.acquire()
 
 
 def release_lock() -> None:
-    try:
-        LOCK_PATH.unlink()
-    except FileNotFoundError:
-        pass
-
-
-def remove_stale_lock(path: Path, stale_seconds: int) -> bool:
-    payload = read_json(path)
-    pid = parse_pid(payload.get("pid"))
-    if pid is not None and process_exists(pid):
-        return False
-    age_seconds = max(0.0, datetime.now(UTC).timestamp() - path.stat().st_mtime)
-    if pid is not None:
-        reason = f"pid {pid} is not running"
-    elif age_seconds >= stale_seconds:
-        reason = f"age {age_seconds:.0f}s exceeds {stale_seconds}s"
-    else:
-        return False
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-    print(f"[marketlab-research-cycle] removed stale lock {path}: {reason}", flush=True)
-    return True
-
-
-def parse_pid(value: Any) -> int | None:
-    try:
-        pid = int(value)
-    except (TypeError, ValueError):
-        return None
-    return pid if pid > 0 else None
-
-
-def process_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    RESEARCH_LOCK.release()
 
 
 def run_step(name: str, script_name: str) -> dict[str, Any]:
@@ -229,7 +185,11 @@ def research_summary() -> dict[str, Any]:
 def read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def iso_utc(value: datetime | None = None) -> str:

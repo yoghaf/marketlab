@@ -45,12 +45,12 @@ export function SignalPerformanceClient() {
     return `/api/signals/forward-integrity?${query.toString()}`;
   }, [includeWatchOnly, positionLock, stage, timeframe]);
 
-  async function load() {
+  async function load(signal?: AbortSignal) {
     setLoading(true);
     try {
       const [performanceResponse, integrityResponse] = await Promise.all([
-        fetch(path, { cache: "no-store" }),
-        fetch(integrityPath, { cache: "no-store" })
+        fetch(path, { cache: "no-store", signal }),
+        fetch(integrityPath, { cache: "no-store", signal })
       ]);
       if (!performanceResponse.ok) throw new Error(`Performance API failed: ${performanceResponse.status}`);
       if (!integrityResponse.ok) throw new Error(`Forward integrity API failed: ${integrityResponse.status}`);
@@ -58,6 +58,7 @@ export function SignalPerformanceClient() {
       setIntegrityData(await integrityResponse.json());
       setError(null);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Gagal memuat signal performance");
     } finally {
       setLoading(false);
@@ -65,9 +66,21 @@ export function SignalPerformanceClient() {
   }
 
   useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 30_000);
-    return () => window.clearInterval(timer);
+    let controller: AbortController | null = null;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      controller?.abort();
+      controller = new AbortController();
+      void load(controller.signal);
+    };
+    refreshWhenVisible();
+    const timer = window.setInterval(refreshWhenVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      controller?.abort();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [path, integrityPath]);
 
   const aggregate = data?.aggregate;
@@ -86,7 +99,7 @@ export function SignalPerformanceClient() {
       <SectionCard
         title="Live paper controls"
         description="Filter ini tidak mengubah rule. Position lock membuat hitungan lebih mirip live: satu posisi aktif per symbol sampai TP/SL."
-        actions={<button className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" onClick={load} type="button">{loading ? "Menghitung..." : "Refresh now"}</button>}
+        actions={<button className="rounded border border-line px-3 py-2 text-sm font-semibold hover:bg-field" onClick={() => void load()} type="button">{loading ? "Menghitung..." : "Refresh now"}</button>}
       >
         <div className="grid gap-3 p-4 md:grid-cols-3 xl:grid-cols-6">
           <label className="grid gap-1 text-sm">

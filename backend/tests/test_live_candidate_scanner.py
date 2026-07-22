@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
@@ -427,6 +427,29 @@ class LiveCandidateScannerTest(unittest.TestCase):
 
         self.assertEqual(len(symbols), len(set(symbols)))
         self.assertEqual(set(symbols), {"AAAUSDT", "BBBUSDT"})
+
+    def test_latest_per_symbol_query_count_is_bounded_for_full_universe(self) -> None:
+        for rank in range(1, 76):
+            symbol = f"S{rank:03d}USDT"
+            self._insert_universe(symbol, rank=rank)
+            self._insert_candidate(symbol, self.window_open, "MID_SHORT_CONTEXT_READONLY", "BEARISH_CONTEXT")
+        self.db.commit()
+
+        query_count = 0
+
+        def count_query(*_args, **_kwargs) -> None:
+            nonlocal query_count
+            query_count += 1
+
+        event.listen(self.engine, "before_cursor_execute", count_query)
+        try:
+            items = LiveCandidateScannerService(self.db).list_live(limit=75)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", count_query)
+
+        self.assertEqual(len(items), 75)
+        self.assertEqual(len({item["symbol"] for item in items}), 75)
+        self.assertLessEqual(query_count, 3)
 
     def _insert_universe(self, symbol: str, rank: int, is_active: bool = True) -> None:
         self.db.add(

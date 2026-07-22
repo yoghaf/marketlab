@@ -61,6 +61,7 @@ from app.services.utils import duration_seconds, json_safe, model_to_dict, utcno
 router = APIRouter()
 
 _SIGNAL_PERFORMANCE_CACHE_TTL_SECONDS = 30.0
+_DATA_HEALTH_CACHE_TTL_SECONDS = 30.0
 _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS = 900.0
 _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS = 3600.0
 _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS = 3600.0
@@ -71,6 +72,8 @@ _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
 _SIGNAL_FORWARD_INTEGRITY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SCANNER_LIVE_CACHE_LOCK = Lock()
 _SCANNER_LIVE_CACHE: dict[tuple, tuple[float, dict]] = {}
+_DATA_HEALTH_CACHE_LOCK = Lock()
+_DATA_HEALTH_CACHE: dict[int, tuple[float, dict]] = {}
 _SIGNAL_QUALITY_CACHE_LOCK = Lock()
 _SIGNAL_QUALITY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _STRUCTURE_ZONE_SHADOW_CACHE_LOCK = Lock()
@@ -176,10 +179,18 @@ def collectors_status(db: Session = Depends(get_db)):
 
 @router.get("/api/data-health")
 def data_health(db: Session = Depends(get_db)):
+    bind_key = id(db.get_bind())
+    now_monotonic = monotonic()
+    with _DATA_HEALTH_CACHE_LOCK:
+        cached = _DATA_HEALTH_CACHE.get(bind_key)
+        if cached and now_monotonic - cached[0] <= _DATA_HEALTH_CACHE_TTL_SECONDS:
+            return cached[1]
+
     items = _latest_health_items(db)
     rich_counts = {"RICH_READY": 0, "RICH_WARMUP": 0, "RICH_STALE": 0, "RICH_MISSING": 0}
+    rich_by_symbol = _rich_status_by_symbol(db, [item["symbol"] for item in items])
     for item in items:
-        rich_status = _rich_symbol_status(db, item["symbol"])
+        rich_status = rich_by_symbol[item["symbol"]]
         item["rich_status"] = rich_status["status"]
         item["rich_reason"] = rich_status["reason"]
         rich_counts[item["rich_status"]] = rich_counts.get(item["rich_status"], 0) + 1
@@ -197,13 +208,7 @@ def data_health(db: Session = Depends(get_db)):
     for item in items:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
     universe_counts = _active_universe_counts(db)
-    latest = {
-        "latest_futures_candle_time": _max_time(db, FuturesKline1m.close_time),
-        "latest_spot_candle_time": _max_time(db, SpotKline1m.close_time),
-        "latest_open_interest_time": _max_time(db, FuturesOpenInterest.event_time),
-        "latest_funding_time": _max_time(db, FuturesMarkFunding.event_time),
-    }
-    return json_safe(
+    payload = json_safe(
         {
             "counts": counts,
             "rich_counts": rich_counts,
@@ -217,10 +222,13 @@ def data_health(db: Session = Depends(get_db)):
             "signal_candidates_readonly_15m": SignalCandidateClassifierReadonly15mService(db).status_summary(),
             "outcomes_15m": OutcomeTracker15mService(db).status_summary(),
             "universe": universe_counts,
-            "latest": latest,
+            "latest": _latest_market_times(db),
             "items": items,
         }
     )
+    with _DATA_HEALTH_CACHE_LOCK:
+        _DATA_HEALTH_CACHE[bind_key] = (monotonic(), payload)
+    return payload
 
 
 @router.get("/api/aggregation/status")
@@ -2114,41 +2122,60 @@ def _collector_run_payload(run: CollectorRun) -> dict:
 
 
 def _latest_health_items(db: Session) -> list[dict]:
-    active_rows = db.scalars(
-        select(MarketlabActiveUniverse)
+    latest_snapshot = (
+        select(
+            DataHealthSnapshot.symbol.label("symbol"),
+            func.max(DataHealthSnapshot.snapshot_time).label("snapshot_time"),
+        )
+        .group_by(DataHealthSnapshot.symbol)
+        .subquery()
+    )
+    rows = db.execute(
+        select(DataHealthSnapshot, MarketlabActiveUniverse)
+        .join(MarketlabActiveUniverse, MarketlabActiveUniverse.symbol == DataHealthSnapshot.symbol)
+        .join(
+            latest_snapshot,
+            (latest_snapshot.c.symbol == DataHealthSnapshot.symbol)
+            & (latest_snapshot.c.snapshot_time == DataHealthSnapshot.snapshot_time),
+        )
         .where(MarketlabActiveUniverse.is_active.is_(True))
         .order_by(MarketlabActiveUniverse.rank.asc())
     ).all()
     items = []
-    for universe_row in active_rows:
-        row = db.scalar(
-            select(DataHealthSnapshot)
-            .where(DataHealthSnapshot.symbol == universe_row.symbol)
-            .order_by(desc(DataHealthSnapshot.snapshot_time))
-            .limit(1)
+    for row, universe_row in rows:
+        item = model_to_dict(row)
+        raw_json = item.get("raw_json") or {}
+        item.update(
+            {
+                "rank": universe_row.rank,
+                "rank_volume": universe_row.quote_volume,
+                "quote_volume": universe_row.quote_volume,
+                "collection_tier": universe_row.collection_tier,
+                "is_full_active": universe_row.is_full_active,
+                "is_light_watch": universe_row.is_light_watch,
+                "is_signal_eligible": universe_row.is_signal_eligible,
+            }
         )
-        if row:
-            item = model_to_dict(row)
-            raw_json = item.get("raw_json") or {}
-            item.update(
-                {
-                    "rank": universe_row.rank,
-                    "rank_volume": universe_row.quote_volume,
-                    "quote_volume": universe_row.quote_volume,
-                    "collection_tier": universe_row.collection_tier,
-                    "is_full_active": universe_row.is_full_active,
-                    "is_light_watch": universe_row.is_light_watch,
-                    "is_signal_eligible": universe_row.is_signal_eligible,
-                }
-            )
-            if raw_json.get("status"):
-                item["status"] = _normalize_health_status(raw_json["status"])
-            else:
-                item["status"] = _normalize_health_status(item.get("status"))
-            if raw_json.get("reason"):
-                item["reason"] = raw_json["reason"]
-            items.append(item)
+        if raw_json.get("status"):
+            item["status"] = _normalize_health_status(raw_json["status"])
+        else:
+            item["status"] = _normalize_health_status(item.get("status"))
+        if raw_json.get("reason"):
+            item["reason"] = raw_json["reason"]
+        items.append(item)
     return items
+
+
+def _latest_market_times(db: Session) -> dict[str, object]:
+    row = db.execute(
+        select(
+            select(func.max(FuturesKline1m.close_time)).scalar_subquery().label("latest_futures_candle_time"),
+            select(func.max(SpotKline1m.close_time)).scalar_subquery().label("latest_spot_candle_time"),
+            select(func.max(FuturesOpenInterest.event_time)).scalar_subquery().label("latest_open_interest_time"),
+            select(func.max(FuturesMarkFunding.event_time)).scalar_subquery().label("latest_funding_time"),
+        )
+    ).one()
+    return dict(row._mapping)
 
 
 def _active_universe_counts(db: Session) -> dict[str, int]:
@@ -2220,16 +2247,45 @@ def _normalize_health_status(status: str | None) -> str:
     return legacy.get(status or "", status or "NOT_ACTIVE")
 
 
-def _rich_symbol_status(db: Session, symbol: str) -> dict[str, str]:
-    now = utcnow()
-    checks = [
-        ("taker buy/sell", _latest_rich_timestamp(db, FuturesTakerBuySellVolume, symbol), 15),
-        ("global long/short", _latest_rich_timestamp(db, FuturesGlobalLongShortAccountRatio, symbol), 15),
-        ("top trader position", _latest_rich_timestamp(db, FuturesTopTraderPositionRatio, symbol), 15),
-        ("top trader account", _latest_rich_timestamp(db, FuturesTopTraderAccountRatio, symbol), 15),
-        ("open interest history", _latest_rich_timestamp(db, FuturesOpenInterestHistory, symbol), 15),
-        ("funding history", _latest_funding_timestamp(db, symbol), 600),
+def _rich_status_by_symbol(db: Session, symbols: list[str]) -> dict[str, dict[str, str]]:
+    if not symbols:
+        return {}
+    unique_symbols = sorted(set(symbols))
+    sources = [
+        ("taker buy/sell", FuturesTakerBuySellVolume, 15),
+        ("global long/short", FuturesGlobalLongShortAccountRatio, 15),
+        ("top trader position", FuturesTopTraderPositionRatio, 15),
+        ("top trader account", FuturesTopTraderAccountRatio, 15),
+        ("open interest history", FuturesOpenInterestHistory, 15),
     ]
+    latest_by_source: dict[str, dict[str, object]] = {}
+    for label, model, _max_age_minutes in sources:
+        rows = db.execute(
+            select(model.symbol, func.max(model.timestamp))
+            .where(model.symbol.in_(unique_symbols), model.period == "5m")
+            .group_by(model.symbol)
+        ).all()
+        latest_by_source[label] = {symbol: timestamp for symbol, timestamp in rows}
+    funding_rows = db.execute(
+        select(FuturesFundingHistory.symbol, func.max(FuturesFundingHistory.funding_time))
+        .where(FuturesFundingHistory.symbol.in_(unique_symbols))
+        .group_by(FuturesFundingHistory.symbol)
+    ).all()
+    latest_by_source["funding history"] = {symbol: timestamp for symbol, timestamp in funding_rows}
+
+    now = utcnow()
+    results: dict[str, dict[str, str]] = {}
+    for symbol in unique_symbols:
+        checks = [
+            (label, latest_by_source[label].get(symbol), max_age_minutes)
+            for label, _model, max_age_minutes in sources
+        ]
+        checks.append(("funding history", latest_by_source["funding history"].get(symbol), 600))
+        results[symbol] = _rich_status_from_checks(now, checks)
+    return results
+
+
+def _rich_status_from_checks(now, checks) -> dict[str, str]:
     missing = [label for label, value, _minutes in checks if value is None]
     if len(missing) == len(checks):
         return {"status": "RICH_MISSING", "reason": "all rich futures datasets missing"}
@@ -2245,11 +2301,3 @@ def _rich_symbol_status(db: Session, symbol: str) -> dict[str, str]:
     if stale:
         return {"status": "RICH_STALE", "reason": "stale: " + ", ".join(stale)}
     return {"status": "RICH_READY", "reason": "rich futures datasets fresh"}
-
-
-def _latest_rich_timestamp(db: Session, model, symbol: str):
-    return db.scalar(select(func.max(model.timestamp)).where(model.symbol == symbol, model.period == "5m"))
-
-
-def _latest_funding_timestamp(db: Session, symbol: str):
-    return db.scalar(select(func.max(FuturesFundingHistory.funding_time)).where(FuturesFundingHistory.symbol == symbol))

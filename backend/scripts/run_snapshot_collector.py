@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import os
 import signal
 import sys
 from pathlib import Path
@@ -15,42 +14,10 @@ from app.core.logging import configure_logging  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.market import CollectorError, CollectorRun  # noqa: E402
 from app.services.collectors import MarketCollector  # noqa: E402
+from app.services.run_lock import JsonRunLock  # noqa: E402
 from app.services.utils import duration_seconds, utcnow  # noqa: E402
 
 LOCK_PATH = ROOT / "data" / "snapshot_collector.lock"
-
-
-class RunLock:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def acquire(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists() and self._is_stale():
-            self.path.unlink()
-        try:
-            fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-        os.write(fd, json.dumps({"pid": os.getpid(), "acquired_at": utcnow().isoformat()}).encode("utf-8"))
-        os.close(fd)
-        return True
-
-    def release(self) -> None:
-        if self.path.exists():
-            self.path.unlink()
-
-    def _is_stale(self) -> bool:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-            pid = int(payload.get("pid"))
-        except Exception:
-            return True
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return True
-        return False
 
 
 async def run_cycle() -> dict[str, Any]:
@@ -122,7 +89,7 @@ async def run_cycle() -> dict[str, Any]:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Run current snapshot collector for market state freshness.")
-    parser.add_argument("--interval-seconds", type=int, default=60)
+    parser.add_argument("--interval-seconds", type=int, default=180)
     parser.add_argument("--cycles", type=int, default=0, help="0 means run forever.")
     args = parser.parse_args()
 
@@ -139,7 +106,7 @@ async def main() -> None:
     completed = 0
     while not stop_requested:
         started = utcnow()
-        lock = RunLock(LOCK_PATH)
+        lock = JsonRunLock(LOCK_PATH, "snapshot_collector", stale_seconds=max(args.interval_seconds * 3, 900))
         if not lock.acquire():
             print(f"{utcnow().isoformat()} snapshot_collector skipped: lock exists at {LOCK_PATH}")
         else:

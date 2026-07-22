@@ -850,6 +850,13 @@ class MarketSignalCandidateReadonly15m(Base):
             name="uq_market_signal_candidates_readonly_15m_symbol_open",
         ),
         Index("ix_market_signal_candidates_readonly_15m_close_status", "window_close_time", "classifier_status"),
+        Index(
+            "ix_market_signal_candidates_readonly_15m_symbol_latest",
+            "symbol",
+            "window_close_time",
+            "window_open_time",
+            "id",
+        ),
     )
 
 

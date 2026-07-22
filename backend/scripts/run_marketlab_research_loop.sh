@@ -7,10 +7,16 @@ source .venv/bin/activate
 SLEEP_SECONDS="${MARKETLAB_LOOP_SLEEP_SECONDS:-900}"
 UNIVERSE_INTERVAL_SECONDS="${MARKETLAB_UNIVERSE_INTERVAL_SECONDS:-3600}"
 RICH_INTERVAL_SECONDS="${MARKETLAB_RICH_INTERVAL_SECONDS:-1800}"
-LONG_TF_INTERVAL_SECONDS="${MARKETLAB_LONG_TF_INTERVAL_SECONDS:-3600}"
+FAST_PIPELINE_INTERVAL_SECONDS="${MARKETLAB_FAST_PIPELINE_INTERVAL_SECONDS:-900}"
+FOUR_HOUR_INTERVAL_SECONDS="${MARKETLAB_FOUR_HOUR_INTERVAL_SECONDS:-14400}"
+DAILY_INTERVAL_SECONDS="${MARKETLAB_DAILY_INTERVAL_SECONDS:-86400}"
 FULL_RESEARCH_INTERVAL_SECONDS="${MARKETLAB_FULL_RESEARCH_INTERVAL_SECONDS:-21600}"
-FAST_LIMIT_WINDOWS="${MARKETLAB_FAST_LIMIT_WINDOWS:-12}"
-LONG_TF_LIMIT_WINDOWS="${MARKETLAB_LONG_TF_LIMIT_WINDOWS:-8}"
+FAST_LIMIT_WINDOWS="${MARKETLAB_FAST_LIMIT_WINDOWS:-3}"
+FAST_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_FAST_CATCHUP_LIMIT_WINDOWS:-12}"
+FOUR_HOUR_LIMIT_WINDOWS="${MARKETLAB_FOUR_HOUR_LIMIT_WINDOWS:-3}"
+FOUR_HOUR_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_FOUR_HOUR_CATCHUP_LIMIT_WINDOWS:-8}"
+DAILY_LIMIT_WINDOWS="${MARKETLAB_DAILY_LIMIT_WINDOWS:-2}"
+DAILY_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_DAILY_CATCHUP_LIMIT_WINDOWS:-4}"
 STATE_DIR="${MARKETLAB_LOOP_STATE_DIR:-../data}"
 
 mkdir -p "$STATE_DIR"
@@ -40,6 +46,67 @@ mark_run() {
   date +%s > "$STATE_DIR/${name}.last_run"
 }
 
+due_window_limit() {
+  local name="$1"
+  local interval_seconds="$2"
+  local minimum="$3"
+  local maximum="$4"
+  local marker="$STATE_DIR/${name}.last_run"
+  local now
+  local last
+  local missed
+
+  now="$(date +%s)"
+  if [[ ! -f "$marker" ]]; then
+    echo "$maximum"
+    return
+  fi
+  last="$(cat "$marker" 2>/dev/null || echo 0)"
+  if [[ ! "$last" =~ ^[0-9]+$ ]] || (( last <= 0 )); then
+    echo "$maximum"
+    return
+  fi
+  missed=$(( (now - last + interval_seconds - 1) / interval_seconds ))
+  (( missed < minimum )) && missed="$minimum"
+  (( missed > maximum )) && missed="$maximum"
+  echo "$missed"
+}
+
+run_fast_pipeline() {
+  local limit_windows="$1"
+  python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$limit_windows" --cycles 1 || return 1
+  if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
+    echo "[marketlab-loop] rich futures collector start $(date -u)"
+    if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then
+      mark_run "rich_futures"
+      echo "[marketlab-loop] rich futures collector end $(date -u)"
+    else
+      echo "[marketlab-loop] rich futures collector failed $(date -u)"
+    fi
+  else
+    echo "[marketlab-loop] rich futures collector skipped by cadence $(date -u)"
+  fi
+  python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_feature_builder_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_feature_builder_1h.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_feature_context_join.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_psychology_labeler_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_signal_candidate_classifier_readonly_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  python scripts/run_outcome_tracker_15m.py --limit-windows "$limit_windows" --cycles 1 || return 1
+  if ! python scripts/run_marketlab_research_cycle.py --mode light; then
+    echo "[marketlab-loop] light research cycle failed $(date -u)"
+  fi
+}
+
+run_long_pipeline() {
+  local timeframe="$1"
+  local limit_windows="$2"
+  python scripts/run_ohlcv_aggregation.py --timeframes "$timeframe" --markets futures spot --limit-windows "$limit_windows" --cycles 1 \
+    && python scripts/run_rich_5m_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1 \
+    && python scripts/run_snapshot_funding_alignment.py --timeframes "$timeframe" --limit-windows "$limit_windows" --cycles 1
+}
+
 while true; do
   echo "[marketlab-loop] cycle start $(date -u)"
 
@@ -53,44 +120,38 @@ while true; do
     fi
   fi
 
-  if ! python scripts/run_ohlcv_aggregation.py --timeframes 15m 1h --markets futures spot --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1; then
-    echo "[marketlab-loop] fast OHLCV aggregation failed; cycle deferred $(date -u)"
-    echo "[marketlab-loop] cycle end $(date -u)"
-    sleep "$SLEEP_SECONDS"
-    continue
-  fi
-  if is_due "rich_futures" "$RICH_INTERVAL_SECONDS"; then
-    echo "[marketlab-loop] rich futures collector start $(date -u)"
-    if python scripts/run_rich_futures_collector.py --periods 5m --include-funding --cycles 1; then
-      mark_run "rich_futures"
-      echo "[marketlab-loop] rich futures collector end $(date -u)"
+  if is_due "fast_pipeline" "$FAST_PIPELINE_INTERVAL_SECONDS"; then
+    fast_limit="$(due_window_limit "fast_pipeline" "$FAST_PIPELINE_INTERVAL_SECONDS" "$FAST_LIMIT_WINDOWS" "$FAST_CATCHUP_LIMIT_WINDOWS")"
+    echo "[marketlab-loop] fast pipeline start limit_windows=$fast_limit $(date -u)"
+    if run_fast_pipeline "$fast_limit"; then
+      mark_run "fast_pipeline"
+      echo "[marketlab-loop] fast pipeline end $(date -u)"
     else
-      echo "[marketlab-loop] rich futures collector failed $(date -u)"
+      echo "[marketlab-loop] fast pipeline failed; marker not advanced $(date -u)"
     fi
   else
-    echo "[marketlab-loop] rich futures collector skipped by cadence $(date -u)"
-  fi
-  python scripts/run_rich_5m_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_snapshot_funding_alignment.py --timeframes 15m 1h --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_feature_builder_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_feature_builder_1h.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_feature_context_join.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_psychology_labeler_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_signal_candidate_classifier_readonly_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  python scripts/run_outcome_tracker_15m.py --limit-windows "$FAST_LIMIT_WINDOWS" --cycles 1
-  if ! python scripts/run_marketlab_research_cycle.py --mode light; then
-    echo "[marketlab-loop] light research cycle failed $(date -u)"
+    echo "[marketlab-loop] fast pipeline skipped; no new 15m cadence slot $(date -u)"
   fi
 
-  if is_due "long_timeframes" "$LONG_TF_INTERVAL_SECONDS"; then
-    echo "[marketlab-loop] long timeframe maintenance start $(date -u)"
-    if python scripts/run_ohlcv_aggregation.py --timeframes 4h 24h --markets futures spot --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1 \
-      && python scripts/run_rich_5m_alignment.py --timeframes 4h 24h --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1 \
-      && python scripts/run_snapshot_funding_alignment.py --timeframes 4h 24h --limit-windows "$LONG_TF_LIMIT_WINDOWS" --cycles 1; then
-      mark_run "long_timeframes"
-      echo "[marketlab-loop] long timeframe maintenance end $(date -u)"
+  if is_due "four_hour_pipeline" "$FOUR_HOUR_INTERVAL_SECONDS"; then
+    four_hour_limit="$(due_window_limit "four_hour_pipeline" "$FOUR_HOUR_INTERVAL_SECONDS" "$FOUR_HOUR_LIMIT_WINDOWS" "$FOUR_HOUR_CATCHUP_LIMIT_WINDOWS")"
+    echo "[marketlab-loop] 4h maintenance start limit_windows=$four_hour_limit $(date -u)"
+    if run_long_pipeline "4h" "$four_hour_limit"; then
+      mark_run "four_hour_pipeline"
+      echo "[marketlab-loop] 4h maintenance end $(date -u)"
     else
-      echo "[marketlab-loop] long timeframe maintenance failed $(date -u)"
+      echo "[marketlab-loop] 4h maintenance failed; marker not advanced $(date -u)"
+    fi
+  fi
+
+  if is_due "daily_pipeline" "$DAILY_INTERVAL_SECONDS"; then
+    daily_limit="$(due_window_limit "daily_pipeline" "$DAILY_INTERVAL_SECONDS" "$DAILY_LIMIT_WINDOWS" "$DAILY_CATCHUP_LIMIT_WINDOWS")"
+    echo "[marketlab-loop] 24h maintenance start limit_windows=$daily_limit $(date -u)"
+    if run_long_pipeline "24h" "$daily_limit"; then
+      mark_run "daily_pipeline"
+      echo "[marketlab-loop] 24h maintenance end $(date -u)"
+    else
+      echo "[marketlab-loop] 24h maintenance failed; marker not advanced $(date -u)"
     fi
   fi
 
