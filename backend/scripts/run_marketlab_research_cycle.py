@@ -28,6 +28,9 @@ CORE_STEPS = [
     ("signal_factory", ("run_multitimeframe_signal_factory_v1.py",)),
     ("signal_forward_return_logger", ("run_signal_forward_return_logger.py",)),
     ("signal_performance_snapshot", ("run_signal_performance_snapshot.py", "--scope", "default")),
+]
+
+SHADOW_STEPS = [
     ("v3_shadow_forward_log", ("run_v3_shadow_forward_log.py",)),
 ]
 
@@ -86,8 +89,13 @@ def main() -> int:
 
 
 def build_steps(mode: str) -> list[tuple[str, tuple[str, ...]]]:
+    if mode == "shadow":
+        return list(SHADOW_STEPS)
+
     steps = [] if mode == "optimization" else list(CORE_STEPS)
     if mode in {"full", "optimization"}:
+        if mode == "full":
+            steps.extend(SHADOW_STEPS)
         steps.extend(OPTIMIZATION_STEPS)
         if mode == "full" and legacy_phase7_enabled():
             steps.extend(LEGACY_PHASE7_STEPS)
@@ -106,12 +114,12 @@ def parse_mode() -> str:
         try:
             mode = sys.argv[index + 1].strip().lower()
         except IndexError:
-            raise SystemExit("--mode requires 'light', 'full', or 'optimization'")
+            raise SystemExit("--mode requires 'light', 'full', 'shadow', or 'optimization'")
         del sys.argv[index : index + 2]
     else:
         mode = os.getenv("MARKETLAB_RESEARCH_CYCLE_MODE", "full").strip().lower()
-    if mode not in {"light", "full", "optimization"}:
-        raise SystemExit("--mode must be 'light', 'full', or 'optimization'")
+    if mode not in {"light", "full", "shadow", "optimization"}:
+        raise SystemExit("--mode must be 'light', 'full', 'shadow', or 'optimization'")
     return mode
 
 

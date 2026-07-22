@@ -10,6 +10,7 @@ FAST_PIPELINE_INTERVAL_SECONDS="${MARKETLAB_FAST_PIPELINE_INTERVAL_SECONDS:-900}
 FOUR_HOUR_INTERVAL_SECONDS="${MARKETLAB_FOUR_HOUR_INTERVAL_SECONDS:-14400}"
 DAILY_INTERVAL_SECONDS="${MARKETLAB_DAILY_INTERVAL_SECONDS:-86400}"
 FULL_RESEARCH_INTERVAL_SECONDS="${MARKETLAB_FULL_RESEARCH_INTERVAL_SECONDS:-21600}"
+SHADOW_RESEARCH_INTERVAL_SECONDS="${MARKETLAB_SHADOW_RESEARCH_INTERVAL_SECONDS:-3600}"
 FAST_LIMIT_WINDOWS="${MARKETLAB_FAST_LIMIT_WINDOWS:-3}"
 FAST_CATCHUP_LIMIT_WINDOWS="${MARKETLAB_FAST_CATCHUP_LIMIT_WINDOWS:-12}"
 FOUR_HOUR_LIMIT_WINDOWS="${MARKETLAB_FOUR_HOUR_LIMIT_WINDOWS:-3}"
@@ -142,6 +143,17 @@ while true; do
     fi
   else
     echo "[marketlab-loop] fast pipeline skipped; no new 15m cadence slot $(date -u)"
+  fi
+
+  if is_due "shadow_research" "$SHADOW_RESEARCH_INTERVAL_SECONDS"; then
+    shadow_research_started_at="$(date +%s)"
+    echo "[marketlab-loop] shadow research cycle start $(date -u)"
+    if python scripts/run_marketlab_research_cycle.py --mode shadow; then
+      mark_run "shadow_research" "$shadow_research_started_at"
+      echo "[marketlab-loop] shadow research cycle end $(date -u)"
+    else
+      echo "[marketlab-loop] shadow research cycle failed $(date -u)"
+    fi
   fi
 
   if is_due "four_hour_pipeline" "$FOUR_HOUR_INTERVAL_SECONDS"; then

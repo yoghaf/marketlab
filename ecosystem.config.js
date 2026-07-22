@@ -60,6 +60,7 @@ module.exports = {
         APP_ENV: "production",
         MARKETLAB_LOOP_SLEEP_SECONDS: "120",
         MARKETLAB_UNIVERSE_INTERVAL_SECONDS: "3600",
+        MARKETLAB_SHADOW_RESEARCH_INTERVAL_SECONDS: "3600",
       },
     },
   ],

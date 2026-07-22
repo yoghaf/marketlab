@@ -20,6 +20,7 @@ Mengurangi beban CPU, query SQLite, penulisan disk, latency API, dan kerja riset
 | Snapshot collector | production sudah 300 detik | tetap 300 detik | tidak dilonggarkan lagi; masih memenuhi freshness policy |
 | Snapshot performance | default + snapshot riset 1h besar dihitung bersama tiap fast cycle | default live tiap fast cycle; snapshot 1h hanya pada cadence optimasi 6 jam | pekerjaan 1h berat tidak lagi masuk setiap cycle 15m |
 | Full research | mengulang Signal Factory, logger, performance, dan V3 yang baru selesai | cadence 6 jam hanya menjalankan snapshot 1h + artifact optimization | satu rerun core penuh per 6 jam dihapus |
+| V3 shadow | ikut core setiap 15 menit; sekitar 60-68 detik per run | runner terpisah setiap 1 jam | frekuensi turun 75%; sekitar 3 run atau 180-204 detik kerja per jam dihapus tanpa kehilangan histori |
 | Scheduler | marker ditulis saat cycle selesai dan check tiap 5 menit | marker memakai waktu mulai cycle dan check ringan tiap 2 menit | target start steady-state sekitar 15-16 menit, tanpa overlap |
 | Frontend polling | refresh tetap berjalan saat tab tersembunyi | minimum 60 detik dan pause saat hidden | polling hidden turun 100% |
 
@@ -38,6 +39,8 @@ Angka API diambil dari VPS production database sekitar 10.4 GB. Latency cold dap
 9. Signal performance snapshot dibagi menjadi scope `default`, `one-hour`, dan `all`; manual runner tetap kompatibel dengan default `all`.
 10. Research `light` menjalankan core current-state; research `optimization` hanya menjalankan snapshot 1h dan artifact optimization. Mode `full` manual tetap tersedia.
 11. PM2 logrotate diubah dari retain 30 tanpa kompresi menjadi retain 7 dengan kompresi.
+12. V3 shadow dikeluarkan dari cycle `light` 15 menit dan dijalankan melalui mode `shadow` setiap 1 jam. Runner tetap membaca ulang seluruh riwayat sehingga event di antara checkpoint tidak hilang.
+13. Ollama/Gemma 4 dan Redis idle yang tidak direferensikan runtime MarketLab dinonaktifkan. Model, runtime Ollama, log PM2 lama, journal lama, dan cache build/package dibersihkan.
 
 ## Validasi Produksi
 
@@ -45,7 +48,7 @@ Angka API diambil dari VPS production database sekitar 10.4 GB. Latency cold dap
 |---|---|
 | Commit optimasi runtime akhir | `501a26b` |
 | Alembic head | `0018_data_health_summary_indexes` |
-| Backend tests | 213 passed |
+| Backend tests | 214 passed |
 | Frontend production build | sukses pada perubahan frontend terakhir; tahap final ini tidak mengubah frontend |
 | PM2 | backend, frontend, kline, snapshot, research, dan rich loop online |
 | Fast catch-up | SUCCESS; 12 window; selesai 04:16:55 UTC |
@@ -64,19 +67,20 @@ Angka API diambil dari VPS production database sekitar 10.4 GB. Latency cold dap
 
 | Resource | Kondisi akhir audit |
 |---|---:|
-| Disk root | 39 GB total, sekitar 1.6 GB free, 96% used |
+| Disk root | 39 GB total; sebelum cleanup 1.6 GB free/96% used; sesudah cleanup 18 GB free/56% used |
 | Database | sekitar 9.8 GB |
-| PM2 logs sebelum retention baru bekerja | sekitar 1.0 GB |
+| PM2 logs | sekitar 1.0 GB sebelum cleanup; 350 MB sesudah log lebih lama dari 7 hari dibuang |
 | Memory | sekitar 4.8 GB available dari 5.8 GB pada final check |
 | Swap | tidak tersedia |
 
-Disk 96% tetap menjadi risiko operasional tertinggi. Retention log sudah dibatasi, tetapi pertumbuhan database perlu dipantau dan kapasitas disk sebaiknya dinaikkan sebelum ruang bebas mendekati 1 GB. Database dan data historis tidak dihapus dalam optimasi ini.
+Cleanup membebaskan sekitar 16.4 GB tanpa menghapus database atau data historis. Sumber terbesar adalah model/runtime Ollama yang tidak dipakai MarketLab (sekitar 13.7 GB), disusul log PM2 lama, journal, dan cache. Pertumbuhan database tetap perlu dipantau.
 
 ## Residual Work
 
 1. Overview SSR masih sekitar 7 detik saat cold karena menunggu Data Health, Collectors, Aggregation, dan Scanner sekaligus. Ini bukan blocker collector, tetapi kandidat optimasi frontend/cache berikutnya.
 2. Default signal performance snapshot masih membutuhkan sekitar 155 detik untuk mengevaluasi hingga 500 signal. Sudah dikeluarkan dari endpoint request, tetapi incremental snapshot dapat diteliti kemudian.
-3. VPS hanya 1 vCPU dan sempat menunjukkan CPU steal tinggi. Optimasi aplikasi mengurangi kerja MarketLab, tetapi tidak dapat menghilangkan contention dari provider.
+3. VPS hanya 1 vCPU. Sampling `vmstat` menunjukkan CPU steal berubah-ubah antara sekitar 6% dan 52%; bagian ini adalah contention host/provider dan tidak dapat dihilangkan oleh optimasi aplikasi. VPS 2 vCPU dedicated menjadi perbaikan berikutnya jika latency harus konsisten.
+4. Instalasi Hermes sekitar 1.5 GB tidak memiliki proses aktif, tetapi sengaja belum dihapus karena kepemilikannya belum cukup jelas dan tidak memengaruhi CPU saat ini.
 
 ## Guardrail
 
