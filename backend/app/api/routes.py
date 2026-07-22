@@ -222,7 +222,7 @@ def data_health(db: Session = Depends(get_db)):
             "signal_candidates_readonly_15m": SignalCandidateClassifierReadonly15mService(db).status_summary(),
             "outcomes_15m": OutcomeTracker15mService(db).status_summary(),
             "universe": universe_counts,
-            "latest": _latest_market_times(db),
+            "latest": _latest_market_times(items),
             "items": items,
         }
     )
@@ -2166,16 +2166,17 @@ def _latest_health_items(db: Session) -> list[dict]:
     return items
 
 
-def _latest_market_times(db: Session) -> dict[str, object]:
-    row = db.execute(
-        select(
-            select(func.max(FuturesKline1m.close_time)).scalar_subquery().label("latest_futures_candle_time"),
-            select(func.max(SpotKline1m.close_time)).scalar_subquery().label("latest_spot_candle_time"),
-            select(func.max(FuturesOpenInterest.event_time)).scalar_subquery().label("latest_open_interest_time"),
-            select(func.max(FuturesMarkFunding.event_time)).scalar_subquery().label("latest_funding_time"),
-        )
-    ).one()
-    return dict(row._mapping)
+def _latest_market_times(items: list[dict]) -> dict[str, object]:
+    fields = (
+        "latest_futures_candle_time",
+        "latest_spot_candle_time",
+        "latest_open_interest_time",
+        "latest_funding_time",
+    )
+    return {
+        field: max((item[field] for item in items if item.get(field) is not None), default=None)
+        for field in fields
+    }
 
 
 def _active_universe_counts(db: Session) -> dict[str, int]:
@@ -2260,16 +2261,35 @@ def _rich_status_by_symbol(db: Session, symbols: list[str]) -> dict[str, dict[st
     ]
     latest_by_source: dict[str, dict[str, object]] = {}
     for label, model, _max_age_minutes in sources:
+        latest_timestamp = (
+            select(model.timestamp)
+            .where(
+                model.symbol == MarketlabActiveUniverse.symbol,
+                model.period == "5m",
+            )
+            .order_by(model.timestamp.desc())
+            .limit(1)
+            .correlate(MarketlabActiveUniverse)
+            .scalar_subquery()
+        )
         rows = db.execute(
-            select(model.symbol, func.max(model.timestamp))
-            .where(model.symbol.in_(unique_symbols), model.period == "5m")
-            .group_by(model.symbol)
+            select(MarketlabActiveUniverse.symbol, latest_timestamp).where(
+                MarketlabActiveUniverse.symbol.in_(unique_symbols)
+            )
         ).all()
         latest_by_source[label] = {symbol: timestamp for symbol, timestamp in rows}
+    latest_funding_time = (
+        select(FuturesFundingHistory.funding_time)
+        .where(FuturesFundingHistory.symbol == MarketlabActiveUniverse.symbol)
+        .order_by(FuturesFundingHistory.funding_time.desc())
+        .limit(1)
+        .correlate(MarketlabActiveUniverse)
+        .scalar_subquery()
+    )
     funding_rows = db.execute(
-        select(FuturesFundingHistory.symbol, func.max(FuturesFundingHistory.funding_time))
-        .where(FuturesFundingHistory.symbol.in_(unique_symbols))
-        .group_by(FuturesFundingHistory.symbol)
+        select(MarketlabActiveUniverse.symbol, latest_funding_time).where(
+            MarketlabActiveUniverse.symbol.in_(unique_symbols)
+        )
     ).all()
     latest_by_source["funding history"] = {symbol: timestamp for symbol, timestamp in funding_rows}
 

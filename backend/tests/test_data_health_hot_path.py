@@ -66,6 +66,9 @@ def test_data_health_uses_bounded_set_based_queries_for_active_universe() -> Non
         event.listen(engine, "before_cursor_execute", count_query)
         try:
             payload = routes.data_health(db)
+            cold_query_count = query_count
+            cached_payload = routes.data_health(db)
+            cached_query_count = query_count - cold_query_count
         finally:
             event.remove(engine, "before_cursor_execute", count_query)
 
@@ -73,7 +76,9 @@ def test_data_health_uses_bounded_set_based_queries_for_active_universe() -> Non
     assert payload["universe"]["active_universe_count"] == 75
     assert payload["counts"]["READY"] == 75
     assert payload["rich_counts"]["RICH_MISSING"] == 75
-    assert query_count < 80
+    assert cold_query_count < 45
+    assert cached_query_count == 0
+    assert cached_payload == payload
 
 
 def test_latest_health_item_is_selected_without_per_symbol_queries() -> None:

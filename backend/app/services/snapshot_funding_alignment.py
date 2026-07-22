@@ -75,14 +75,7 @@ class SnapshotFundingAlignmentService:
         return results
 
     def status_summary(self) -> dict[str, Any]:
-        latest = {
-            f"latest_{timeframe}": self.db.scalar(
-                select(func.max(MarketStateAlignment.window_close_time)).where(
-                    MarketStateAlignment.timeframe == timeframe
-                )
-            )
-            for timeframe in MARKET_STATE_TIMEFRAMES
-        }
+        latest = {f"latest_{timeframe}": None for timeframe in MARKET_STATE_TIMEFRAMES}
         counts = {
             "fresh_count": 0,
             "stale_count": 0,
@@ -94,39 +87,41 @@ class SnapshotFundingAlignmentService:
             "funding_missing_count": 0,
         }
         tables: dict[str, dict[str, dict[str, int]]] = {}
-        snapshot_rows = self.db.execute(
+        rows = self.db.execute(
             select(
                 MarketStateAlignment.timeframe,
                 MarketStateAlignment.snapshot_alignment_status,
+                MarketStateAlignment.funding_alignment_status,
                 func.count(),
-            ).group_by(MarketStateAlignment.timeframe, MarketStateAlignment.snapshot_alignment_status)
+                func.max(MarketStateAlignment.window_close_time),
+            ).group_by(
+                MarketStateAlignment.timeframe,
+                MarketStateAlignment.snapshot_alignment_status,
+                MarketStateAlignment.funding_alignment_status,
+            )
         ).all()
-        for timeframe, status, count in snapshot_rows:
-            tables.setdefault(timeframe, {}).setdefault("snapshot", {})[status] = count
-            key = {
+        for timeframe, snapshot_status, funding_status, count, latest_time in rows:
+            latest_key = f"latest_{timeframe}"
+            if latest_time is not None and (latest[latest_key] is None or latest_time > latest[latest_key]):
+                latest[latest_key] = latest_time
+            snapshot_table = tables.setdefault(timeframe, {}).setdefault("snapshot", {})
+            snapshot_table[snapshot_status] = snapshot_table.get(snapshot_status, 0) + count
+            snapshot_key = {
                 "FRESH": "fresh_count",
                 "STALE": "stale_count",
                 "MISSING": "missing_count",
                 "NOT_APPLICABLE": "not_applicable_count",
-            }[status]
-            counts[key] += count
-
-        funding_rows = self.db.execute(
-            select(
-                MarketStateAlignment.timeframe,
-                MarketStateAlignment.funding_alignment_status,
-                func.count(),
-            ).group_by(MarketStateAlignment.timeframe, MarketStateAlignment.funding_alignment_status)
-        ).all()
-        for timeframe, status, count in funding_rows:
-            tables.setdefault(timeframe, {}).setdefault("funding", {})[status] = count
-            key = {
+            }[snapshot_status]
+            counts[snapshot_key] += count
+            funding_table = tables.setdefault(timeframe, {}).setdefault("funding", {})
+            funding_table[funding_status] = funding_table.get(funding_status, 0) + count
+            funding_key = {
                 "FUNDING_ALIGNED": "funding_aligned_count",
                 "FUNDING_CARRIED_FORWARD": "funding_carried_forward_count",
                 "FUNDING_STALE": "funding_stale_count",
                 "FUNDING_MISSING": "funding_missing_count",
-            }[status]
-            counts[key] += count
+            }[funding_status]
+            counts[funding_key] += count
 
         return {
             "latest": latest,

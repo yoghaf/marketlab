@@ -71,24 +71,28 @@ class FeatureContextJoinService:
         )
 
     def status_summary(self) -> dict[str, Any]:
-        latest_context_time = self.db.scalar(select(func.max(MarketFeatureContext15m1h.feature_15m_window_close_time)))
-        total_context_rows = self.db.scalar(select(func.count()).select_from(MarketFeatureContext15m1h)) or 0
         rows = self.db.execute(
-            select(MarketFeatureContext15m1h.context_status, func.count()).group_by(
-                MarketFeatureContext15m1h.context_status
+            select(
+                MarketFeatureContext15m1h.context_status,
+                MarketFeatureContext15m1h.spot_support_status_15m,
+                func.count(),
+                func.max(MarketFeatureContext15m1h.feature_15m_window_close_time),
+            ).group_by(
+                MarketFeatureContext15m1h.context_status,
+                MarketFeatureContext15m1h.spot_support_status_15m,
             )
         ).all()
+        latest_context_time = None
+        total_context_rows = 0
         counts = {status: 0 for status in CONTEXT_STATUSES}
-        for status, count in rows:
-            counts[status] = count
-        spot_rows = self.db.execute(
-            select(MarketFeatureContext15m1h.spot_support_status_15m, func.count()).group_by(
-                MarketFeatureContext15m1h.spot_support_status_15m
-            )
-        ).all()
         spot_support_counts = {status: 0 for status in SPOT_SUPPORT_STATUSES}
-        for status, count in spot_rows:
-            spot_support_counts[status or "SPOT_UNKNOWN"] = count
+        for context_status, spot_status, count, latest_time in rows:
+            total_context_rows += count
+            counts[context_status] += count
+            normalized_spot_status = spot_status or "SPOT_UNKNOWN"
+            spot_support_counts[normalized_spot_status] = spot_support_counts.get(normalized_spot_status, 0) + count
+            if latest_time is not None and (latest_context_time is None or latest_time > latest_context_time):
+                latest_context_time = latest_time
         latest_symbols_count = 0
         if latest_context_time is not None:
             latest_symbols_count = (

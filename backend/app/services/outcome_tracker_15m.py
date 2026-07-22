@@ -66,20 +66,80 @@ class OutcomeTracker15mService:
         )
 
     def status_summary(self) -> dict[str, Any]:
-        total_rows = self.db.scalar(select(func.count()).select_from(MarketCandidateOutcome15m)) or 0
-        latest_candidate_time = self.db.scalar(select(func.max(MarketCandidateOutcome15m.candidate_window_close_time)))
-        latest_outcome_update = self.db.scalar(select(func.max(MarketCandidateOutcome15m.updated_at)))
+        rows = self.db.execute(
+            select(
+                MarketCandidateOutcome15m.outcome_status,
+                MarketCandidateOutcome15m.outcome_15m_status,
+                MarketCandidateOutcome15m.outcome_30m_status,
+                MarketCandidateOutcome15m.outcome_1h_status,
+                MarketCandidateOutcome15m.outcome_4h_status,
+                MarketCandidateOutcome15m.candidate_type,
+                MarketCandidateOutcome15m.candidate_direction,
+                func.count(),
+                func.max(MarketCandidateOutcome15m.candidate_window_close_time),
+                func.max(MarketCandidateOutcome15m.updated_at),
+            ).group_by(
+                MarketCandidateOutcome15m.outcome_status,
+                MarketCandidateOutcome15m.outcome_15m_status,
+                MarketCandidateOutcome15m.outcome_30m_status,
+                MarketCandidateOutcome15m.outcome_1h_status,
+                MarketCandidateOutcome15m.outcome_4h_status,
+                MarketCandidateOutcome15m.candidate_type,
+                MarketCandidateOutcome15m.candidate_direction,
+            )
+        ).all()
+        total_rows = 0
+        latest_candidate_time = None
+        latest_outcome_update = None
+        status_counts = {status: 0 for status in OUTCOME_STATUSES}
+        horizon_counts = {
+            "15m": {status: 0 for status in OUTCOME_STATUSES},
+            "30m": {status: 0 for status in OUTCOME_STATUSES},
+            "1h": {status: 0 for status in OUTCOME_STATUSES},
+            "4h": {status: 0 for status in OUTCOME_STATUSES},
+        }
+        type_counts: dict[str, int] = {}
+        direction_counts: dict[str, int] = {}
+        for row in rows:
+            (
+                outcome_status,
+                status_15m,
+                status_30m,
+                status_1h,
+                status_4h,
+                candidate_type,
+                candidate_direction,
+                count,
+                candidate_time,
+                outcome_update,
+            ) = row
+            total_rows += count
+            status_counts[outcome_status] += count
+            for timeframe, status in (("15m", status_15m), ("30m", status_30m), ("1h", status_1h), ("4h", status_4h)):
+                horizon_counts[timeframe][status] += count
+            type_counts[candidate_type] = type_counts.get(candidate_type, 0) + count
+            direction_counts[candidate_direction] = direction_counts.get(candidate_direction, 0) + count
+            if candidate_time is not None and (latest_candidate_time is None or candidate_time > latest_candidate_time):
+                latest_candidate_time = candidate_time
+            if outcome_update is not None and (latest_outcome_update is None or outcome_update > latest_outcome_update):
+                latest_outcome_update = outcome_update
         return {
             "total_rows": total_rows,
             "latest_candidate_time": latest_candidate_time,
             "latest_outcome_update": latest_outcome_update,
-            "outcome_status_counts": self._counts(MarketCandidateOutcome15m.outcome_status),
-            "horizon_15m_status_counts": self._counts(MarketCandidateOutcome15m.outcome_15m_status),
-            "horizon_30m_status_counts": self._counts(MarketCandidateOutcome15m.outcome_30m_status),
-            "horizon_1h_status_counts": self._counts(MarketCandidateOutcome15m.outcome_1h_status),
-            "horizon_4h_status_counts": self._counts(MarketCandidateOutcome15m.outcome_4h_status),
-            "candidate_type_counts": self._named_counts(MarketCandidateOutcome15m.candidate_type, "type"),
-            "direction_counts": self._named_counts(MarketCandidateOutcome15m.candidate_direction, "direction"),
+            "outcome_status_counts": status_counts,
+            "horizon_15m_status_counts": horizon_counts["15m"],
+            "horizon_30m_status_counts": horizon_counts["30m"],
+            "horizon_1h_status_counts": horizon_counts["1h"],
+            "horizon_4h_status_counts": horizon_counts["4h"],
+            "candidate_type_counts": [
+                {"type": candidate_type, "count": count}
+                for candidate_type, count in sorted(type_counts.items(), key=lambda item: item[1], reverse=True)
+            ],
+            "direction_counts": [
+                {"direction": direction, "count": count}
+                for direction, count in sorted(direction_counts.items(), key=lambda item: item[1], reverse=True)
+            ],
         }
 
     def list_outcomes(self, symbol: str | None = None, limit: int = 100) -> list[MarketCandidateOutcome15m]:

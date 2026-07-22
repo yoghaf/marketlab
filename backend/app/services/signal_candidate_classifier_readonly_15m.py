@@ -87,34 +87,45 @@ class SignalCandidateClassifierReadonly15mService:
         )
 
     def status_summary(self) -> dict[str, Any]:
-        latest_candidate_time = self.db.scalar(select(func.max(MarketSignalCandidateReadonly15m.window_close_time)))
-        total_rows = self.db.scalar(select(func.count()).select_from(MarketSignalCandidateReadonly15m)) or 0
-        status_rows = self.db.execute(
-            select(MarketSignalCandidateReadonly15m.classifier_status, func.count()).group_by(
-                MarketSignalCandidateReadonly15m.classifier_status
+        rows = self.db.execute(
+            select(
+                MarketSignalCandidateReadonly15m.classifier_status,
+                MarketSignalCandidateReadonly15m.candidate_type,
+                MarketSignalCandidateReadonly15m.candidate_direction,
+                func.count(),
+                func.max(MarketSignalCandidateReadonly15m.window_close_time),
+            ).group_by(
+                MarketSignalCandidateReadonly15m.classifier_status,
+                MarketSignalCandidateReadonly15m.candidate_type,
+                MarketSignalCandidateReadonly15m.candidate_direction,
             )
         ).all()
+        latest_candidate_time = None
+        total_rows = 0
         status_counts = {status: 0 for status in CLASSIFIER_STATUSES}
-        for status, count in status_rows:
-            status_counts[status] = count
-        type_rows = self.db.execute(
-            select(MarketSignalCandidateReadonly15m.candidate_type, func.count())
-            .group_by(MarketSignalCandidateReadonly15m.candidate_type)
-            .order_by(desc(func.count()))
-        ).all()
-        direction_rows = self.db.execute(
-            select(MarketSignalCandidateReadonly15m.candidate_direction, func.count()).group_by(
-                MarketSignalCandidateReadonly15m.candidate_direction
-            )
-        ).all()
+        type_counts: dict[str, int] = {}
+        direction_counts: dict[str, int] = {}
+        for classifier_status, candidate_type, candidate_direction, count, latest_time in rows:
+            total_rows += count
+            status_counts[classifier_status] += count
+            type_counts[candidate_type] = type_counts.get(candidate_type, 0) + count
+            direction_counts[candidate_direction] = direction_counts.get(candidate_direction, 0) + count
+            if latest_time is not None and (latest_candidate_time is None or latest_time > latest_candidate_time):
+                latest_candidate_time = latest_time
         return {
             "latest_candidate_time": latest_candidate_time,
             "total_rows": total_rows,
             "classifier_ready_count": status_counts["CLASSIFIER_READY"],
             "classifier_partial_count": status_counts["CLASSIFIER_PARTIAL"],
             "classifier_blocked_count": status_counts["CLASSIFIER_BLOCKED"],
-            "candidate_type_counts": [{"type": candidate_type, "count": count} for candidate_type, count in type_rows],
-            "direction_counts": [{"direction": direction, "count": count} for direction, count in direction_rows],
+            "candidate_type_counts": [
+                {"type": candidate_type, "count": count}
+                for candidate_type, count in sorted(type_counts.items(), key=lambda item: item[1], reverse=True)
+            ],
+            "direction_counts": [
+                {"direction": direction, "count": count}
+                for direction, count in sorted(direction_counts.items(), key=lambda item: item[1], reverse=True)
+            ],
         }
 
     def list_candidates(

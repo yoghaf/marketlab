@@ -48,14 +48,7 @@ class Rich5mAlignmentService:
         return [self._run_timeframe(timeframe, active_symbols, limit_windows, dry_run) for timeframe in timeframes]
 
     def status_summary(self) -> dict[str, Any]:
-        latest = {
-            f"latest_{timeframe}": self.db.scalar(
-                select(func.max(RichFutures5mAlignment.window_close_time)).where(
-                    RichFutures5mAlignment.timeframe == timeframe
-                )
-            )
-            for timeframe in RICH_TIMEFRAMES
-        }
+        latest = {f"latest_{timeframe}": None for timeframe in RICH_TIMEFRAMES}
         counts = {
             "aligned_count": 0,
             "incomplete_count": 0,
@@ -69,10 +62,14 @@ class Rich5mAlignmentService:
                 RichFutures5mAlignment.timeframe,
                 RichFutures5mAlignment.alignment_status,
                 func.count(),
+                func.max(RichFutures5mAlignment.window_close_time),
             ).group_by(RichFutures5mAlignment.timeframe, RichFutures5mAlignment.alignment_status)
         ).all()
-        for timeframe, status, count in rows:
+        for timeframe, status, count, latest_time in rows:
             tables.setdefault(timeframe, {})[status] = count
+            latest_key = f"latest_{timeframe}"
+            if latest_time is not None and (latest[latest_key] is None or latest_time > latest[latest_key]):
+                latest[latest_key] = latest_time
             key = {
                 "ALIGNED": "aligned_count",
                 "INCOMPLETE": "incomplete_count",

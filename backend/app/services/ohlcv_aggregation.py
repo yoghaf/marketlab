@@ -87,8 +87,20 @@ class OhlcvAggregationService:
             for market in MARKETS:
                 model = TIMEFRAMES[timeframe]["model"][market]
                 key = f"{timeframe}_{market}"
-                latest[f"latest_{timeframe}_{market}"] = self.db.scalar(select(func.max(model.close_time)))
-                table_counts = self._status_counts(model)
+                rows = self.db.execute(
+                    select(
+                        model.aggregation_status,
+                        func.count(),
+                        func.max(model.close_time),
+                    ).group_by(model.aggregation_status)
+                ).all()
+                table_counts = {status: 0 for status in AGG_STATUSES}
+                latest_times = []
+                for status, count, latest_time in rows:
+                    table_counts[status] = count
+                    if latest_time is not None:
+                        latest_times.append(latest_time)
+                latest[f"latest_{timeframe}_{market}"] = max(latest_times, default=None)
                 tables[key] = table_counts
                 for status, count in table_counts.items():
                     counts[status.lower().replace("agg_", "") + "_count"] = counts.get(
