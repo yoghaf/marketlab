@@ -544,6 +544,12 @@ class RichFutures5mAlignment(Base):
             name="uq_rich_futures_5m_alignment_symbol_timeframe_open",
         ),
         Index("ix_rich_futures_5m_alignment_timeframe_close", "timeframe", "window_close_time"),
+        Index(
+            "ix_rich_futures_5m_alignment_summary",
+            "timeframe",
+            "alignment_status",
+            "window_close_time",
+        ),
     )
 
 
@@ -597,6 +603,13 @@ class MarketStateAlignment(Base):
             name="uq_market_state_alignment_symbol_timeframe_open",
         ),
         Index("ix_market_state_alignment_timeframe_close", "timeframe", "window_close_time"),
+        Index(
+            "ix_market_state_alignment_summary",
+            "timeframe",
+            "snapshot_alignment_status",
+            "funding_alignment_status",
+            "window_close_time",
+        ),
     )
 
 
@@ -798,6 +811,12 @@ class MarketFeatureContext15m1h(Base):
             name="uq_market_feature_context_15m_1h_symbol_open",
         ),
         Index("ix_market_feature_context_15m_1h_close_status", "feature_15m_window_close_time", "context_status"),
+        Index(
+            "ix_market_feature_context_15m_1h_summary",
+            "context_status",
+            "spot_support_status_15m",
+            "feature_15m_window_close_time",
+        ),
     )
 
 
@@ -856,6 +875,13 @@ class MarketSignalCandidateReadonly15m(Base):
             "window_close_time",
             "window_open_time",
             "id",
+        ),
+        Index(
+            "ix_market_signal_candidates_readonly_15m_summary",
+            "classifier_status",
+            "candidate_type",
+            "candidate_direction",
+            "window_close_time",
         ),
     )
 
