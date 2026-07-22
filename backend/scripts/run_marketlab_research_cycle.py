@@ -25,20 +25,21 @@ RESEARCH_LOCK = JsonRunLock(
 )
 
 CORE_STEPS = [
-    ("signal_factory", "run_multitimeframe_signal_factory_v1.py"),
-    ("signal_forward_return_logger", "run_signal_forward_return_logger.py"),
-    ("signal_performance_snapshot", "run_signal_performance_snapshot.py"),
-    ("v3_shadow_forward_log", "run_v3_shadow_forward_log.py"),
+    ("signal_factory", ("run_multitimeframe_signal_factory_v1.py",)),
+    ("signal_forward_return_logger", ("run_signal_forward_return_logger.py",)),
+    ("signal_performance_snapshot", ("run_signal_performance_snapshot.py", "--scope", "default")),
+    ("v3_shadow_forward_log", ("run_v3_shadow_forward_log.py",)),
 ]
 
 OPTIMIZATION_STEPS = [
-    ("strategy_optimization_artifacts", "run_strategy_optimization_artifacts.py"),
+    ("signal_performance_snapshot_1h", ("run_signal_performance_snapshot.py", "--scope", "one-hour")),
+    ("strategy_optimization_artifacts", ("run_strategy_optimization_artifacts.py",)),
 ]
 
 LEGACY_PHASE7_STEPS = [
-    ("strategy_arena", "run_strategy_arena_v1_atr_r_all_labels.py"),
-    ("phase6_readiness", "run_phase6_readiness_audit.py"),
-    ("phase7_forward_test", "run_phase7_forward_test.py"),
+    ("strategy_arena", ("run_strategy_arena_v1_atr_r_all_labels.py",)),
+    ("phase6_readiness", ("run_phase6_readiness_audit.py",)),
+    ("phase7_forward_test", ("run_phase7_forward_test.py",)),
 ]
 
 
@@ -52,8 +53,8 @@ def main() -> int:
 
     step_results: list[dict[str, Any]] = []
     try:
-        for name, script_name in steps:
-            result = run_step(name, script_name)
+        for name, command in steps:
+            result = run_step(name, *command)
             step_results.append(result)
             if result["returncode"] != 0:
                 print_json(
@@ -84,11 +85,11 @@ def main() -> int:
         release_lock()
 
 
-def build_steps(mode: str) -> list[tuple[str, str]]:
-    steps = list(CORE_STEPS)
-    if mode == "full":
+def build_steps(mode: str) -> list[tuple[str, tuple[str, ...]]]:
+    steps = [] if mode == "optimization" else list(CORE_STEPS)
+    if mode in {"full", "optimization"}:
         steps.extend(OPTIMIZATION_STEPS)
-        if legacy_phase7_enabled():
+        if mode == "full" and legacy_phase7_enabled():
             steps.extend(LEGACY_PHASE7_STEPS)
     elif legacy_phase7_enabled() and os.getenv("MARKETLAB_LEGACY_PHASE7_IN_LIGHT", "0").strip() == "1":
         steps.extend(LEGACY_PHASE7_STEPS)
@@ -105,12 +106,12 @@ def parse_mode() -> str:
         try:
             mode = sys.argv[index + 1].strip().lower()
         except IndexError:
-            raise SystemExit("--mode requires 'light' or 'full'")
+            raise SystemExit("--mode requires 'light', 'full', or 'optimization'")
         del sys.argv[index : index + 2]
     else:
         mode = os.getenv("MARKETLAB_RESEARCH_CYCLE_MODE", "full").strip().lower()
-    if mode not in {"light", "full"}:
-        raise SystemExit("--mode must be 'light' or 'full'")
+    if mode not in {"light", "full", "optimization"}:
+        raise SystemExit("--mode must be 'light', 'full', or 'optimization'")
     return mode
 
 
@@ -122,12 +123,12 @@ def release_lock() -> None:
     RESEARCH_LOCK.release()
 
 
-def run_step(name: str, script_name: str) -> dict[str, Any]:
+def run_step(name: str, script_name: str, *script_args: str) -> dict[str, Any]:
     started = datetime.now(UTC)
     script_path = BACKEND_DIR / "scripts" / script_name
     print(f"[marketlab-research-cycle] step start {name} {iso_utc(started)}", flush=True)
     completed = subprocess.run(
-        [sys.executable, str(script_path)],
+        [sys.executable, str(script_path), *script_args],
         cwd=str(BACKEND_DIR),
         text=True,
         capture_output=True,
@@ -140,7 +141,7 @@ def run_step(name: str, script_name: str) -> dict[str, Any]:
     print(f"[marketlab-research-cycle] step end {name} returncode={completed.returncode} {iso_utc(ended)}", flush=True)
     return {
         "name": name,
-        "script": script_name,
+        "script": " ".join((script_name, *script_args)),
         "returncode": completed.returncode,
         "started_at_utc": iso_utc(started),
         "ended_at_utc": iso_utc(ended),

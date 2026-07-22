@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_SIGNAL_PERFORMANCE_SNAPSHOT_DIR)
     parser.add_argument("--performance-limit", type=int, default=DEFAULT_PERFORMANCE_LIMIT)
     parser.add_argument("--forward-integrity-limit", type=int, default=DEFAULT_FORWARD_INTEGRITY_LIMIT)
+    parser.add_argument(
+        "--scope",
+        choices=("all", "default", "one-hour"),
+        default="all",
+        help="Refresh both snapshots, only the default live snapshot, or only the heavier 1h research snapshot.",
+    )
     return parser.parse_args()
 
 
@@ -55,6 +61,7 @@ def main() -> None:
         result = SignalPerformanceSnapshotRunner(db, artifact_dir=output_dir).run(
             performance_limit=max(1, args.performance_limit),
             forward_integrity_limit=max(1, args.forward_integrity_limit),
+            scope=args.scope,
         )
 
     print(json.dumps(json_safe(result), indent=2))

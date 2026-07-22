@@ -45,69 +45,87 @@ class SignalPerformanceSnapshotRunner:
         epoch: str = OBSERVATION_EPOCH,
         performance_limit: int = DEFAULT_PERFORMANCE_LIMIT,
         forward_integrity_limit: int = DEFAULT_FORWARD_INTEGRITY_LIMIT,
+        scope: str = "all",
     ) -> dict[str, Any]:
+        if scope not in {"all", "default", "one-hour"}:
+            raise ValueError("scope must be 'all', 'default', or 'one-hour'")
+
         service = SignalCandidatePerformanceService(self.db)
-        performance = _performance_payload(service, epoch=epoch, timeframe=None, limit=max(1, performance_limit))
-        performance_1h = _performance_payload(
-            service,
-            epoch=epoch,
-            timeframe="1h",
-            limit=max(DEFAULT_PERFORMANCE_1H_LIMIT, performance_limit),
-        )
-        forward_integrity = _forward_integrity_payload(service, epoch=epoch, timeframe=None, limit=max(1, forward_integrity_limit))
-        forward_integrity_1h = _forward_integrity_payload(
-            service,
-            epoch=epoch,
-            timeframe="1h",
-            limit=max(1, forward_integrity_limit),
-        )
-
         generated_at = utcnow().isoformat()
-        performance = _with_snapshot_meta(
-            performance,
-            generated_at_utc=generated_at,
-            source="signal_performance_snapshot",
-            filename=PERFORMANCE_FILE,
-        )
-        forward_integrity = _with_snapshot_meta(
-            forward_integrity,
-            generated_at_utc=generated_at,
-            source="signal_forward_integrity_snapshot",
-            filename=FORWARD_INTEGRITY_FILE,
-        )
-        performance_1h = _with_snapshot_meta(
-            performance_1h,
-            generated_at_utc=generated_at,
-            source="signal_performance_snapshot_1h",
-            filename=PERFORMANCE_1H_FILE,
-        )
-        forward_integrity_1h = _with_snapshot_meta(
-            forward_integrity_1h,
-            generated_at_utc=generated_at,
-            source="signal_forward_integrity_snapshot_1h",
-            filename=FORWARD_INTEGRITY_1H_FILE,
-        )
-
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(self.artifact_dir / PERFORMANCE_FILE, json_safe(performance))
-        _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_FILE, json_safe(forward_integrity))
-        _atomic_write_json(self.artifact_dir / PERFORMANCE_1H_FILE, json_safe(performance_1h))
-        _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE, json_safe(forward_integrity_1h))
-        return {
+        result: dict[str, Any] = {
             "generated_at_utc": generated_at,
             "artifact_dir": str(self.artifact_dir),
-            "performance_path": str(self.artifact_dir / PERFORMANCE_FILE),
-            "forward_integrity_path": str(self.artifact_dir / FORWARD_INTEGRITY_FILE),
-            "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
-            "forward_integrity_1h_path": str(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE),
-            "performance_items": len(performance.get("items") or []),
-            "forward_integrity_items": len(forward_integrity.get("items") or []),
-            "performance_1h_items": len(performance_1h.get("items") or []),
-            "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
+            "scope": scope,
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
         }
+
+        if scope in {"all", "default"}:
+            performance = _with_snapshot_meta(
+                _performance_payload(service, epoch=epoch, timeframe=None, limit=max(1, performance_limit)),
+                generated_at_utc=generated_at,
+                source="signal_performance_snapshot",
+                filename=PERFORMANCE_FILE,
+            )
+            forward_integrity = _with_snapshot_meta(
+                _forward_integrity_payload(
+                    service,
+                    epoch=epoch,
+                    timeframe=None,
+                    limit=max(1, forward_integrity_limit),
+                ),
+                generated_at_utc=generated_at,
+                source="signal_forward_integrity_snapshot",
+                filename=FORWARD_INTEGRITY_FILE,
+            )
+            _atomic_write_json(self.artifact_dir / PERFORMANCE_FILE, json_safe(performance))
+            _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_FILE, json_safe(forward_integrity))
+            result.update(
+                {
+                    "performance_path": str(self.artifact_dir / PERFORMANCE_FILE),
+                    "forward_integrity_path": str(self.artifact_dir / FORWARD_INTEGRITY_FILE),
+                    "performance_items": len(performance.get("items") or []),
+                    "forward_integrity_items": len(forward_integrity.get("items") or []),
+                }
+            )
+
+        if scope in {"all", "one-hour"}:
+            performance_1h = _with_snapshot_meta(
+                _performance_payload(
+                    service,
+                    epoch=epoch,
+                    timeframe="1h",
+                    limit=max(DEFAULT_PERFORMANCE_1H_LIMIT, performance_limit),
+                ),
+                generated_at_utc=generated_at,
+                source="signal_performance_snapshot_1h",
+                filename=PERFORMANCE_1H_FILE,
+            )
+            forward_integrity_1h = _with_snapshot_meta(
+                _forward_integrity_payload(
+                    service,
+                    epoch=epoch,
+                    timeframe="1h",
+                    limit=max(1, forward_integrity_limit),
+                ),
+                generated_at_utc=generated_at,
+                source="signal_forward_integrity_snapshot_1h",
+                filename=FORWARD_INTEGRITY_1H_FILE,
+            )
+            _atomic_write_json(self.artifact_dir / PERFORMANCE_1H_FILE, json_safe(performance_1h))
+            _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE, json_safe(forward_integrity_1h))
+            result.update(
+                {
+                    "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
+                    "forward_integrity_1h_path": str(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE),
+                    "performance_1h_items": len(performance_1h.get("items") or []),
+                    "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
+                }
+            )
+
+        return result
 
 
 class SignalPerformanceSnapshotService:

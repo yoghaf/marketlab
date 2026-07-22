@@ -165,12 +165,12 @@ while true; do
   fi
 
   if is_due "full_research" "$FULL_RESEARCH_INTERVAL_SECONDS"; then
-    echo "[marketlab-loop] full research cycle start $(date -u)"
-    if python scripts/run_marketlab_research_cycle.py --mode full; then
+    echo "[marketlab-loop] optimization research cycle start $(date -u)"
+    if python scripts/run_marketlab_research_cycle.py --mode optimization; then
       mark_run "full_research"
-      echo "[marketlab-loop] full research cycle end $(date -u)"
+      echo "[marketlab-loop] optimization research cycle end $(date -u)"
     else
-      echo "[marketlab-loop] full research cycle failed $(date -u)"
+      echo "[marketlab-loop] optimization research cycle failed $(date -u)"
     fi
   fi
 

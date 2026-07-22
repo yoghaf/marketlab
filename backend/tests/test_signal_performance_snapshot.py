@@ -89,6 +89,36 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert ("MID_SHORT", "1h") in v3_filter_map
 
 
+def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts(tmp_path) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        default_result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
+            performance_limit=1,
+            forward_integrity_limit=1,
+            scope="default",
+        )
+
+        assert default_result["scope"] == "default"
+        assert (tmp_path / PERFORMANCE_FILE).exists()
+        assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
+        assert not (tmp_path / PERFORMANCE_1H_FILE).exists()
+        assert not (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
+
+        default_mtime = (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns
+        one_hour_result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
+            performance_limit=1,
+            forward_integrity_limit=1,
+            scope="one-hour",
+        )
+
+    assert one_hour_result["scope"] == "one-hour"
+    assert (tmp_path / PERFORMANCE_1H_FILE).exists()
+    assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
+    assert (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns == default_mtime
+
+
 def _signal(
     signal_id: str,
     symbol: str,
