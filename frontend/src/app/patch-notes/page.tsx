@@ -19,24 +19,22 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-22",
-    version: "LAB-66",
-    title: "MID_LONG 1h Fixed-Cohort Filter Validation",
-    status: "RESEARCH",
-    area: "MID_LONG 1h V2.1 research",
-    summary: "Menguji filter dan kombinasi filter causal MID_LONG 1h pada chronological validation tanpa mengubah Signal live.",
+    version: "LAB-RESET-01",
+    title: "MID_LONG 1h Baseline Reset",
+    status: "LIVE",
+    area: "MID_LONG 1h baseline",
+    summary: "Memensiunkan seluruh eksperimen MID_LONG 1h LAB-63 sampai LAB-66 dan mengembalikan workspace ke baseline V2 asli.",
     changes: [
-      "LAB-66 memakai cohort, entry futures, ATR, RR, timeout 120m, biaya realistis, dan position lock yang sama dengan LAB-63 sampai LAB-65.",
-      "Arah dan threshold volume, ATR extension, range/ATR, price/ATR, spread, taker, OI, evidence score, dan core score dipelajari hanya dari train 70%.",
-      "Structure conflict dan BTC/ETH regime memakai snapshot causal pada waktu Signal; future return, TP/SL, MFE/MAE, dan failure cause dilarang menjadi input filter.",
-      "Kombinasi terbatas diuji pada validation 30% dengan realistic R, average/median R, drawdown, retention, availability, dan symbol concentration.",
-      "LAB-65 dan LAB-66 berbagi prepared analysis sehingga structure/regime replay tidak dihitung dua kali pada artifact cycle.",
-      "Halaman MID_LONG 1h dirapikan menjadi research path LAB-62 sampai LAB-66; geometry dan filter legacy dipindahkan ke arsip tertutup.",
-      "Patch ini tidak mengubah Signal Factory, scanner, entry, TP/SL, outcome, threshold live, atau execution."
+      "Service, endpoint, test, report, dan komputasi artifact LAB-63 sampai LAB-66 dihapus dari runtime dan research cycle.",
+      "MID_LONG 1h dikeluarkan dari lane default Strategy Optimization agar eksperimen lama tidak terus membebani cycle.",
+      "Endpoint baseline baru hanya membaca closed Signal V2 dari snapshot 1h dengan position lock aktif.",
+      "Halaman MID_LONG sekarang hanya menampilkan sample, TP/SL, ideal dan realistic R, biaya, RR yang benar-benar tercatat, serta signal closed terbaru.",
+      "Tidak ada filter, geometry override, timeout experiment, promotion verdict, atau perubahan Signal Factory live."
     ],
-    impact: "MID_LONG sekarang memiliki route riset yang setara dengan MID_SHORT: kandidat filter harus bertahan di validation sebelum boleh masuk forward shadow.",
+    impact: "Penelitian MID_LONG 1h sekarang memiliki titik awal yang bersih dan dapat dibandingkan secara konsisten sebelum eksperimen baru dibuat.",
     links: [
-      { href: "/mid-long-research-study#lab66", label: "Open LAB-66" },
-      { href: "/patch-notes", label: "Patch Notes" }
+      { href: "/mid-long-research-study", label: "Open MID_LONG Baseline" },
+      { href: "/signal-performance?stage=MID_LONG&timeframe=1h", label: "Open Signal History" }
     ]
   },
   {
@@ -57,97 +55,6 @@ const patches: PatchItem[] = [
     links: [
       { href: "/scanner", label: "Open Live Radar" },
       { href: "/signal-performance", label: "Open Signal History" },
-      { href: "/patch-notes", label: "Patch Notes" }
-    ]
-  },
-  {
-    date: "2026-07-19",
-    version: "LAB-65",
-    title: "MID_LONG 1h Failure Anatomy",
-    status: "RESEARCH",
-    area: "MID_LONG 1h loss diagnosis",
-    summary: "Membagi setiap loss realistis pada fixed cohort 0.75 ATR / 1R / 120m ke satu penyebab utama sebelum menguji kombinasi filter.",
-    changes: [
-      "Loss dipartisi menjadi stop-lalu-target, near-target reversal, favorable reversal, salah arah langsung, structure/regime conflict, no follow-through, timeout, cost drag, atau same-candle ambiguity.",
-      "Primary cause saling eksklusif sehingga satu loss tidak dihitung dua kali; contributor tags boleh overlap untuk diagnosis tambahan.",
-      "Forward path 15m hanya menjelaskan outcome dan tidak pernah menjadi input Signal Factory atau filter pre-entry.",
-      "Structure zone, BTC/ETH regime, spread, dan extension contributor memakai data yang tersedia pada waktu Signal.",
-      "Hasil all/train/validation, damage R, MFE/MAE, first-candle path, concentration, dan contoh Signal terbaru tersedia di halaman MID_LONG 1h.",
-      "LAB-63, LAB-64, dan LAB-65 memakai satu prepared cohort agar perbandingannya konsisten dan replay berat tidak digandakan.",
-      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL, outcome, atau execution."
-    ],
-    impact: "Riset berikutnya dapat diarahkan ke mekanisme loss yang benar-benar dominan di validation, bukan menumpuk filter berdasarkan dugaan.",
-    links: [
-      { href: "/mid-long-research-study", label: "Open LAB-65" },
-      { href: "/patch-notes", label: "Patch Notes" }
-    ]
-  },
-  {
-    date: "2026-07-19",
-    version: "LAB-64",
-    title: "MID_LONG 1h TP/SL Evidence Separation",
-    status: "RESEARCH",
-    area: "MID_LONG 1h signal quality",
-    summary: "Menguji evidence sebelum entry yang membedakan TP dari SL pada cohort tetap LAB-63 0.75 ATR / 1R / 120m dengan chronological validation.",
-    changes: [
-      "LAB-64 memakai source Signal, entry futures, ATR causal, forward candle, biaya realistis, dan position lock yang sama dengan LAB-63.",
-      "TP/SL distribution tidak mencampur timeout, same-candle ambiguity, waiting, incomplete, MFE, MAE, atau future return sebagai input evidence.",
-      "Setiap field menampilkan availability, median dan quartile TP/SL, AUC, separation strength, serta arah pada train dan validation.",
-      "Field yang berubah arah antara train dan validation ditandai DIRECTION_FLIPPED dan tidak boleh dijadikan filter.",
-      "Core score, evidence score, completeness, price/volume/ATR, taker, OI, funding, spread, positioning, dan spot/futures evidence diaudit bersama.",
-      "LAB-63 dan LAB-64 berbagi satu prepared candle dataset agar research-loop tidak menggandakan replay berat.",
-      "Patch ini tidak mengubah Signal Factory, scanner, candidate, threshold, entry, TP/SL, outcome, atau execution."
-    ],
-    impact: "Kita dapat membedakan evidence yang hanya tampak bagus pada seluruh sampel dari evidence yang tetap searah pada validation sebelum memulai fixed-cohort filter study.",
-    links: [
-      { href: "/mid-long-research-study", label: "Open LAB-64" },
-      { href: "/signal-quality-lab?stage=MID_LONG&timeframe=1h", label: "Quality Archive" },
-      { href: "/patch-notes", label: "Patch Notes" }
-    ]
-  },
-  {
-    date: "2026-07-19",
-    version: "LAB-63",
-    title: "MID_LONG 1h Realistic Timeout Policy Validation",
-    status: "RESEARCH",
-    area: "MID_LONG 1h geometry validation",
-    summary: "Membandingkan timeout 60m, 120m, 4h, dan tanpa timeout pada geometry tetap 0.75 ATR / 1R dengan replay dan biaya realistis.",
-    changes: [
-      "Timeout 4 jam menjadi reference resmi; hasil 60m tidak lagi diasumsikan sebagai pilihan utama hanya karena unggul pada optimizer ideal.",
-      "Mode tanpa timeout mengikuti candle futures 15m closed sampai target atau stop; posisi unresolved tetap OPEN dan tidak dipaksa close pada candle terakhir.",
-      "Semua policy memakai ATR14 futures 1h causal, entry futures, fee Binance taker, spread Signal, slippage, dan position lock yang sama.",
-      "Hasil dipisahkan chronological train 70% dan validation 30%, dengan total/average/median realistic R, drawdown, open, incomplete, dan lock skip.",
-      "Missing atau gap forward candle ditandai WAITING/INCOMPLETE dan tidak boleh menghasilkan closed result palsu.",
-      "LAB-63 ikut direfresh oleh strategy optimization artifact cycle dan tersedia di halaman khusus MID_LONG 1h.",
-      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL live, outcome evaluator, atau execution."
-    ],
-    impact: "Kita dapat menilai secara langsung apakah 60 menit memang terlalu cepat, apakah 4 jam lebih masuk akal, dan apa konsekuensi operasional posisi tanpa timeout tanpa mencampur hasil unrealized ke closed R.",
-    links: [
-      { href: "/mid-long-research-study", label: "Open LAB-63" },
-      { href: "/strategy-optimization-lab?stage=MID_LONG&timeframe=1h", label: "Geometry Archive" },
-      { href: "/patch-notes", label: "Patch Notes" }
-    ]
-  },
-  {
-    date: "2026-07-19",
-    version: "LAB-62",
-    title: "MID_LONG 1h V2.1 Baseline and Geometry Starting Point",
-    status: "RESEARCH",
-    area: "MID_LONG 1h dedicated research lane",
-    summary: "Memulai jalur V2.1 MID_LONG 1h secara terpisah dengan baseline V2 realistis, evidence TP/SL, geometry ATR/RR/timeout, dan market regime sebagai hipotesis read-only.",
-    changes: [
-      "Halaman /mid-long-research-study sekarang menjadi workspace khusus MID_LONG 1h dan tidak mencampur cohort MID_SHORT.",
-      "Baseline V2 menampilkan sample, TP/SL, ideal R, realistic R, SL share, evidence gap, serta simbol profit/loss utama.",
-      "Geometry candidate menampilkan ATR multiplier, RR, timeout, TP/SL/both, timeout outcome, total/average/median R, dan drawdown.",
-      "Regime split untuk geometry terbaik menampilkan kondisi market yang membantu atau merusak sebagai diagnosis in-sample, bukan hard gate.",
-      "Roadmap resmi dimulai dari LAB-62, dilanjutkan realistic geometry validation, failure anatomy, fixed cohort discovery, filter walk-forward, lalu shadow forward jika lolos.",
-      "Angka optimizer ideal diberi pemisah dan warning agar tidak dibandingkan langsung dengan V2 realistic R.",
-      "Patch ini tidak mengubah Signal Factory, scanner, threshold, entry, TP/SL, outcome evaluator, atau execution."
-    ],
-    impact: "Riset MID_LONG 1h sekarang punya halaman dan urutan eksperimen sendiri. Kandidat awal 0.75 ATR / 1R / timeout pendek dapat diuji tanpa mengganggu MID_SHORT V2.1 atau rule live.",
-    links: [
-      { href: "/mid-long-research-study", label: "Open LAB-62" },
-      { href: "/strategy-optimization-lab?stage=MID_LONG&timeframe=1h", label: "Geometry Archive" },
       { href: "/patch-notes", label: "Patch Notes" }
     ]
   },

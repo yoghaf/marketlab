@@ -1443,7 +1443,7 @@ function OtherLaneResearchQueue({ data }: { data: SignalQualityProfitLossResearc
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={dedicatedHref}>
-                  Open lane
+                  {row.stage === "MID_LONG" && row.timeframe === "1h" ? "Open baseline" : "Open lane"}
                 </Link>
                 <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={`${href}&min_sample=10`}>
                   Stricter sample

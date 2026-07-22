@@ -22,7 +22,6 @@ DEFAULT_STRATEGY_OPTIMIZATION_ARTIFACT_DIR = REPO_ROOT / "backend" / "artifacts"
 SUMMARY_FILE = "summary.json"
 DEFAULT_LANE_PAIRS = (
     ("MID_SHORT", "1h"),
-    ("MID_LONG", "1h"),
     ("EARLY_LONG", "15m"),
     ("EARLY_SHORT", "15m"),
 )

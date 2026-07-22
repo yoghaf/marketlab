@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +12,11 @@ from sqlalchemy.orm import Session
 from app.services.multitimeframe_features import REPO_ROOT
 from app.services.signal_candidate_performance import (
     SignalCandidatePerformanceService,
-    build_filter_study_payload,
+    aggregate_signal_performance_items,
     build_misidentification_audit_payload,
     build_one_hour_filter_candidate_study_payload,
     build_one_hour_v4_shadow_monitor_payload,
     build_one_hour_walk_forward_payload,
-    build_quality_lab_payload,
     build_v3_shadow_filter_map,
 )
 from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
@@ -230,56 +231,59 @@ class SignalPerformanceSnapshotService:
         study["snapshot"] = payload.get("snapshot")
         return study
 
-    def mid_long_1h_lab62(self, *, min_sample: int, limit: int) -> dict[str, Any]:
+    def mid_long_1h_baseline(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(PERFORMANCE_1H_FILE)
         aggregate = payload.get("aggregate") or {}
         source_items = list(payload.get("items") or [])
-        evaluated = [item for item in source_items if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"]
-        filters = payload.get("filters") or {}
-        latest_candle_time = payload.get("latest_futures_15m_close_time") or payload.get("latest_evaluation_candle_time")
-        common = {
-            "evaluated": evaluated,
-            "skipped": {},
-            "latest_candle_time": latest_candle_time,
-            "epoch": str(payload.get("epoch") or OBSERVATION_EPOCH),
-            "include_watch_only": bool(filters.get("include_watch_only", False)),
-            "position_lock": bool(filters.get("position_lock", True)),
-            "min_sample": max(1, min_sample),
-            "limit": max(1, limit),
-            "source": "signal_performance_snapshot_1h",
-        }
-        quality = build_quality_lab_payload(
-            **common,
-            stage="MID_LONG",
-            timeframe="1h",
-        )
-        filter_study = build_filter_study_payload(
-            **common,
-            stage="MID_LONG",
-            timeframe="1h",
-        )
+        evaluated = [
+            item
+            for item in source_items
+            if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"
+        ]
+        evaluated.sort(key=lambda item: str(item.get("signal_timestamp") or ""), reverse=True)
+        baseline_aggregate = aggregate_signal_performance_items(evaluated)
         source_total = int(aggregate.get("signals_evaluated") or len(source_items))
+        rr_distribution = Counter(_distribution_key(item.get("rr")) for item in evaluated)
+        strategy_distribution = Counter(
+            str(item.get("strategy_version") or "UNKNOWN") for item in evaluated
+        )
+        confidence_distribution = Counter(
+            str(item.get("confidence_tier") or "UNKNOWN") for item in evaluated
+        )
         return {
             "generated_at_utc": (payload.get("snapshot") or {}).get("generated_at_utc") or payload.get("generated_at_utc"),
-            "lab": "LAB-62",
-            "study_scope": "mid_long_1h_v21_baseline_and_geometry_starting_point",
+            "baseline_id": "MID_LONG_1H_V2_BASELINE",
+            "scope": "mid_long_1h_logged_v2_closed_signals",
             "read_only": True,
             "not_live_signal": True,
             "not_execution_instruction": True,
             "closed_only_snapshot": True,
+            "filters": {
+                "stage": "MID_LONG",
+                "timeframe": "1h",
+                "position_lock": True,
+                "include_watch_only": False,
+                "result_status": "closed",
+                "limit": max(1, limit),
+            },
             "snapshot_coverage": {
                 "source_1h_rows": len(source_items),
                 "source_1h_total": source_total,
                 "mid_long_1h_rows": len(evaluated),
                 "is_truncated": len(source_items) < source_total,
             },
-            "quality": quality,
-            "filter_study": filter_study,
+            "latest_evaluation_candle_time": payload.get("latest_futures_15m_close_time")
+            or payload.get("latest_evaluation_candle_time"),
+            "aggregate": baseline_aggregate,
+            "rr_distribution": dict(sorted(rr_distribution.items())),
+            "strategy_distribution": dict(sorted(strategy_distribution.items())),
+            "confidence_distribution": dict(sorted(confidence_distribution.items())),
+            "items": evaluated[: max(1, limit)],
             "snapshot": payload.get("snapshot"),
             "guardrails": [
-                "LAB-62 reads a closed-signal artifact refreshed by the research loop.",
-                "Geometry artifacts remain ideal-path research until realistic validation is complete.",
-                "No Signal Factory rule, scanner decision, TP/SL, or execution behavior changes.",
+                "This page is the frozen MID_LONG 1h V2 baseline, not a filter study.",
+                "Entry, stop, target, RR, and result are read directly from logged V2 signals.",
+                "No geometry override, timeout experiment, filter search, or promotion verdict is applied.",
             ],
         }
 
@@ -355,3 +359,13 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def _distribution_key(value: Any) -> str:
+    if value is None:
+        return "MISSING"
+    try:
+        normalized = Decimal(str(value)).normalize()
+    except (ArithmeticError, ValueError):
+        return str(value)
+    return f"{normalized}R"

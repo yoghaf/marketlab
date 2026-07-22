@@ -52,7 +52,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     one_hour_filter = service.one_hour_filter_candidate_study(min_sample=1, limit=5)
     one_hour_walk_forward = service.one_hour_walk_forward_study(min_sample=1, limit=5)
     one_hour_v4_shadow = service.one_hour_v4_shadow_monitor(min_sample=1, limit=5)
-    lab62 = service.mid_long_1h_lab62(min_sample=1, limit=5)
+    baseline = service.mid_long_1h_baseline(limit=5)
     v3_filter_map = service.v3_shadow_filter_map()
 
     assert performance["cache"]["source"] == "artifact_snapshot"
@@ -79,12 +79,14 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert one_hour_v4_shadow["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert one_hour_v4_shadow["study_scope"] == "one_hour_v4_shadow_forward_monitor_read_only"
     assert one_hour_v4_shadow["summary"]["read"] == "V4_NO_FILTER_SELECTED"
-    assert lab62["lab"] == "LAB-62"
-    assert lab62["closed_only_snapshot"] is True
-    assert lab62["snapshot_coverage"]["mid_long_1h_rows"] == 1
-    assert lab62["snapshot_coverage"]["is_truncated"] is False
-    assert lab62["quality"]["aggregate"]["tp_count"] == 1
-    assert lab62["filter_study"]["baseline"]["sample_count"] == 1
+    assert baseline["baseline_id"] == "MID_LONG_1H_V2_BASELINE"
+    assert baseline["closed_only_snapshot"] is True
+    assert baseline["snapshot_coverage"]["mid_long_1h_rows"] == 1
+    assert baseline["snapshot_coverage"]["is_truncated"] is False
+    assert baseline["aggregate"]["tp_count"] == 1
+    assert baseline["filters"]["position_lock"] is True
+    assert baseline["filters"]["result_status"] == "closed"
+    assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map
 

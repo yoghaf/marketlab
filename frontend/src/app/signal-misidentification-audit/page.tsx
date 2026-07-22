@@ -70,7 +70,7 @@ export default async function SignalMisidentificationAuditPage({ searchParams }:
           Open Quality Lab
         </Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/mid-long-research-study">
-          Open MID_LONG Research
+          Open MID_LONG Baseline
         </Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance?timeframe=1h&position_lock=false">
           Open Signal History 1h
