@@ -14,6 +14,9 @@ import {
   MidLongLab65Cause,
   MidLongLab65Example,
   MidLongLab65Response,
+  MidLongLab66Example,
+  MidLongLab66FilterRow,
+  MidLongLab66Response,
   SignalFilterStudyResponse,
   SignalFilterStudyRow,
   SignalPerformanceItem,
@@ -50,6 +53,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let lab63: MidLongLab63Response | null = null;
   let lab64: MidLongLab64Response | null = null;
   let lab65: MidLongLab65Response | null = null;
+  let lab66: MidLongLab66Response | null = null;
   let quality: SignalQualityLabResponse | null = null;
   let filterStudy: SignalFilterStudyResponse | null = null;
   let optimization: StrategyOptimizationResponse | null = null;
@@ -61,13 +65,15 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
   let lab63Error: string | null = null;
   let lab64Error: string | null = null;
   let lab65Error: string | null = null;
+  let lab66Error: string | null = null;
 
-  const [labResult, artifactResult, lab63Result, lab64Result, lab65Result] = await Promise.allSettled([
+  const [labResult, artifactResult, lab63Result, lab64Result, lab65Result, lab66Result] = await Promise.allSettled([
     fetchJson<MidLongLab62Response>(`/api/signal-candidates/mid-long-1h-lab62?${labQuery.toString()}`, { revalidateSeconds: 120 }),
     fetchJson<StrategyOptimizationArtifactResponse>("/api/strategy-optimization-artifacts", { revalidateSeconds: 300 }),
     fetchJson<MidLongLab63Response>("/api/signal-candidates/mid-long-1h-lab63", { revalidateSeconds: 300 }),
     fetchJson<MidLongLab64Response>("/api/signal-candidates/mid-long-1h-lab64", { revalidateSeconds: 300 }),
-    fetchJson<MidLongLab65Response>("/api/signal-candidates/mid-long-1h-lab65", { revalidateSeconds: 300 })
+    fetchJson<MidLongLab65Response>("/api/signal-candidates/mid-long-1h-lab65", { revalidateSeconds: 300 }),
+    fetchJson<MidLongLab66Response>("/api/signal-candidates/mid-long-1h-lab66", { revalidateSeconds: 300 })
   ]);
 
   if (labResult.status === "fulfilled") {
@@ -97,6 +103,12 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     lab65Error = lab65Result.reason instanceof Error ? lab65Result.reason.message : "MID_LONG LAB-65 API failed";
   }
 
+  if (lab66Result.status === "fulfilled") {
+    lab66 = lab66Result.value;
+  } else {
+    lab66Error = lab66Result.reason instanceof Error ? lab66Result.reason.message : "MID_LONG LAB-66 API failed";
+  }
+
   if (artifactResult.status === "fulfilled") {
     const artifacts = artifactResult.value;
     optimization = artifacts.optimization_by_lane?.["MID_LONG:1h"] || null;
@@ -119,12 +131,15 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
     <div className="space-y-5">
       <PageHeader
         title="MID_LONG 1h V2.1 Research"
-        badge="LAB-65 - FAILURE ANATOMY"
-        subtitle="Cohort dan geometry tetap 0.75 ATR / 1R / 120m. LAB-65 membedah loss realistis: salah arah langsung, reversal, structure/regime conflict, timeout, dan cost drag."
-        updatedAt={fmtTime(lab65?.generated_at_utc || lab64?.generated_at_utc || lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
+        badge="LAB-66 - FILTER VALIDATION"
+        subtitle="Alur riset setara MID_SHORT: baseline, geometry, evidence, failure anatomy, lalu kombinasi filter train-only yang diuji pada validation terpisah."
+        updatedAt={fmtTime(lab66?.generated_at_utc || lab65?.generated_at_utc || lab64?.generated_at_utc || lab63?.generated_at_utc || lab62?.generated_at_utc || optimization?.generated_at_utc || quality?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
+        <a className="rounded border border-blue-300 bg-blue-50 px-3 py-2 font-semibold text-blue-900 hover:bg-blue-100" href="#lab66">LAB-66 result</a>
+        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="#research-path">Research path</a>
+        <a className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="#fixed-cohort">Fixed cohort</a>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={`/signal-quality-lab?stage=MID_LONG&timeframe=1h&position_lock=${positionLock}`}>Open Quality Lab filtered</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/scanner">Open Radar</Link>
         <Link className="rounded border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href={`/signal-performance?stage=MID_LONG&timeframe=1h&position_lock=${positionLock}`}>Open Signal History</Link>
@@ -154,7 +169,8 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
             <MetricCard label="Read" value={labelFor(lane?.realistic_read)} helper={lane?.top_evidence_gap?.label || "No evidence gap"} />
           </section>
 
-          <SectionCard title="LAB-62 baseline and geometry starting point" description="Pertanyaan pertama: apakah masalah MID_LONG 1h berasal dari definisi arah, entry yang terlambat, atau geometry posisi yang terlalu lama/lebar?">
+          <div id="research-path" />
+          <SectionCard title="Research path MID_LONG 1h" description="Urutan kerja dibuat sama dengan jalur MID_SHORT, tetapi threshold dan hasil tetap ditemukan dari data MID_LONG sendiri.">
             <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
               <Info label="V2 control" value={`${fmtSigned(lane?.realistic_total_r_closed ?? aggregate?.realistic_total_r_closed)}R realistic`} />
               <Info label="Best geometry" value={bestGeometry ? `${fmtNumber(bestGeometry.atr_mult)} ATR / ${fmtNumber(bestGeometry.rr)}R / ${bestGeometry.timeout_minutes}m` : "Belum tersedia"} />
@@ -163,17 +179,19 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <Info label="Geometry lock" value={optimization ? (optimization.filters.position_lock ? "Position lock ON" : "Position lock OFF") : "-"} />
               <Info label="LAB-62 decision" value={lab62Decision(lane, bestGeometry)} />
             </div>
-            <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 border-t border-line p-4 text-sm md:grid-cols-2 xl:grid-cols-5">
               <ResearchStep status="COMPLETE" title="LAB-62" detail="Baseline V2 dan geometry ideal sudah dibekukan sebagai titik awal." />
               <ResearchStep status="COMPLETE" title="LAB-63" detail="120m paling sedikit merusak validation, tetapi seluruh policy tetap negatif setelah biaya." />
               <ResearchStep status="COMPLETE" title="LAB-64" detail="Tidak ada single evidence separator yang cukup stabil untuk langsung menjadi filter." />
-              <ResearchStep status="ACTIVE" title="LAB-65" detail="Partisi loss berdasarkan path, structure, regime, timeout, dan biaya sebelum menguji kombinasi filter." />
+              <ResearchStep status="COMPLETE" title="LAB-65" detail="Loss sudah dipartisi berdasarkan path, structure, regime, timeout, dan biaya." />
+              <ResearchStep status="ACTIVE" title="LAB-66" detail="Kombinasi filter train-only sekarang diuji pada validation terpisah." />
             </div>
             <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-900">
               Angka geometry masih ideal dan dipilih dari grid. Angka itu tidak boleh dibandingkan langsung dengan V2 realistic R serta belum boleh menjadi rule Signal.
             </div>
           </SectionCard>
 
+          <div id="fixed-cohort" />
           <SectionCard
             title="LAB-63 realistic timeout policy comparison"
             description="Semua baris memakai entry dan ATR yang sama. Hanya batas waktu posisi yang berubah; 4h adalah reference resmi."
@@ -285,6 +303,42 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
             )}
           </SectionCard>
 
+          <div id="lab66" />
+          <SectionCard
+            title="LAB-66 fixed-cohort filter combination"
+            description="Threshold dan arah filter ditemukan hanya dari train 70%. Validation 30% dipakai sekali untuk mengecek apakah perbaikan bertahan dan bukan overfit."
+          >
+            {lab66Error ? (
+              <div className="p-4 text-sm text-stale">{lab66Error}</div>
+            ) : lab66 ? (
+              <>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
+                  <Info label="Fixed cohort" value={`${lab66.split.source_signal_count} Signal`} />
+                  <Info label="Evaluated" value={lab66.split.evaluated_fixed_cohort_count} />
+                  <Info label="Validation baseline" value={`${fmtSigned(lab66.baseline.validation.realistic_total_r_closed)}R`} />
+                  <Info label="Tested filters" value={lab66.summary.single_filter_count + lab66.summary.combination_count} />
+                  <Info label="Validated candidates" value={lab66.summary.candidate_count} />
+                  <Info label="Verdict" value={labelFor(lab66.summary.verdict)} />
+                </div>
+                <Lab66DecisionPanel data={lab66} />
+                <Lab66FilterTable rows={lab66.filter_rows.slice(0, 24)} />
+                <details className="border-t border-line bg-white">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Buka threshold train dan sample pass/fail</summary>
+                  <Lab66ThresholdTable rows={lab66.threshold_discovery.field_rows} />
+                  <div className="grid gap-4 border-t border-line p-4 xl:grid-cols-2">
+                    <Lab66Examples title="Latest pass" rows={lab66.latest_pass_examples} />
+                    <Lab66Examples title="Latest fail" rows={lab66.latest_fail_examples} />
+                  </div>
+                </details>
+                <div className="border-t border-line bg-amber-50 p-4 text-sm text-amber-950">
+                  <b>Next:</b> {lab66.next_step} LAB-66 tetap read-only; filter yang lolos validation belum otomatis menjadi V2.1 atau Signal live.
+                </div>
+              </>
+            ) : (
+              <div className="p-4"><EmptyState title="LAB-66 belum tersedia" detail="Jalankan strategy optimization artifact cycle untuk membuat fixed-cohort filter study." /></div>
+            )}
+          </SectionCard>
+
           <SectionCard title="Research verdict" description="Kesimpulan praktis dari kondisi MID_LONG 1h saat ini.">
             <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
               <Info label="Current read" value={midLongVerdict(lane)} />
@@ -293,10 +347,16 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <Info label="Top loss symbol" value={lane?.top_loss_symbol ? `${lane.top_loss_symbol.symbol} ${fmtSigned(lane.top_loss_symbol.realistic_total_r_closed)}R` : "-"} />
             </div>
             <div className="border-t border-line p-4 text-sm text-slate-700">
-              MID_LONG 1h layak diteliti karena sample besar, tetapi belum layak dipromosikan. Fokus risetnya: cari kondisi ketika long 1h tidak telat masuk, cost tidak terlalu berat, dan price return sebelum entry tidak overextended.
+              {lab66?.summary.verdict === "FIXED_COHORT_CANDIDATE_FOUND"
+                ? "LAB-66 menemukan kombinasi yang bertahan pada validation, tetapi tahap berikutnya tetap forward shadow terpisah sebelum perubahan rule."
+                : "MID_LONG 1h belum layak dipromosikan. LAB-66 menentukan apakah kombinasi causal hanya mengurangi damage atau benar-benar positif pada validation."}
             </div>
           </SectionCard>
 
+          <details className="space-y-4 rounded-md border border-line bg-field/30 p-3">
+            <summary className="cursor-pointer rounded bg-white px-4 py-3 text-sm font-semibold">
+              Buka arsip LAB-62: geometry lama, regime, filter in-sample, dan sample signal
+            </summary>
           <SectionCard title="Geometry candidates" description="ATR, RR, dan timeout terbaik dari replay futures MID_LONG 1h. Ini adalah kandidat eksperimen, bukan parameter final.">
             {optimizationError ? (
               <div className="p-4 text-sm text-stale">{optimizationError}</div>
@@ -373,6 +433,7 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
               <SignalTable items={quality?.open_signals || []} />
             </SectionCard>
           </section>
+          </details>
 
           <SectionCard title="Guardrail" description="Batas interpretasi halaman ini.">
             <ul className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
@@ -384,6 +445,146 @@ export default async function MidLongResearchStudyPage({ searchParams }: { searc
           </SectionCard>
         </>
       )}
+    </div>
+  );
+}
+
+function Lab66DecisionPanel({ data }: { data: MidLongLab66Response }) {
+  const selected = data.top_candidate || data.best_observed;
+  const baseline = data.baseline.validation;
+  return (
+    <div className="border-t border-line bg-blue-50/60 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold uppercase text-slate-500">Current decision</div>
+          <div className="mt-1 flex items-center gap-2 font-bold"><StatusBadge value={data.summary.verdict} /> {data.next_step}</div>
+        </div>
+        <div className="text-xs text-slate-600">Threshold source: chronological train only</div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Validation baseline" value={`${fmtSigned(baseline.realistic_total_r_closed)}R`} />
+        <Info label="Baseline avg" value={`${fmtSigned(baseline.realistic_avg_r_closed)}R`} />
+        <Info label="Baseline drawdown" value={`${fmtSigned(baseline.max_realistic_drawdown_r)}R`} />
+        <Info label="Selected filter" value={selected?.label || "Belum ada"} />
+        <Info label="Selected validation R" value={selected ? `${fmtSigned(selected.validation.realistic_total_r_closed)}R` : "-"} />
+        <Info label="Selected verdict" value={selected ? labelFor(selected.verdict) : "Belum ada"} />
+      </div>
+      {selected && (
+        <div className="mt-3 rounded border border-line bg-white p-3 text-sm">
+          <div className="font-semibold">{selected.expression}</div>
+          <div className="mt-1 text-slate-600">
+            Validation {selected.validation.closed_count} closed, avg delta {fmtSigned(selected.deltas.validation.realistic_avg_r)}R,
+            drawdown delta {fmtSigned(selected.deltas.validation.max_drawdown_r)}R, retained {fmtNumber(selected.availability.validation.retention_pct)}%.
+          </div>
+          <div className="mt-2 text-xs text-slate-500">{selected.risk_notes.join(" ")}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Lab66FilterTable({ rows }: { rows: MidLongLab66FilterRow[] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Verdict</th>
+            <th>Train-only filter</th>
+            <th>Validation sample</th>
+            <th>Validation TP / SL / timeout</th>
+            <th>Validation R</th>
+            <th>Avg delta</th>
+            <th>Drawdown / delta</th>
+            <th>Retention</th>
+            <th>Concentration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td><StatusBadge value={row.verdict} /></td>
+              <td className="max-w-lg">
+                <div className="font-semibold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div>{row.validation.closed_count} closed</div>
+                <div className="text-xs text-slate-500">{row.availability.validation.available_count} available</div>
+              </td>
+              <td>{row.validation.tp_count} / {row.validation.sl_count} / {row.validation.timeout_count}</td>
+              <td className={Number(row.validation.realistic_total_r_closed || 0) >= 0 ? "font-semibold text-ready" : "font-semibold text-stale"}>
+                <div>{fmtSigned(row.validation.realistic_total_r_closed)}R</div>
+                <div className="text-xs">avg {fmtSigned(row.validation.realistic_avg_r_closed)}R</div>
+              </td>
+              <td>{fmtSigned(row.deltas.validation.realistic_avg_r)}R</td>
+              <td>
+                <div>{fmtSigned(row.validation.max_realistic_drawdown_r)}R</div>
+                <div className="text-xs text-slate-500">delta {fmtSigned(row.deltas.validation.max_drawdown_r)}R</div>
+              </td>
+              <td>{fmtNumber(row.availability.validation.retention_pct)}%</td>
+              <td>{row.validation.top_symbol || "-"} ({fmtNumber(row.validation.top_symbol_share_pct)}%)</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr><td colSpan={9}><EmptyState title="No LAB-66 filter rows" detail="Artifact belum memiliki filter train-only yang dapat diuji." /></td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab66ThresholdTable({ rows }: { rows: MidLongLab66Response["threshold_discovery"]["field_rows"] }) {
+  return (
+    <div className="table-wrap border-t border-line">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Train available</th>
+            <th>Positive / nonpositive</th>
+            <th>Median positive</th>
+            <th>Median nonpositive</th>
+            <th>Direction</th>
+            <th>Train q25 / q50 / q75</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td><div className="font-semibold">{row.label}</div><div className="text-xs text-slate-500">{row.field}</div></td>
+              <td>{row.train_available_count}</td>
+              <td>{row.train_positive_count} / {row.train_nonpositive_count}</td>
+              <td>{fmtNumber(row.positive_median)}</td>
+              <td>{fmtNumber(row.nonpositive_median)}</td>
+              <td><StatusBadge value={row.direction || "NO_DIRECTION"} /></td>
+              <td>{fmtNumber(row.q25)} / {fmtNumber(row.q50)} / {fmtNumber(row.q75)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Lab66Examples({ title, rows }: { title: string; rows: MidLongLab66Example[] }) {
+  return (
+    <div className="rounded border border-line bg-white">
+      <div className="border-b border-line px-3 py-2 text-sm font-semibold">{title}</div>
+      <div className="divide-y divide-line">
+        {rows.slice(0, 10).map((row) => (
+          <div className="grid gap-2 p-3 text-sm sm:grid-cols-[1fr_auto_auto]" key={row.signal_id}>
+            <div>
+              <Link className="font-semibold text-blue-700 hover:underline" href={`/signals/${row.symbol}?signal_id=${encodeURIComponent(row.signal_id)}`}>{row.symbol}</Link>
+              <div className="text-xs text-slate-500">{fmtTime(row.signal_timestamp)}</div>
+            </div>
+            <StatusBadge value={row.result_status} />
+            <div className="font-semibold">{fmtSigned(row.realistic_realized_r)}R</div>
+          </div>
+        ))}
+        {!rows.length && <div className="p-3 text-sm text-slate-500">No sample rows</div>}
+      </div>
     </div>
   );
 }

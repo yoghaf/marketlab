@@ -4018,6 +4018,133 @@ export type MidLongLab65Response = {
   guardrails: string[];
 };
 
+export type MidLongLab66Availability = {
+  source_count: number;
+  available_count: number;
+  missing_count: number;
+  matched_count: number;
+  available_pct?: string | number | null;
+  retention_pct?: string | number | null;
+};
+
+export type MidLongLab66Delta = {
+  realistic_total_r?: string | number | null;
+  realistic_avg_r?: string | number | null;
+  realistic_median_r?: string | number | null;
+  max_drawdown_r?: string | number | null;
+};
+
+export type MidLongLab66FilterRow = {
+  filter_id: string;
+  label: string;
+  expression: string;
+  component_ids: string[];
+  fields: string[];
+  threshold_source: string;
+  availability: {
+    all: MidLongLab66Availability;
+    train: MidLongLab66Availability;
+    validation: MidLongLab66Availability;
+  };
+  all_available_signal_count: number;
+  all: MidLongLab63Metrics;
+  train: MidLongLab63Metrics;
+  validation: MidLongLab63Metrics;
+  deltas: {
+    all: MidLongLab66Delta;
+    train: MidLongLab66Delta;
+    validation: MidLongLab66Delta;
+  };
+  verdict: string;
+  risk_notes: string[];
+};
+
+export type MidLongLab66Example = {
+  signal_id: string;
+  symbol: string;
+  signal_timestamp?: string | null;
+  result_status: string;
+  realistic_realized_r?: string | number | null;
+  structure_status?: string | null;
+  regime_conflict?: boolean;
+  evidence: Record<string, string | number | null>;
+};
+
+export type MidLongLab66Response = {
+  generated_at_utc?: string | null;
+  lab: string;
+  study_scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  filters: {
+    epoch: string;
+    stage: string;
+    timeframe: string;
+    direction: string;
+    include_watch_only: boolean;
+    position_lock: boolean;
+    min_validation_sample: number;
+    limit: number;
+  };
+  policy: {
+    policy_id: string;
+    timeout_minutes: number;
+    atr_source: string;
+    atr_multiplier: string | number;
+    reward_risk: string | number;
+    realistic_model: string;
+  };
+  split: {
+    method: string;
+    source_signal_count: number;
+    train_source_count: number;
+    validation_source_count: number;
+    evaluated_fixed_cohort_count: number;
+  };
+  latest_futures_15m_close_time?: string | null;
+  baseline: {
+    all: MidLongLab63Metrics;
+    train: MidLongLab63Metrics;
+    validation: MidLongLab63Metrics;
+  };
+  threshold_discovery: {
+    method: string;
+    atom_count: number;
+    combination_atom_count: number;
+    field_rows: Array<{
+      field: string;
+      label: string;
+      train_available_count: number;
+      train_positive_count: number;
+      train_nonpositive_count: number;
+      positive_median?: string | number | null;
+      nonpositive_median?: string | number | null;
+      direction?: string | null;
+      q25?: string | number | null;
+      q50?: string | number | null;
+      q75?: string | number | null;
+    }>;
+  };
+  summary: {
+    single_filter_count: number;
+    combination_count: number;
+    candidate_count: number;
+    promising_count: number;
+    damage_reduction_count: number;
+    overfit_count: number;
+    verdict: string;
+  };
+  top_candidate?: MidLongLab66FilterRow | null;
+  best_observed?: MidLongLab66FilterRow | null;
+  filter_rows: MidLongLab66FilterRow[];
+  candidate_rows: MidLongLab66FilterRow[];
+  latest_pass_examples: MidLongLab66Example[];
+  latest_fail_examples: MidLongLab66Example[];
+  next_step: string;
+  guardrails: string[];
+};
+
 export type Phase6FeatureReadinessRow = {
   timeframe: string;
   total_feature_rows: number;

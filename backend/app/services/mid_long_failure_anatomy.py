@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from bisect import bisect_right
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -130,6 +131,17 @@ CAUSE_METADATA = {
 }
 
 
+@dataclass(frozen=True)
+class Lab65PreparedAnalysis:
+    """Shared fixed-cohort analysis used by LAB-65 and downstream studies."""
+
+    prepared_dataset: Lab63PreparedDataset
+    outcomes: list[dict[str, Any]]
+    skipped: list[dict[str, Any]]
+    annotated: list[dict[str, Any]]
+    train_thresholds: dict[str, Decimal | None]
+
+
 class MidLongFailureAnatomyService:
     """Read-only failure anatomy for the fixed LAB-63 MID_LONG policy."""
 
@@ -145,47 +157,20 @@ class MidLongFailureAnatomyService:
         min_failure_sample: int = 20,
         limit: int = 30,
         prepared_dataset: Lab63PreparedDataset | None = None,
+        prepared_analysis: Lab65PreparedAnalysis | None = None,
     ) -> dict[str, Any]:
         prepared = prepared_dataset or MidLongGeometryValidationService(self.db).prepare_dataset(
             epoch=epoch,
             include_watch_only=include_watch_only,
         )
-        outcomes, skipped = _evaluate_policy(
-            prepared.contexts,
-            policy_id=POLICY_ID,
-            timeout_minutes=TIMEOUT_MINUTES,
+        analysis = prepared_analysis or self.prepare_analysis(
+            prepared_dataset=prepared,
             position_lock=position_lock,
         )
-        context_by_id = {context.signal.signal_id: context for context in prepared.contexts}
-        signal_by_id = {signal.signal_id: signal for signal in prepared.signals}
-        zone_snapshots = StructureZoneShadowService(self.db).snapshots_for_signals(
-            [
-                {
-                    "signal_id": outcome["signal_id"],
-                    "symbol": outcome["symbol"],
-                    "signal_timestamp": outcome["signal_timestamp"],
-                    "timeframe": "1h",
-                    "direction": "LONG",
-                    "entry": outcome.get("entry"),
-                }
-                for outcome in outcomes
-            ]
-        )
-        regime_rows = self._load_regime_rows(prepared)
-        train_thresholds = _train_thresholds(prepared)
-        annotated = [
-            _annotate_outcome(
-                outcome,
-                context=context_by_id[str(outcome["signal_id"])],
-                signal=signal_by_id[str(outcome["signal_id"])],
-                zone_snapshot=zone_snapshots.get(str(outcome["signal_id"])) or {},
-                regime_rows=regime_rows,
-                train_thresholds=train_thresholds,
-            )
-            for outcome in outcomes
-            if str(outcome.get("signal_id")) in context_by_id
-            and str(outcome.get("signal_id")) in signal_by_id
-        ]
+        outcomes = analysis.outcomes
+        skipped = analysis.skipped
+        annotated = analysis.annotated
+        train_thresholds = analysis.train_thresholds
         failures = [row for row in annotated if row["is_realistic_loss"]]
         all_ids = {signal.signal_id for signal in prepared.signals}
         all_failures = failures
@@ -272,6 +257,60 @@ class MidLongFailureAnatomyService:
                 "No Signal Factory, scanner, candidate, entry, TP/SL, outcome, or execution rule changed.",
             ],
         }
+
+    def prepare_analysis(
+        self,
+        *,
+        prepared_dataset: Lab63PreparedDataset,
+        position_lock: bool = True,
+    ) -> Lab65PreparedAnalysis:
+        outcomes, skipped = _evaluate_policy(
+            prepared_dataset.contexts,
+            policy_id=POLICY_ID,
+            timeout_minutes=TIMEOUT_MINUTES,
+            position_lock=position_lock,
+        )
+        context_by_id = {
+            context.signal.signal_id: context for context in prepared_dataset.contexts
+        }
+        signal_by_id = {
+            signal.signal_id: signal for signal in prepared_dataset.signals
+        }
+        zone_snapshots = StructureZoneShadowService(self.db).snapshots_for_signals(
+            [
+                {
+                    "signal_id": outcome["signal_id"],
+                    "symbol": outcome["symbol"],
+                    "signal_timestamp": outcome["signal_timestamp"],
+                    "timeframe": "1h",
+                    "direction": "LONG",
+                    "entry": outcome.get("entry"),
+                }
+                for outcome in outcomes
+            ]
+        )
+        regime_rows = self._load_regime_rows(prepared_dataset)
+        train_thresholds = _train_thresholds(prepared_dataset)
+        annotated = [
+            _annotate_outcome(
+                outcome,
+                context=context_by_id[str(outcome["signal_id"])],
+                signal=signal_by_id[str(outcome["signal_id"])],
+                zone_snapshot=zone_snapshots.get(str(outcome["signal_id"])) or {},
+                regime_rows=regime_rows,
+                train_thresholds=train_thresholds,
+            )
+            for outcome in outcomes
+            if str(outcome.get("signal_id")) in context_by_id
+            and str(outcome.get("signal_id")) in signal_by_id
+        ]
+        return Lab65PreparedAnalysis(
+            prepared_dataset=prepared_dataset,
+            outcomes=outcomes,
+            skipped=skipped,
+            annotated=annotated,
+            train_thresholds=train_thresholds,
+        )
 
     def _load_regime_rows(
         self,

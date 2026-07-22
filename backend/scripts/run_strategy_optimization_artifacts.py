@@ -24,6 +24,10 @@ from app.services.mid_long_evidence_separation import (  # noqa: E402
 )
 from app.services.mid_long_failure_anatomy import (  # noqa: E402
     MidLongFailureAnatomyArtifactRunner,
+    MidLongFailureAnatomyService,
+)
+from app.services.mid_long_filter_combination import (  # noqa: E402
+    MidLongFilterCombinationArtifactRunner,
 )
 from app.services.strategy_optimization_artifacts import (  # noqa: E402
     DEFAULT_STRATEGY_OPTIMIZATION_ARTIFACT_DIR,
@@ -85,7 +89,7 @@ def main() -> None:
         ).run(
             include_watch_only=args.include_watch_only,
             position_lock=not args.no_position_lock,
-            min_validation_sample=max(1, args.min_sample),
+            min_validation_sample=max(40, args.min_sample),
             limit=max(20, args.limit),
             prepared_dataset=prepared_mid_long,
         )
@@ -99,6 +103,10 @@ def main() -> None:
             limit=max(20, args.limit),
             prepared_dataset=prepared_mid_long,
         )
+        prepared_mid_long_analysis = MidLongFailureAnatomyService(db).prepare_analysis(
+            prepared_dataset=prepared_mid_long,
+            position_lock=not args.no_position_lock,
+        )
         lab65 = MidLongFailureAnatomyArtifactRunner(
             db,
             artifact_path=output_dir / "mid_long_lab65.json",
@@ -108,6 +116,18 @@ def main() -> None:
             min_failure_sample=max(1, args.min_sample),
             limit=max(20, args.limit),
             prepared_dataset=prepared_mid_long,
+            prepared_analysis=prepared_mid_long_analysis,
+        )
+        lab66 = MidLongFilterCombinationArtifactRunner(
+            db,
+            artifact_path=output_dir / "mid_long_lab66.json",
+        ).run(
+            include_watch_only=args.include_watch_only,
+            position_lock=not args.no_position_lock,
+            min_validation_sample=max(1, args.min_sample),
+            limit=max(20, args.limit),
+            prepared_dataset=prepared_mid_long,
+            prepared_analysis=prepared_mid_long_analysis,
         )
 
     summary = {
@@ -135,6 +155,11 @@ def main() -> None:
         ),
         "mid_long_lab65_dominant_cause": (
             (lab65.get("failure_summary") or {}).get("dominant_cause")
+        ),
+        "mid_long_lab66_path": str(output_dir / "mid_long_lab66.json"),
+        "mid_long_lab66_verdict": (lab66.get("summary") or {}).get("verdict"),
+        "mid_long_lab66_candidate_count": (
+            (lab66.get("summary") or {}).get("candidate_count", 0)
         ),
         "errors": payload.get("errors") or [],
         "read_only": True,

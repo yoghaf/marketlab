@@ -18,6 +18,49 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-22",
+    version: "LAB-66",
+    title: "MID_LONG 1h Fixed-Cohort Filter Validation",
+    status: "RESEARCH",
+    area: "MID_LONG 1h V2.1 research",
+    summary: "Menguji filter dan kombinasi filter causal MID_LONG 1h pada chronological validation tanpa mengubah Signal live.",
+    changes: [
+      "LAB-66 memakai cohort, entry futures, ATR, RR, timeout 120m, biaya realistis, dan position lock yang sama dengan LAB-63 sampai LAB-65.",
+      "Arah dan threshold volume, ATR extension, range/ATR, price/ATR, spread, taker, OI, evidence score, dan core score dipelajari hanya dari train 70%.",
+      "Structure conflict dan BTC/ETH regime memakai snapshot causal pada waktu Signal; future return, TP/SL, MFE/MAE, dan failure cause dilarang menjadi input filter.",
+      "Kombinasi terbatas diuji pada validation 30% dengan realistic R, average/median R, drawdown, retention, availability, dan symbol concentration.",
+      "LAB-65 dan LAB-66 berbagi prepared analysis sehingga structure/regime replay tidak dihitung dua kali pada artifact cycle.",
+      "Halaman MID_LONG 1h dirapikan menjadi research path LAB-62 sampai LAB-66; geometry dan filter legacy dipindahkan ke arsip tertutup.",
+      "Patch ini tidak mengubah Signal Factory, scanner, entry, TP/SL, outcome, threshold live, atau execution."
+    ],
+    impact: "MID_LONG sekarang memiliki route riset yang setara dengan MID_SHORT: kandidat filter harus bertahan di validation sebelum boleh masuk forward shadow.",
+    links: [
+      { href: "/mid-long-research-study#lab66", label: "Open LAB-66" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-19",
+    version: "UI-01",
+    title: "Responsive Mobile Workspace",
+    status: "LIVE",
+    area: "Frontend mobile usability",
+    summary: "Membuat halaman utama MarketLab nyaman dibaca dan dioperasikan dari layar ponsel tanpa mengubah data, rule Signal, atau hasil riset.",
+    changes: [
+      "Navigasi desktop berubah menjadi menu mobile ringkas dengan kelompok halaman utama, research focus, deep dive, dan raw operations.",
+      "Overview, Live Radar, Signal History, Data Health, dan Universe memakai kartu data khusus pada layar kecil; tabel desktop tetap dipertahankan pada layar lebar.",
+      "Header, metric cards, filter, action buttons, dan section headers sekarang menyesuaikan ruang layar serta tetap touch-friendly.",
+      "Signal detail dan Lightweight Chart menyesuaikan tinggi, legend, tooltip, dan lebar viewport tanpa overflow horizontal global.",
+      "Layout diverifikasi pada viewport 320px, 390px, dan desktop 1440px tanpa mengubah backend, scanner, Signal Factory, TP/SL, atau execution."
+    ],
+    impact: "MarketLab sekarang dapat dipakai untuk memantau Radar, membaca Signal, memeriksa riwayat, dan mengecek kesehatan data langsung dari ponsel.",
+    links: [
+      { href: "/scanner", label: "Open Live Radar" },
+      { href: "/signal-performance", label: "Open Signal History" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
     date: "2026-07-19",
     version: "LAB-65",
     title: "MID_LONG 1h Failure Anatomy",
