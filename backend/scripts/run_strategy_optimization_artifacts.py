@@ -124,7 +124,7 @@ def main() -> None:
         ).run(
             include_watch_only=args.include_watch_only,
             position_lock=not args.no_position_lock,
-            min_validation_sample=max(1, args.min_sample),
+            min_validation_sample=max(40, args.min_sample),
             limit=max(20, args.limit),
             prepared_dataset=prepared_mid_long,
             prepared_analysis=prepared_mid_long_analysis,
