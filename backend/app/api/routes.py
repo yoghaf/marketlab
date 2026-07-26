@@ -47,7 +47,20 @@ from app.services.candidate_numeric_evidence import CandidateNumericEvidenceArti
 from app.services.early_backtest_lab import EarlyBacktestLabArtifactService
 from app.services.signal_candidate_classifier_readonly_15m import SignalCandidateClassifierReadonly15mService
 from app.services.signal_candidate_performance import SignalCandidatePerformanceService
-from app.services.signal_performance_snapshot import SignalPerformanceSnapshotService
+from app.services.signal_performance_snapshot import (
+    MID_SHORT_ENTRY_CONFIRMATION_1H_FILE,
+    MID_SHORT_FAILURE_ANATOMY_1H_FILE,
+    MID_SHORT_SECOND_FILTER_1H_FILE,
+    MID_SHORT_SHADOW_FORWARD_1H_FILE,
+    MID_SHORT_STRUCTURE_ZONE_1H_FILE,
+    MID_SHORT_TAKER_SELL_DEEP_DIVE_1H_FILE,
+    MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE,
+    MID_SHORT_V21_STRUCTURE_EXIT_1H_FILE,
+    MID_SHORT_V21_STRUCTURE_INTERACTION_1H_FILE,
+    MID_SHORT_VOLUME_SAFE_1H_FILE,
+    MID_SHORT_WRONG_DIRECTION_DEEP_DIVE_1H_FILE,
+    SignalPerformanceSnapshotService,
+)
 from app.services.snapshot_funding_alignment import SnapshotFundingAlignmentService
 from app.services.strategy_optimization_artifacts import StrategyOptimizationArtifactService
 from app.services.strategy_optimization_regime_split import StrategyOptimizationRegimeSplitService
@@ -496,6 +509,17 @@ def signal_candidates_quality_lab(
 ):
     normalized_limit = max(1, min(limit, 100))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_quality_snapshot(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        stage=stage,
+        timeframe=timeframe,
+        min_sample=normalized_min_sample,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -591,6 +615,18 @@ def signal_candidates_mid_short_1h_shadow_forward_log(
 ):
     normalized_limit = max(1, min(limit, 300))
     normalized_result_status = None if result_status in {"", "ALL"} else result_status
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_SHADOW_FORWARD_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=20,
+        expected_min_sample=20,
+        limit=normalized_limit,
+        extra_default=normalized_result_status is None,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -635,6 +671,18 @@ def signal_candidates_mid_short_1h_failure_anatomy(
     normalized_base_filter = (base_filter or "ALL").upper()
     if normalized_base_filter not in {"ALL", "TAKER_SELL_GE_52"}:
         normalized_base_filter = "ALL"
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_FAILURE_ANATOMY_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+        extra_default=normalized_shadow_status == "SHADOW_PASS" and normalized_base_filter == "ALL",
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -679,6 +727,18 @@ def signal_candidates_mid_short_1h_second_filter_shadow(
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
     normalized_shadow_status = (shadow_status or "SHADOW_PASS").upper()
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_SECOND_FILTER_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+        extra_default=normalized_shadow_status == "SHADOW_PASS",
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -719,6 +779,17 @@ def signal_candidates_mid_short_1h_taker_sell_deep_dive(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_TAKER_SELL_DEEP_DIVE_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -757,6 +828,17 @@ def signal_candidates_mid_short_1h_wrong_direction_deep_dive(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_WRONG_DIRECTION_DEEP_DIVE_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -795,6 +877,17 @@ def signal_candidates_mid_short_1h_entry_confirmation_study(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_ENTRY_CONFIRMATION_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -835,6 +928,18 @@ def signal_candidates_mid_short_1h_structure_zone_study(
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
     normalized_signal_id = (signal_id or "").strip() or None
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_STRUCTURE_ZONE_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+        extra_default=normalized_signal_id is None,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -895,6 +1000,17 @@ def signal_candidates_mid_short_1h_v21_structure_interaction_study(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_V21_STRUCTURE_INTERACTION_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -949,6 +1065,17 @@ def signal_candidates_mid_short_1h_v21_structure_exit_study(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_V21_STRUCTURE_EXIT_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -1003,6 +1130,17 @@ def signal_candidates_mid_short_1h_v21_dynamic_exit_study(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -1057,6 +1195,17 @@ def signal_candidates_mid_short_1h_volume_safe_shadow(
 ):
     normalized_limit = max(1, min(limit, 150))
     normalized_min_sample = max(1, min(min_sample, 100))
+    artifact_payload = _default_signal_research_snapshot(
+        MID_SHORT_VOLUME_SAFE_1H_FILE,
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        expected_min_sample=20,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     cache_key = (
         bool(include_watch_only),
         bool(position_lock),
@@ -2209,6 +2358,41 @@ def _default_forward_integrity_snapshot(
     try:
         service = SignalPerformanceSnapshotService()
         return service.forward_integrity_1h(limit=limit) if timeframe == "1h" else service.forward_integrity(limit=limit)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _default_signal_quality_snapshot(
+    *,
+    include_watch_only: bool,
+    position_lock: bool,
+    stage: str | None,
+    timeframe: str | None,
+    min_sample: int,
+    limit: int,
+) -> dict | None:
+    if include_watch_only or not position_lock or stage or timeframe or min_sample != 5:
+        return None
+    try:
+        return SignalPerformanceSnapshotService().quality_lab(limit=limit)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _default_signal_research_snapshot(
+    filename: str,
+    *,
+    include_watch_only: bool,
+    position_lock: bool,
+    min_sample: int,
+    expected_min_sample: int,
+    limit: int,
+    extra_default: bool = True,
+) -> dict | None:
+    if include_watch_only or not position_lock or min_sample != expected_min_sample or not extra_default:
+        return None
+    try:
+        return SignalPerformanceSnapshotService().research_snapshot(filename, limit=limit)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 

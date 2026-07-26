@@ -10,9 +10,21 @@ from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.signal_performance_snapshot import (
     FORWARD_INTEGRITY_FILE,
     FORWARD_INTEGRITY_1H_FILE,
+    MID_SHORT_ENTRY_CONFIRMATION_1H_FILE,
+    MID_SHORT_FAILURE_ANATOMY_1H_FILE,
     MID_SHORT_FILTER_COMBO_1H_FILE,
+    MID_SHORT_SECOND_FILTER_1H_FILE,
+    MID_SHORT_SHADOW_FORWARD_1H_FILE,
+    MID_SHORT_STRUCTURE_ZONE_1H_FILE,
+    MID_SHORT_TAKER_SELL_DEEP_DIVE_1H_FILE,
+    MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE,
+    MID_SHORT_V21_STRUCTURE_EXIT_1H_FILE,
+    MID_SHORT_V21_STRUCTURE_INTERACTION_1H_FILE,
+    MID_SHORT_VOLUME_SAFE_1H_FILE,
+    MID_SHORT_WRONG_DIRECTION_DEEP_DIVE_1H_FILE,
     PERFORMANCE_FILE,
     PERFORMANCE_1H_FILE,
+    QUALITY_LAB_FILE,
     SignalPerformanceSnapshotRunner,
     SignalPerformanceSnapshotService,
 )
@@ -41,9 +53,21 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert result["performance_1h_items"] == 2
     assert (tmp_path / PERFORMANCE_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
+    assert (tmp_path / QUALITY_LAB_FILE).exists()
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_SHADOW_FORWARD_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_FAILURE_ANATOMY_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_SECOND_FILTER_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_TAKER_SELL_DEEP_DIVE_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_WRONG_DIRECTION_DEEP_DIVE_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_ENTRY_CONFIRMATION_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_STRUCTURE_ZONE_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_V21_STRUCTURE_INTERACTION_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_V21_STRUCTURE_EXIT_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_VOLUME_SAFE_1H_FILE).exists()
     assert not (tmp_path / f"{PERFORMANCE_FILE}.tmp").exists()
 
     service = SignalPerformanceSnapshotService(artifact_dir=tmp_path)
@@ -51,10 +75,12 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     performance_1h = service.performance_1h(limit=1)
     integrity = service.forward_integrity(limit=1)
     integrity_1h = service.forward_integrity_1h(limit=1)
+    quality_lab = service.quality_lab(limit=1)
     one_hour_filter = service.one_hour_filter_candidate_study(min_sample=1, limit=5)
     one_hour_walk_forward = service.one_hour_walk_forward_study(min_sample=1, limit=5)
     one_hour_v4_shadow = service.one_hour_v4_shadow_monitor(min_sample=1, limit=5)
     mid_short_combo = service.mid_short_filter_combination_1h(limit=5)
+    mid_short_dynamic_exit = service.research_snapshot(MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE, limit=5)
     baseline = service.mid_long_1h_baseline(limit=5)
     v3_filter_map = service.v3_shadow_filter_map()
 
@@ -70,6 +96,8 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert integrity["cache"]["source"] == "artifact_snapshot"
     assert integrity["snapshot"]["filename"] == FORWARD_INTEGRITY_FILE
     assert integrity_1h["snapshot"]["filename"] == FORWARD_INTEGRITY_1H_FILE
+    assert quality_lab["cache"]["source"] == "artifact_snapshot"
+    assert quality_lab["snapshot"]["filename"] == QUALITY_LAB_FILE
     assert one_hour_filter["source"] == "signal_performance_snapshot_1h"
     assert one_hour_filter["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert one_hour_filter["filters"]["timeframe"] == "1h"
@@ -87,6 +115,9 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert mid_short_combo["artifact_type"] == "mid_short_1h_filter_combination_study"
     assert mid_short_combo["filters"]["stage"] == "MID_SHORT"
     assert "combination_rows" in mid_short_combo
+    assert mid_short_dynamic_exit["cache"]["source"] == "artifact_snapshot"
+    assert mid_short_dynamic_exit["snapshot"]["filename"] == MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE
+    assert mid_short_dynamic_exit["artifact_type"] == "mid_short_1h_v21_dynamic_exit_study"
     assert baseline["baseline_id"] == "MID_LONG_1H_V2_BASELINE"
     assert baseline["closed_only_snapshot"] is True
     assert baseline["snapshot_coverage"]["mid_long_1h_rows"] == 1
@@ -113,6 +144,7 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
         assert default_result["scope"] == "default"
         assert (tmp_path / PERFORMANCE_FILE).exists()
         assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
+        assert (tmp_path / QUALITY_LAB_FILE).exists()
         assert not (tmp_path / PERFORMANCE_1H_FILE).exists()
         assert not (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
 
@@ -127,6 +159,7 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE).exists()
     assert (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns == default_mtime
 
 
