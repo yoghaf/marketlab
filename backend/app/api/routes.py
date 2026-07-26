@@ -1101,6 +1101,15 @@ def signal_candidates_mid_short_1h_filter_combination_study(
         normalized_min_sample,
         normalized_limit,
     )
+    artifact_payload = _default_mid_short_filter_combo_snapshot(
+        include_watch_only=include_watch_only,
+        position_lock=position_lock,
+        min_sample=normalized_min_sample,
+        limit=normalized_limit,
+    )
+    if artifact_payload is not None:
+        return artifact_payload
+
     now = monotonic()
     with _MID_SHORT_FILTER_COMBO_CACHE_LOCK:
         cached = _MID_SHORT_FILTER_COMBO_CACHE.get(cache_key)
@@ -2200,6 +2209,21 @@ def _default_forward_integrity_snapshot(
     try:
         service = SignalPerformanceSnapshotService()
         return service.forward_integrity_1h(limit=limit) if timeframe == "1h" else service.forward_integrity(limit=limit)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _default_mid_short_filter_combo_snapshot(
+    *,
+    include_watch_only: bool,
+    position_lock: bool,
+    min_sample: int,
+    limit: int,
+) -> dict | None:
+    if include_watch_only or not position_lock or min_sample != 20:
+        return None
+    try:
+        return SignalPerformanceSnapshotService().mid_short_filter_combination_1h(limit=limit)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 

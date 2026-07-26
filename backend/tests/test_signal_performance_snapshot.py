@@ -10,6 +10,7 @@ from app.services.signal_forward_return_logger import OBSERVATION_EPOCH
 from app.services.signal_performance_snapshot import (
     FORWARD_INTEGRITY_FILE,
     FORWARD_INTEGRITY_1H_FILE,
+    MID_SHORT_FILTER_COMBO_1H_FILE,
     PERFORMANCE_FILE,
     PERFORMANCE_1H_FILE,
     SignalPerformanceSnapshotRunner,
@@ -42,6 +43,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
     assert not (tmp_path / f"{PERFORMANCE_FILE}.tmp").exists()
 
     service = SignalPerformanceSnapshotService(artifact_dir=tmp_path)
@@ -52,6 +54,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     one_hour_filter = service.one_hour_filter_candidate_study(min_sample=1, limit=5)
     one_hour_walk_forward = service.one_hour_walk_forward_study(min_sample=1, limit=5)
     one_hour_v4_shadow = service.one_hour_v4_shadow_monitor(min_sample=1, limit=5)
+    mid_short_combo = service.mid_short_filter_combination_1h(limit=5)
     baseline = service.mid_long_1h_baseline(limit=5)
     v3_filter_map = service.v3_shadow_filter_map()
 
@@ -79,6 +82,11 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert one_hour_v4_shadow["snapshot"]["filename"] == PERFORMANCE_1H_FILE
     assert one_hour_v4_shadow["study_scope"] == "one_hour_v4_shadow_forward_monitor_read_only"
     assert one_hour_v4_shadow["summary"]["read"] == "V4_NO_FILTER_SELECTED"
+    assert mid_short_combo["cache"]["source"] == "artifact_snapshot"
+    assert mid_short_combo["snapshot"]["filename"] == MID_SHORT_FILTER_COMBO_1H_FILE
+    assert mid_short_combo["artifact_type"] == "mid_short_1h_filter_combination_study"
+    assert mid_short_combo["filters"]["stage"] == "MID_SHORT"
+    assert "combination_rows" in mid_short_combo
     assert baseline["baseline_id"] == "MID_LONG_1H_V2_BASELINE"
     assert baseline["closed_only_snapshot"] is True
     assert baseline["snapshot_coverage"]["mid_long_1h_rows"] == 1
@@ -118,6 +126,7 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
     assert one_hour_result["scope"] == "one-hour"
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
+    assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
     assert (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns == default_mtime
 
 

@@ -28,9 +28,12 @@ PERFORMANCE_FILE = "performance_closed.json"
 FORWARD_INTEGRITY_FILE = "forward_integrity.json"
 PERFORMANCE_1H_FILE = "performance_closed_1h.json"
 FORWARD_INTEGRITY_1H_FILE = "forward_integrity_1h.json"
+MID_SHORT_FILTER_COMBO_1H_FILE = "mid_short_filter_combination_1h.json"
 DEFAULT_PERFORMANCE_LIMIT = 500
 DEFAULT_PERFORMANCE_1H_LIMIT = 5000
 DEFAULT_FORWARD_INTEGRITY_LIMIT = 200
+DEFAULT_MID_SHORT_FILTER_COMBO_LIMIT = 100
+DEFAULT_MID_SHORT_FILTER_COMBO_MIN_SAMPLE = 20
 
 
 class SignalPerformanceSnapshotRunner:
@@ -117,12 +120,30 @@ class SignalPerformanceSnapshotRunner:
             )
             _atomic_write_json(self.artifact_dir / PERFORMANCE_1H_FILE, json_safe(performance_1h))
             _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE, json_safe(forward_integrity_1h))
+            mid_short_filter_combo = _with_snapshot_meta(
+                service.mid_short_1h_filter_combination_study(
+                    epoch=epoch,
+                    include_watch_only=False,
+                    position_lock=True,
+                    min_sample=DEFAULT_MID_SHORT_FILTER_COMBO_MIN_SAMPLE,
+                    limit=DEFAULT_MID_SHORT_FILTER_COMBO_LIMIT,
+                ),
+                generated_at_utc=generated_at,
+                source="mid_short_filter_combination_snapshot_1h",
+                filename=MID_SHORT_FILTER_COMBO_1H_FILE,
+            )
+            _atomic_write_json(
+                self.artifact_dir / MID_SHORT_FILTER_COMBO_1H_FILE,
+                json_safe(mid_short_filter_combo),
+            )
             result.update(
                 {
                     "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
                     "forward_integrity_1h_path": str(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE),
+                    "mid_short_filter_combo_1h_path": str(self.artifact_dir / MID_SHORT_FILTER_COMBO_1H_FILE),
                     "performance_1h_items": len(performance_1h.get("items") or []),
                     "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
+                    "mid_short_filter_combo_1h_rows": len(mid_short_filter_combo.get("combination_rows") or []),
                 }
             )
 
@@ -286,6 +307,23 @@ class SignalPerformanceSnapshotService:
                 "No geometry override, timeout experiment, filter search, or promotion verdict is applied.",
             ],
         }
+
+    def mid_short_filter_combination_1h(self, *, limit: int) -> dict[str, Any]:
+        payload = self._read(MID_SHORT_FILTER_COMBO_1H_FILE)
+        return _slice_payload(
+            payload,
+            limit=max(1, limit),
+            list_keys=(
+                "combination_rows",
+                "candidate_rows",
+                "baseline_path_rows",
+                "top_filter_pass_taxonomy",
+                "top_filter_fail_taxonomy",
+                "top_filter_pass_signals",
+                "top_filter_fail_signals",
+                "top_filter_missing_signals",
+            ),
+        )
 
     def _read(self, filename: str) -> dict[str, Any]:
         path = self.artifact_dir / filename
