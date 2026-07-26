@@ -102,8 +102,8 @@ class SignalPerformanceSnapshotRunner:
         forward_integrity_limit: int = DEFAULT_FORWARD_INTEGRITY_LIMIT,
         scope: str = "all",
     ) -> dict[str, Any]:
-        if scope not in {"all", "default", "one-hour"}:
-            raise ValueError("scope must be 'all', 'default', or 'one-hour'")
+        if scope not in {"all", "default", "one-hour", "mid-short-research"}:
+            raise ValueError("scope must be 'all', 'default', 'one-hour', or 'mid-short-research'")
 
         service = SignalCandidatePerformanceService(self.db)
         generated_at = utcnow().isoformat()
@@ -200,17 +200,10 @@ class SignalPerformanceSnapshotRunner:
                 source="mid_short_filter_combination_snapshot_1h",
                 filename=MID_SHORT_FILTER_COMBO_1H_FILE,
             )
-            mid_short_research = _mid_short_research_payloads(
-                service,
-                epoch=epoch,
-                generated_at_utc=generated_at,
-            )
             _atomic_write_json(
                 self.artifact_dir / MID_SHORT_FILTER_COMBO_1H_FILE,
                 json_safe(mid_short_filter_combo),
             )
-            for filename, payload in mid_short_research.items():
-                _atomic_write_json(self.artifact_dir / filename, json_safe(payload))
             result.update(
                 {
                     "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
@@ -219,7 +212,21 @@ class SignalPerformanceSnapshotRunner:
                     "performance_1h_items": len(performance_1h.get("items") or []),
                     "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
                     "mid_short_filter_combo_1h_rows": len(mid_short_filter_combo.get("combination_rows") or []),
+                }
+            )
+
+        if scope == "mid-short-research":
+            mid_short_research = _mid_short_research_payloads(
+                service,
+                epoch=epoch,
+                generated_at_utc=generated_at,
+            )
+            for filename, payload in mid_short_research.items():
+                _atomic_write_json(self.artifact_dir / filename, json_safe(payload))
+            result.update(
+                {
                     "mid_short_research_artifacts": len(mid_short_research),
+                    "mid_short_research_files": sorted(mid_short_research.keys()),
                 }
             )
 

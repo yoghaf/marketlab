@@ -48,9 +48,16 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
             performance_limit=25,
             forward_integrity_limit=25,
         )
+        research_result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
+            performance_limit=25,
+            forward_integrity_limit=25,
+            scope="mid-short-research",
+        )
 
     assert result["performance_items"] == 3
     assert result["performance_1h_items"] == 2
+    assert research_result["scope"] == "mid-short-research"
+    assert research_result["mid_short_research_artifacts"] == 11
     assert (tmp_path / PERFORMANCE_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
     assert (tmp_path / QUALITY_LAB_FILE).exists()
@@ -159,6 +166,17 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
+    assert not (tmp_path / MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE).exists()
+    assert (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns == default_mtime
+
+    with Session() as db:
+        research_result = SignalPerformanceSnapshotRunner(db, artifact_dir=tmp_path).run(
+            performance_limit=1,
+            forward_integrity_limit=1,
+            scope="mid-short-research",
+        )
+
+    assert research_result["scope"] == "mid-short-research"
     assert (tmp_path / MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE).exists()
     assert (tmp_path / PERFORMANCE_FILE).stat().st_mtime_ns == default_mtime
 

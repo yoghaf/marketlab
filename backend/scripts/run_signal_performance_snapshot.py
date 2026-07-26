@@ -32,9 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forward-integrity-limit", type=int, default=DEFAULT_FORWARD_INTEGRITY_LIMIT)
     parser.add_argument(
         "--scope",
-        choices=("all", "default", "one-hour"),
+        choices=("all", "default", "one-hour", "mid-short-research"),
         default="all",
-        help="Refresh both snapshots, only the default live snapshot, or only the heavier 1h research snapshot.",
+        help=(
+            "Refresh operational snapshots, only default live, only 1h operational, "
+            "or the slower MID_SHORT research snapshot bundle."
+        ),
     )
     return parser.parse_args()
 
