@@ -4,7 +4,6 @@ import json
 from collections import Counter, defaultdict
 from copy import deepcopy
 from decimal import Decimal
-from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -788,37 +787,53 @@ def _mid_long_entry_combination_rows(
     baseline: dict[str, Any],
     min_sample: int,
 ) -> list[dict[str, Any]]:
-    specs = _mid_long_condition_specs()
+    specs_by_id = {str(spec["id"]): spec for spec in _mid_long_condition_specs()}
+    candidate_sets = (
+        ("FILL_GOOD", "RANGE_ATR_LE_15"),
+        ("FILL_GOOD", "ATR_EXTENSION_LE_1"),
+        ("FILL_GOOD", "TAKER_BUY_GE_053"),
+        ("FILL_GOOD", "VOLUME_08_20"),
+        ("FILL_GOOD", "COST_LE_020R"),
+        ("LONG_ZONE_STATE", "TAKER_BUY_GE_053"),
+        ("LONG_ZONE_STATE", "RANGE_ATR_LE_15"),
+        ("ZONE_ALIGNED", "TAKER_BUY_GE_053"),
+        ("TAKER_BUY_GE_053", "OI_Z_GE_2"),
+        ("TAKER_BUY_GE_053", "OI_CHANGE_POSITIVE"),
+        ("PRICE_RETURN_LE_2", "ATR_EXTENSION_LE_1"),
+        ("SPREAD_LE_003", "FILL_GOOD"),
+        ("FUNDING_NOT_CROWDED", "TAKER_BUY_GE_053"),
+        ("GLSR_GE_120", "TOP_POS_GE_130"),
+        ("FILL_GOOD", "RANGE_ATR_LE_15", "TAKER_BUY_GE_053"),
+        ("LONG_ZONE_STATE", "FILL_GOOD", "TAKER_BUY_GE_053"),
+    )
     rows: list[dict[str, Any]] = []
-    # Keep this endpoint request-time safe. Single and pair filters are enough
-    # for baseline triage; deeper combinations belong in an offline lab runner.
-    for size in (1, 2):
-        for selected_specs in combinations(specs, size):
-            required_fields = tuple(
-                sorted({field for spec in selected_specs for field in spec["required_fields"]})
-            )
-            selected: list[dict[str, Any]] = []
-            missing_data = 0
-            for item in items:
-                if any(_mid_long_evidence_value(item, field) is None for field in required_fields):
-                    missing_data += 1
-                    continue
-                if all(spec["predicate"](item) for spec in selected_specs):
-                    selected.append(item)
-            if not selected:
+    for spec_ids in candidate_sets:
+        selected_specs = tuple(specs_by_id[spec_id] for spec_id in spec_ids if spec_id in specs_by_id)
+        required_fields = tuple(
+            sorted({field for spec in selected_specs for field in spec["required_fields"]})
+        )
+        selected: list[dict[str, Any]] = []
+        missing_data = 0
+        for item in items:
+            if any(_mid_long_evidence_value(item, field) is None for field in required_fields):
+                missing_data += 1
                 continue
-            row = _mid_long_perf_row(
-                "+".join(str(spec["id"]) for spec in selected_specs),
-                " + ".join(str(spec["label"]) for spec in selected_specs),
-                " AND ".join(str(spec["expression"]) for spec in selected_specs),
-                selected,
-                baseline=baseline,
-                required_fields=required_fields,
-                missing_data_count=missing_data,
-                min_sample=min_sample,
-            )
-            if int(row["closed_count"]) >= min_sample:
-                rows.append(row)
+            if all(spec["predicate"](item) for spec in selected_specs):
+                selected.append(item)
+        if not selected:
+            continue
+        row = _mid_long_perf_row(
+            "+".join(str(spec["id"]) for spec in selected_specs),
+            " + ".join(str(spec["label"]) for spec in selected_specs),
+            " AND ".join(str(spec["expression"]) for spec in selected_specs),
+            selected,
+            baseline=baseline,
+            required_fields=required_fields,
+            missing_data_count=missing_data,
+            min_sample=min_sample,
+        )
+        if int(row["closed_count"]) >= min_sample:
+            rows.append(row)
     rows.sort(
         key=lambda row: (
             _mid_long_verdict_rank(str(row.get("verdict"))),
