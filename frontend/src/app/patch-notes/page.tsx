@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-26",
+    version: "LAB-RESET-02",
+    title: "MID_LONG 1h Baseline Research Page",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Merapi ulang halaman MID_LONG 1h agar fokus ke baseline V2, evidence TP vs SL, dan ranking kombinasi entry yang transparan.",
+    changes: [
+      "Endpoint baseline MID_LONG 1h sekarang menambahkan evidence comparison, structure-zone breakdown, fill-quality breakdown, dan entry-combination ranking dari snapshot 1h.",
+      "Distribusi RR dibulatkan menjadi bucket bersih seperti 1.5R dan 2R, sehingga angka precision noise panjang tidak lagi membingungkan.",
+      "Halaman /mid-long-research-study menjelaskan fungsi baseline, masalah utama TP/SL, kombinasi evidence yang layak diteliti, dan recent closed signal.",
+      "Semua output tetap read-only; tidak ada perubahan Signal Factory, scanner decision, threshold, SL/TP, outcome logic, atau execution."
+    ],
+    impact: "MID_LONG 1h sekarang punya titik riset yang rapi: kita bisa melihat data mana yang memisahkan TP dan SL sebelum membuat filter V2.1 baru.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Research" },
+      { href: "/signal-performance?stage=MID_LONG&timeframe=1h", label: "Open Signal History" }
+    ]
+  },
+  {
     date: "2026-07-22",
     version: "LAB-RESET-01",
     title: "MID_LONG 1h Baseline Reset",

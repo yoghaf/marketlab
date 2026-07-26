@@ -137,6 +137,14 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert baseline["aggregate"]["tp_count"] == 1
     assert baseline["filters"]["position_lock"] is True
     assert baseline["filters"]["result_status"] == "closed"
+    assert baseline["rr_distribution"] == {"1.5R": 1}
+    assert baseline["research_summary"]["read"] in {
+        "BASELINE_POSITIVE",
+        "BASELINE_WEAK_SL_DOMINANT",
+        "BASELINE_MIXED",
+    }
+    assert "evidence_comparison" in baseline
+    assert "entry_combination_ranking" in baseline
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

@@ -3736,6 +3736,26 @@ export type MidLongBaselineResponse = {
   };
   latest_evaluation_candle_time?: string | null;
   aggregate: SignalPerformanceResponse["aggregate"];
+  research_summary?: {
+    scope: string;
+    method: string;
+    min_sample: number;
+    closed_count: number;
+    tp_count: number;
+    sl_count: number;
+    winrate_pct?: string | number | null;
+    realistic_total_r_closed?: string | number | null;
+    realistic_avg_r_closed?: string | number | null;
+    median_realistic_r_closed?: string | number | null;
+    max_realistic_drawdown_r?: string | number | null;
+    read: string;
+  };
+  evidence_comparison?: MidLongEvidenceComparisonRow[];
+  structure_breakdown?: MidLongEntryCombinationRow[];
+  primary_zone_breakdown?: MidLongEntryCombinationRow[];
+  fill_quality_breakdown?: MidLongEntryCombinationRow[];
+  entry_combination_ranking?: MidLongEntryCombinationRow[];
+  entry_combination_worst?: MidLongEntryCombinationRow[];
   rr_distribution: Record<string, number>;
   strategy_distribution: Record<string, number>;
   confidence_distribution: Record<string, number>;
@@ -3746,6 +3766,56 @@ export type MidLongBaselineResponse = {
     generated_at_utc?: string | null;
   } | null;
   guardrails: string[];
+};
+
+export type MidLongEvidenceComparisonRow = {
+  field: string;
+  label: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  both_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  delta_tp_minus_sl?: string | number | null;
+  quality_flag: string;
+};
+
+export type MidLongEntryCombinationRow = {
+  filter_id: string;
+  label: string;
+  expression: string;
+  required_fields?: string[];
+  missing_data_count?: number;
+  sample_count: number;
+  sample_retention_pct?: string | number | null;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count?: number;
+  winrate_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  ideal_total_r_closed?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  median_realistic_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count?: number | null;
+  top_symbol_share_pct?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  winrate_delta_vs_baseline?: string | number | null;
+  sl_share_delta_vs_baseline?: string | number | null;
+  max_drawdown_delta_vs_baseline?: string | number | null;
+  verdict: string;
+  note: string;
 };
 
 
