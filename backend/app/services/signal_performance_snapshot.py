@@ -790,7 +790,9 @@ def _mid_long_entry_combination_rows(
 ) -> list[dict[str, Any]]:
     specs = _mid_long_condition_specs()
     rows: list[dict[str, Any]] = []
-    for size in (1, 2, 3):
+    # Keep this endpoint request-time safe. Single and pair filters are enough
+    # for baseline triage; deeper combinations belong in an offline lab runner.
+    for size in (1, 2):
         for selected_specs in combinations(specs, size):
             required_fields = tuple(
                 sorted({field for spec in selected_specs for field in spec["required_fields"]})
