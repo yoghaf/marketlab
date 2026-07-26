@@ -756,6 +756,10 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
             "read": _mid_long_baseline_read(baseline),
         },
         "evidence_comparison": _mid_long_evidence_comparison(items, min_sample=20),
+        "entry_anatomy_summary": _mid_long_entry_anatomy_summary(items, baseline=baseline),
+        "outcome_entry_profiles": _mid_long_outcome_entry_profiles(items),
+        "entry_area_anatomy": _mid_long_entry_area_anatomy(items, baseline=baseline, min_sample=20),
+        "path_anatomy": _mid_long_path_anatomy(items, baseline=baseline, min_sample=20),
         "structure_breakdown": _mid_long_bucket_rows(items, key="structure_zone_status", min_sample=20),
         "primary_zone_breakdown": _mid_long_bucket_rows(items, key="structure_zone_primary_state", min_sample=20),
         "fill_quality_breakdown": _mid_long_bucket_rows(items, key="realistic_fill_quality", min_sample=20),
@@ -1148,6 +1152,371 @@ def _mid_long_evidence_flag(*, tp_count: int, sl_count: int, delta: Decimal | No
     if abs(delta) < Decimal("0.0001"):
         return "NO_CLEAR_GAP"
     return "TP_HIGHER" if delta > 0 else "SL_HIGHER"
+
+
+MID_LONG_ANATOMY_EVIDENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("price_return", "Price return %"),
+    ("volume_ratio_vs_lookback", "Volume vs avg"),
+    ("kline_taker_buy_ratio", "Taker buy ratio"),
+    ("oi_change_pct", "OI change %"),
+    ("oi_zscore", "OI z-score"),
+    ("range_ratio_vs_atr", "Range / ATR"),
+    ("atr_extension_normalized", "ATR extension"),
+    ("funding_percentile_30d", "Funding percentile"),
+    ("futures_spread_pct", "Futures spread %"),
+    ("global_long_short_ratio", "Global L/S ratio"),
+    ("top_trader_position_ratio", "Top trader position"),
+)
+
+
+def _mid_long_entry_anatomy_summary(items: list[dict[str, Any]], *, baseline: dict[str, Any]) -> dict[str, Any]:
+    tp_items = [item for item in items if item.get("result_status") == "TP_HIT"]
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    tp_area = _mid_long_dominant_area(tp_items)
+    sl_area = _mid_long_dominant_area(sl_items)
+    zone_rows = _mid_long_entry_area_anatomy(items, baseline=baseline, min_sample=20)
+    best_zone = max(
+        zone_rows,
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+        ),
+        default=None,
+    )
+    worst_zone = min(
+        zone_rows,
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+        ),
+        default=None,
+    )
+    return {
+        "question": "Where do MID_LONG 1h winners and losers enter, and what evidence profile separates them?",
+        "read": _mid_long_entry_anatomy_read(baseline, best_zone=best_zone, worst_zone=worst_zone),
+        "dominant_tp_area": tp_area,
+        "dominant_sl_area": sl_area,
+        "best_area": _mid_long_area_summary(best_zone),
+        "worst_area": _mid_long_area_summary(worst_zone),
+        "hypothesis": _mid_long_entry_anatomy_hypothesis(best_zone=best_zone, worst_zone=worst_zone),
+        "guardrail": "Read-only anatomy. This does not change Signal Factory, scanner, TP/SL, or execution.",
+    }
+
+
+def _mid_long_entry_anatomy_read(
+    baseline: dict[str, Any],
+    *,
+    best_zone: dict[str, Any] | None,
+    worst_zone: dict[str, Any] | None,
+) -> str:
+    realistic_total = _decimal_or_zero_snapshot(baseline.get("realistic_total_r_closed"))
+    if realistic_total >= 0:
+        return "BASELINE_NOT_CURRENTLY_BAD"
+    if worst_zone and str(worst_zone.get("structure_zone_status") or "") == "ZONE_NEUTRAL":
+        return "ZONE_NEUTRAL_DAMAGE_DOMINANT"
+    if best_zone and str(best_zone.get("structure_zone_status") or "") == "ZONE_ALIGNED":
+        return "ZONE_ALIGNMENT_IS_PRIMARY_CLUE"
+    return "ENTRY_AREA_AND_EVIDENCE_MIXED"
+
+
+def _mid_long_entry_anatomy_hypothesis(
+    *,
+    best_zone: dict[str, Any] | None,
+    worst_zone: dict[str, Any] | None,
+) -> str:
+    best_status = str((best_zone or {}).get("structure_zone_status") or "")
+    worst_status = str((worst_zone or {}).get("structure_zone_status") or "")
+    if best_status == "ZONE_ALIGNED" and worst_status == "ZONE_NEUTRAL":
+        return "MID_LONG likely needs structural confirmation; neutral-range long entries appear to carry most damage."
+    if worst_status == "ZONE_CONFLICT":
+        return "MID_LONG losses are concentrated where structure conflicts with the long setup."
+    return "No single entry-area cause is isolated yet; keep reading area plus evidence together."
+
+
+def _mid_long_area_summary(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "area_id": row.get("area_id"),
+        "label": row.get("label"),
+        "closed_count": row.get("closed_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "note": row.get("note"),
+    }
+
+
+def _mid_long_outcome_entry_profiles(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for status, label in (("TP_HIT", "Winners / TP"), ("SL_HIT", "Losers / SL")):
+        status_items = [item for item in items if item.get("result_status") == status]
+        rows.append(
+            {
+                "result_status": status,
+                "label": label,
+                "sample_count": len(status_items),
+                "dominant_area": _mid_long_dominant_area(status_items),
+                "evidence_medians": _mid_long_evidence_medians(status_items),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_values(status_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_values(status_items, "mae_r")),
+                "median_realistic_r": _median_decimal_snapshot(_mid_long_item_values(status_items, "realistic_realized_r")),
+            }
+        )
+    return rows
+
+
+def _mid_long_dominant_area(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not items:
+        return None
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_area_id(item)].append(item)
+    area_id, area_items = max(grouped.items(), key=lambda pair: len(pair[1]))
+    example = area_items[0]
+    return {
+        "area_id": area_id,
+        "label": _mid_long_area_label(example),
+        "structure_zone_status": str(example.get("structure_zone_status") or "UNKNOWN"),
+        "primary_state": str(example.get("structure_zone_primary_state") or "UNKNOWN"),
+        "context_status": str(example.get("structure_zone_context_status") or "UNKNOWN"),
+        "count": len(area_items),
+        "share_pct": _pct_decimal(len(area_items), len(items)),
+    }
+
+
+def _mid_long_entry_area_anatomy(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_area_id(item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for area_id, area_items in grouped.items():
+        if len(area_items) < min_sample:
+            continue
+        example = area_items[0]
+        row = _mid_long_perf_row(
+            area_id,
+            _mid_long_area_label(example),
+            _mid_long_area_expression(example),
+            area_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "area_id": area_id,
+                "structure_zone_status": str(example.get("structure_zone_status") or "UNKNOWN"),
+                "primary_state": str(example.get("structure_zone_primary_state") or "UNKNOWN"),
+                "context_status": str(example.get("structure_zone_context_status") or "UNKNOWN"),
+                "nearest_support_distance_atr_median": _median_decimal_snapshot(
+                    _mid_long_item_values(area_items, "structure_zone_nearest_support_distance_atr")
+                ),
+                "nearest_resistance_distance_atr_median": _median_decimal_snapshot(
+                    _mid_long_item_values(area_items, "structure_zone_nearest_resistance_distance_atr")
+                ),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_values(area_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_values(area_items, "mae_r")),
+                "evidence_medians": _mid_long_evidence_medians(area_items),
+                "tp_evidence_medians": _mid_long_evidence_medians(
+                    [item for item in area_items if item.get("result_status") == "TP_HIT"]
+                ),
+                "sl_evidence_medians": _mid_long_evidence_medians(
+                    [item for item in area_items if item.get("result_status") == "SL_HIT"]
+                ),
+            }
+        )
+        row["note"] = _mid_long_area_note(row)
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_path_anatomy(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_path_bucket(item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for bucket, bucket_items in grouped.items():
+        if len(bucket_items) < min_sample:
+            continue
+        row = _mid_long_perf_row(
+            bucket,
+            _mid_long_path_label(bucket),
+            _mid_long_path_expression(bucket),
+            bucket_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "path_bucket": bucket,
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_values(bucket_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_values(bucket_items, "mae_r")),
+                "dominant_area": _mid_long_dominant_area(bucket_items),
+                "evidence_medians": _mid_long_evidence_medians(bucket_items),
+            }
+        )
+        row["note"] = _mid_long_path_note(bucket)
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_area_id(item: dict[str, Any]) -> str:
+    return "|".join(
+        (
+            str(item.get("structure_zone_status") or "UNKNOWN"),
+            str(item.get("structure_zone_primary_state") or "UNKNOWN"),
+            str(item.get("structure_zone_context_status") or "UNKNOWN"),
+        )
+    )
+
+
+def _mid_long_area_label(item: dict[str, Any]) -> str:
+    return " / ".join(
+        (
+            str(item.get("structure_zone_status") or "UNKNOWN"),
+            str(item.get("structure_zone_primary_state") or "UNKNOWN"),
+            str(item.get("structure_zone_context_status") or "UNKNOWN"),
+        )
+    )
+
+
+def _mid_long_area_expression(item: dict[str, Any]) -> str:
+    return (
+        f"structure_zone_status == {item.get('structure_zone_status') or 'UNKNOWN'}; "
+        f"primary == {item.get('structure_zone_primary_state') or 'UNKNOWN'}; "
+        f"context == {item.get('structure_zone_context_status') or 'UNKNOWN'}"
+    )
+
+
+def _mid_long_area_note(row: dict[str, Any]) -> str:
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    status = str(row.get("structure_zone_status") or "")
+    if total >= 0 and status == "ZONE_ALIGNED":
+        return "Area ini paling layak dibedah lanjut: struktur mendukung dan damage rendah/positif."
+    if total < 0 and status == "ZONE_NEUTRAL":
+        return "Area ini kandidat penyebab utama loss: long masuk tanpa support/resistance interaction jelas."
+    if total < 0 and status == "ZONE_CONFLICT":
+        return "Area ini berlawanan dengan konteks struktur; jangan dipromosikan tanpa filter tambahan."
+    if total < 0:
+        return "Masih negatif; perlu lihat evidence dan path setelah entry."
+    return "Positif secara sample ini, tapi tetap read-only sampai divalidasi waktu."
+
+
+def _mid_long_path_bucket(item: dict[str, Any]) -> str:
+    status = str(item.get("result_status") or "UNKNOWN")
+    mfe = _decimal_or_zero_snapshot(item.get("mfe_r"))
+    mae = _decimal_or_zero_snapshot(item.get("mae_r"))
+    if status == "TP_HIT":
+        if mae <= Decimal("-0.75"):
+            return "TP_AFTER_DEEP_PULLBACK"
+        if mae <= Decimal("-0.50"):
+            return "TP_AFTER_PULLBACK"
+        return "TP_CLEAN_OR_SHALLOW_PULLBACK"
+    if status == "SL_HIT":
+        if mfe >= Decimal("1.25"):
+            return "SL_AFTER_STRONG_PROFIT"
+        if mfe >= Decimal("0.75"):
+            return "SL_AFTER_PARTIAL_PROFIT"
+        if mfe >= Decimal("0.25"):
+            return "SL_WEAK_FOLLOW_THROUGH"
+        return "SL_NO_FOLLOW_THROUGH"
+    if status == "BOTH_HIT_SAME_CANDLE":
+        return "BOTH_SAME_CANDLE"
+    return status
+
+
+def _mid_long_path_label(bucket: str) -> str:
+    return {
+        "TP_AFTER_DEEP_PULLBACK": "TP after deep pullback",
+        "TP_AFTER_PULLBACK": "TP after pullback",
+        "TP_CLEAN_OR_SHALLOW_PULLBACK": "TP clean / shallow pullback",
+        "SL_AFTER_STRONG_PROFIT": "SL after strong profit",
+        "SL_AFTER_PARTIAL_PROFIT": "SL after partial profit",
+        "SL_WEAK_FOLLOW_THROUGH": "SL weak follow-through",
+        "SL_NO_FOLLOW_THROUGH": "SL no follow-through",
+        "BOTH_SAME_CANDLE": "Both hit same candle",
+    }.get(bucket, bucket)
+
+
+def _mid_long_path_expression(bucket: str) -> str:
+    return {
+        "TP_AFTER_DEEP_PULLBACK": "TP_HIT with MAE <= -0.75R before target",
+        "TP_AFTER_PULLBACK": "TP_HIT with -0.75R < MAE <= -0.50R",
+        "TP_CLEAN_OR_SHALLOW_PULLBACK": "TP_HIT with MAE > -0.50R",
+        "SL_AFTER_STRONG_PROFIT": "SL_HIT after MFE >= +1.25R",
+        "SL_AFTER_PARTIAL_PROFIT": "SL_HIT after +0.75R <= MFE < +1.25R",
+        "SL_WEAK_FOLLOW_THROUGH": "SL_HIT after +0.25R <= MFE < +0.75R",
+        "SL_NO_FOLLOW_THROUGH": "SL_HIT with MFE < +0.25R",
+        "BOTH_SAME_CANDLE": "TP and SL touched in the same candle",
+    }.get(bucket, bucket)
+
+
+def _mid_long_path_note(bucket: str) -> str:
+    return {
+        "SL_AFTER_STRONG_PROFIT": "Target/exit geometry may be too greedy for this subset.",
+        "SL_AFTER_PARTIAL_PROFIT": "There is follow-through, but not enough persistence; candidate for target/timeout study.",
+        "SL_WEAK_FOLLOW_THROUGH": "Weak continuation after entry; likely entry quality or regime issue.",
+        "SL_NO_FOLLOW_THROUGH": "Immediate failure bucket; likely wrong area/direction signal.",
+        "TP_AFTER_DEEP_PULLBACK": "Winning trades can tolerate deep pullback, so tighter stop may cut some winners.",
+        "TP_AFTER_PULLBACK": "Winning trades often need some room before target.",
+        "TP_CLEAN_OR_SHALLOW_PULLBACK": "Cleanest winner path; use as reference profile.",
+    }.get(bucket, "Path bucket for read-only anatomy.")
+
+
+def _mid_long_evidence_medians(items: list[dict[str, Any]]) -> dict[str, Any]:
+    medians: dict[str, Any] = {}
+    for field, _label in MID_LONG_ANATOMY_EVIDENCE_FIELDS:
+        medians[field] = _median_decimal_snapshot(
+            [
+                value
+                for item in items
+                if (value := _mid_long_evidence_value(item, field)) is not None
+            ]
+        )
+    medians["nearest_support_distance_atr"] = _median_decimal_snapshot(
+        _mid_long_item_values(items, "structure_zone_nearest_support_distance_atr")
+    )
+    medians["nearest_resistance_distance_atr"] = _median_decimal_snapshot(
+        _mid_long_item_values(items, "structure_zone_nearest_resistance_distance_atr")
+    )
+    return medians
+
+
+def _mid_long_item_values(items: list[dict[str, Any]], field: str) -> list[Decimal]:
+    values: list[Decimal] = []
+    for item in items:
+        value = _decimal_or_none_snapshot(item.get(field))
+        if value is not None:
+            values.append(value)
+    return values
 
 
 def _mid_long_bucket_rows(items: list[dict[str, Any]], *, key: str, min_sample: int) -> list[dict[str, Any]]:

@@ -145,6 +145,10 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     }
     assert "evidence_comparison" in baseline
     assert "entry_combination_ranking" in baseline
+    assert "entry_anatomy_summary" in baseline
+    assert "outcome_entry_profiles" in baseline
+    assert "entry_area_anatomy" in baseline
+    assert "path_anatomy" in baseline
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

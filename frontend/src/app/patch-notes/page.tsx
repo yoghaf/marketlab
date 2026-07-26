@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-26",
+    version: "LAB-RESET-03",
+    title: "MID_LONG 1h Entry Anatomy Study",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan anatomy study untuk menjawab mayoritas TP dan SL MID_LONG 1h masuk di area apa dan dengan profil data seperti apa.",
+    changes: [
+      "Endpoint baseline MID_LONG 1h sekarang menambahkan entry_anatomy_summary, outcome_entry_profiles, entry_area_anatomy, dan path_anatomy.",
+      "Halaman /mid-long-research-study menampilkan dominant area untuk TP dan SL, median evidence pemenang/pecundang, breakdown area entry, dan path setelah entry.",
+      "Path anatomy memisahkan SL yang langsung gagal, SL yang sempat profit dulu, TP clean, dan TP yang butuh pullback.",
+      "Semua output tetap read-only; tidak ada perubahan Signal Factory, scanner decision, threshold, SL/TP, outcome logic, atau execution."
+    ],
+    impact: "Kita sekarang bisa membedah apakah MID_LONG jelek karena salah area entry, entry telat, target terlalu jauh, atau evidence yang belum cukup memisahkan TP dan SL.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Anatomy" },
+      { href: "/signal-performance?stage=MID_LONG&timeframe=1h", label: "Open Signal History" }
+    ]
+  },
+  {
+    date: "2026-07-26",
     version: "LAB-RESET-02",
     title: "MID_LONG 1h Baseline Research Page",
     status: "LIVE",

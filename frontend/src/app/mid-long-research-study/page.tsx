@@ -7,8 +7,11 @@ import { SectionCard } from "@/components/SectionCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   MidLongBaselineResponse,
+  MidLongEntryAreaAnatomyRow,
   MidLongEntryCombinationRow,
   MidLongEvidenceComparisonRow,
+  MidLongOutcomeEntryProfileRow,
+  MidLongPathAnatomyRow,
   SignalPerformanceItem,
   fetchJson,
   fmtNumber,
@@ -38,6 +41,7 @@ export default async function MidLongBaselinePage({ searchParams }: { searchPara
   const aggregate = baseline?.aggregate;
   const coverage = baseline?.snapshot_coverage;
   const summary = baseline?.research_summary;
+  const anatomySummary = baseline?.entry_anatomy_summary;
 
   return (
     <div className="space-y-5">
@@ -99,6 +103,49 @@ export default async function MidLongBaselinePage({ searchParams }: { searchPara
             <MetricCard label="Median realistic" value={`${fmtSigned(summary?.median_realistic_r_closed)}R`} helper="Tengah distribusi" tone={toneFor(summary?.median_realistic_r_closed)} />
             <MetricCard label="Max DD" value={`${fmtSigned(summary?.max_realistic_drawdown_r)}R`} helper="Drawdown realistic" tone="warn" />
           </section>
+
+          {anatomySummary && (
+            <SectionCard
+              title="Entry anatomy answer"
+              description="Ringkasan langsung: mayoritas TP masuk area mana, mayoritas SL masuk area mana, dan hipotesis penyebab loss."
+            >
+              <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+                <Info label="Current read" value={humanFlag(anatomySummary.read)} helper={anatomySummary.question} />
+                <Info
+                  label="TP dominant area"
+                  value={anatomySummary.dominant_tp_area ? humanFlag(anatomySummary.dominant_tp_area.label) : "-"}
+                  helper={anatomySummary.dominant_tp_area ? `${anatomySummary.dominant_tp_area.count} TP rows (${formatPct(anatomySummary.dominant_tp_area.share_pct)})` : "No TP area"}
+                />
+                <Info
+                  label="SL dominant area"
+                  value={anatomySummary.dominant_sl_area ? humanFlag(anatomySummary.dominant_sl_area.label) : "-"}
+                  helper={anatomySummary.dominant_sl_area ? `${anatomySummary.dominant_sl_area.count} SL rows (${formatPct(anatomySummary.dominant_sl_area.share_pct)})` : "No SL area"}
+                />
+                <Info label="Hypothesis" value="Structure first" helper={anatomySummary.hypothesis} />
+              </div>
+            </SectionCard>
+          )}
+
+          <SectionCard
+            title="TP vs SL entry profile"
+            description="Mayoritas pemenang dan pecundang dibaca dari area entry serta median data actual di signal tersebut."
+          >
+            <OutcomeProfileTable rows={baseline.outcome_entry_profiles || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="Entry area anatomy"
+            description="Kelompokkan semua MID_LONG 1h berdasarkan status zona entry. Ini bagian utama untuk membaca apakah loss terkonsentrasi di tengah range, conflict, atau area lain."
+          >
+            <EntryAreaTable rows={baseline.entry_area_anatomy || []} />
+          </SectionCard>
+
+          <SectionCard
+            title="Path after entry"
+            description="Membedah perjalanan setelah entry: SL langsung gagal, sempat profit dulu, atau TP setelah pullback. Ini membantu tahu apakah problemnya arah, timing, atau target terlalu jauh."
+          >
+            <PathAnatomyTable rows={baseline.path_anatomy || []} />
+          </SectionCard>
 
           <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr_1fr]">
             <DistributionCard
@@ -199,6 +246,183 @@ function EvidenceTable({ rows, sampleTotal }: { rows: MidLongEvidenceComparisonR
       <div className="border-t border-line px-4 py-2 text-xs text-slate-500">
         Sample total: {sampleTotal}. Field dengan available rendah belum boleh dianggap kuat.
       </div>
+    </div>
+  );
+}
+
+function OutcomeProfileTable({ rows }: { rows: MidLongOutcomeEntryProfileRow[] }) {
+  if (!rows.length) {
+    return <div className="p-4"><EmptyState title="Outcome profile belum tersedia" detail="Snapshot belum memuat anatomy TP/SL." /></div>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Outcome</th>
+            <th>Sample</th>
+            <th>Dominant entry area</th>
+            <th>Price / volume</th>
+            <th>Taker / OI</th>
+            <th>Range / ATR</th>
+            <th>Funding / spread</th>
+            <th>MFE / MAE / R</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.result_status}>
+              <td><StatusBadge value={humanFlag(row.label)} /></td>
+              <td className="font-bold">{row.sample_count}</td>
+              <td>
+                <div className="font-semibold">{row.dominant_area ? humanFlag(row.dominant_area.label) : "-"}</div>
+                {row.dominant_area && <div className="text-xs text-slate-500">{row.dominant_area.count} rows / {formatPct(row.dominant_area.share_pct)}</div>}
+              </td>
+              <td>
+                <MetricLine label="Price" value={`${fmtSigned(evidence(row, "price_return"))}%`} />
+                <MetricLine label="Volume" value={`${fmtNumber(evidence(row, "volume_ratio_vs_lookback"))}x`} />
+              </td>
+              <td>
+                <MetricLine label="Buy" value={formatRatioPct(evidence(row, "kline_taker_buy_ratio"))} />
+                <MetricLine label="OI z" value={fmtNumber(evidence(row, "oi_zscore"))} />
+                <MetricLine label="OI %" value={`${fmtSigned(evidence(row, "oi_change_pct"))}%`} />
+              </td>
+              <td>
+                <MetricLine label="Range" value={`${fmtNumber(evidence(row, "range_ratio_vs_atr"))}x`} />
+                <MetricLine label="Ext" value={`${fmtNumber(evidence(row, "atr_extension_normalized"))}x`} />
+              </td>
+              <td>
+                <MetricLine label="Funding" value={`${fmtNumber(evidence(row, "funding_percentile_30d"))}`} />
+                <MetricLine label="Spread" value={`${fmtNumber(evidence(row, "futures_spread_pct"))}%`} />
+              </td>
+              <td>
+                <MetricLine label="MFE" value={`${fmtSigned(row.median_mfe_r)}R`} />
+                <MetricLine label="MAE" value={`${fmtSigned(row.median_mae_r)}R`} />
+                <MetricLine label="Real R" value={`${fmtSigned(row.median_realistic_r)}R`} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EntryAreaTable({ rows }: { rows: MidLongEntryAreaAnatomyRow[] }) {
+  if (!rows.length) {
+    return <div className="p-4"><EmptyState title="Entry area kosong" detail="Belum ada anatomy row dengan sample cukup." /></div>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Entry area</th>
+            <th>Sample</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg / median</th>
+            <th>Evidence median</th>
+            <th>TP vs SL clue</th>
+            <th>Path median</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.area_id}>
+              <td className="min-w-64">
+                <StatusBadge value={humanFlag(row.structure_zone_status)} />
+                <div className="mt-1 font-semibold">{humanFlag(row.primary_state)}</div>
+                <div className="text-xs text-slate-500">4h/context: {humanFlag(row.context_status)}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.closed_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.sample_retention_pct)} retained</div>
+              </td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R / {fmtSigned(row.median_realistic_r_closed)}R</td>
+              <td>
+                <MetricLine label="Price" value={`${fmtSigned(row.evidence_medians.price_return)}%`} />
+                <MetricLine label="Vol" value={`${fmtNumber(row.evidence_medians.volume_ratio_vs_lookback)}x`} />
+                <MetricLine label="Buy" value={formatRatioPct(row.evidence_medians.kline_taker_buy_ratio)} />
+                <MetricLine label="OI z" value={fmtNumber(row.evidence_medians.oi_zscore)} />
+              </td>
+              <td>
+                <MetricLine label="TP buy" value={formatRatioPct(row.tp_evidence_medians.kline_taker_buy_ratio)} />
+                <MetricLine label="SL buy" value={formatRatioPct(row.sl_evidence_medians.kline_taker_buy_ratio)} />
+                <MetricLine label="TP OI z" value={fmtNumber(row.tp_evidence_medians.oi_zscore)} />
+                <MetricLine label="SL OI z" value={fmtNumber(row.sl_evidence_medians.oi_zscore)} />
+              </td>
+              <td>
+                <MetricLine label="MFE" value={`${fmtSigned(row.median_mfe_r)}R`} />
+                <MetricLine label="MAE" value={`${fmtSigned(row.median_mae_r)}R`} />
+                <MetricLine label="Sup" value={`${fmtNumber(row.nearest_support_distance_atr_median)} ATR`} />
+                <MetricLine label="Res" value={`${fmtNumber(row.nearest_resistance_distance_atr_median)} ATR`} />
+              </td>
+              <td>
+                <StatusBadge value={humanFlag(row.verdict)} />
+                <div className="mt-1 max-w-80 text-xs leading-5 text-slate-600">{row.note}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PathAnatomyTable({ rows }: { rows: MidLongPathAnatomyRow[] }) {
+  if (!rows.length) {
+    return <div className="p-4"><EmptyState title="Path anatomy kosong" detail="Belum ada path bucket dengan sample cukup." /></div>;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>Sample</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>MFE / MAE</th>
+            <th>Dominant area</th>
+            <th>Evidence</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.path_bucket}>
+              <td>
+                <div className="font-bold">{humanFlag(row.label)}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>
+                <MetricLine label="MFE" value={`${fmtSigned(row.median_mfe_r)}R`} />
+                <MetricLine label="MAE" value={`${fmtSigned(row.median_mae_r)}R`} />
+              </td>
+              <td>
+                <div className="font-semibold">{row.dominant_area ? humanFlag(row.dominant_area.label) : "-"}</div>
+                {row.dominant_area && <div className="text-xs text-slate-500">{row.dominant_area.count} rows / {formatPct(row.dominant_area.share_pct)}</div>}
+              </td>
+              <td>
+                <MetricLine label="Price" value={`${fmtSigned(row.evidence_medians.price_return)}%`} />
+                <MetricLine label="Buy" value={formatRatioPct(row.evidence_medians.kline_taker_buy_ratio)} />
+                <MetricLine label="OI z" value={fmtNumber(row.evidence_medians.oi_zscore)} />
+              </td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -381,6 +605,19 @@ function Info({ label, value, helper }: { label: string; value: string; helper?:
   );
 }
 
+function MetricLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-36 justify-between gap-3 text-xs leading-5">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-ink">{value}</span>
+    </div>
+  );
+}
+
+function evidence(row: MidLongOutcomeEntryProfileRow, key: string): string | number | null | undefined {
+  return row.evidence_medians?.[key];
+}
+
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -401,6 +638,13 @@ function fmtSigned(value?: string | number | null): string {
 function formatPct(value?: string | number | null): string {
   if (value === null || value === undefined || value === "") return "-";
   return `${fmtNumber(value)}%`;
+}
+
+function formatRatioPct(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return String(value);
+  return `${fmtNumber(numeric * 100)}%`;
 }
 
 function toneFor(value?: string | number | null): "good" | "bad" | undefined {

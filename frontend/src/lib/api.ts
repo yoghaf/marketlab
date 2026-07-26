@@ -3751,6 +3751,19 @@ export type MidLongBaselineResponse = {
     read: string;
   };
   evidence_comparison?: MidLongEvidenceComparisonRow[];
+  entry_anatomy_summary?: {
+    question: string;
+    read: string;
+    dominant_tp_area?: MidLongDominantArea | null;
+    dominant_sl_area?: MidLongDominantArea | null;
+    best_area?: Record<string, unknown> | null;
+    worst_area?: Record<string, unknown> | null;
+    hypothesis: string;
+    guardrail: string;
+  };
+  outcome_entry_profiles?: MidLongOutcomeEntryProfileRow[];
+  entry_area_anatomy?: MidLongEntryAreaAnatomyRow[];
+  path_anatomy?: MidLongPathAnatomyRow[];
   structure_breakdown?: MidLongEntryCombinationRow[];
   primary_zone_breakdown?: MidLongEntryCombinationRow[];
   fill_quality_breakdown?: MidLongEntryCombinationRow[];
@@ -3785,6 +3798,49 @@ export type MidLongEvidenceComparisonRow = {
   sl_q3?: string | number | null;
   delta_tp_minus_sl?: string | number | null;
   quality_flag: string;
+};
+
+export type MidLongDominantArea = {
+  area_id: string;
+  label: string;
+  structure_zone_status: string;
+  primary_state: string;
+  context_status: string;
+  count: number;
+  share_pct?: string | number | null;
+};
+
+export type MidLongOutcomeEntryProfileRow = {
+  result_status: string;
+  label: string;
+  sample_count: number;
+  dominant_area?: MidLongDominantArea | null;
+  evidence_medians: Record<string, string | number | null>;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+};
+
+export type MidLongEntryAreaAnatomyRow = MidLongEntryCombinationRow & {
+  area_id: string;
+  structure_zone_status: string;
+  primary_state: string;
+  context_status: string;
+  nearest_support_distance_atr_median?: string | number | null;
+  nearest_resistance_distance_atr_median?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  evidence_medians: Record<string, string | number | null>;
+  tp_evidence_medians: Record<string, string | number | null>;
+  sl_evidence_medians: Record<string, string | number | null>;
+};
+
+export type MidLongPathAnatomyRow = MidLongEntryCombinationRow & {
+  path_bucket: string;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  dominant_area?: MidLongDominantArea | null;
+  evidence_medians: Record<string, string | number | null>;
 };
 
 export type MidLongEntryCombinationRow = {
