@@ -22,7 +22,9 @@ from app.services.signal_performance_snapshot import (
     MID_SHORT_V21_STRUCTURE_INTERACTION_1H_FILE,
     MID_SHORT_VOLUME_SAFE_1H_FILE,
     MID_SHORT_WRONG_DIRECTION_DEEP_DIVE_1H_FILE,
+    PERFORMANCE_COMPACT_FILE,
     PERFORMANCE_FILE,
+    PERFORMANCE_1H_COMPACT_FILE,
     PERFORMANCE_1H_FILE,
     QUALITY_LAB_FILE,
     SignalPerformanceSnapshotRunner,
@@ -59,9 +61,11 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert research_result["scope"] == "mid-short-research"
     assert research_result["mid_short_research_artifacts"] == 11
     assert (tmp_path / PERFORMANCE_FILE).exists()
+    assert (tmp_path / PERFORMANCE_COMPACT_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
     assert (tmp_path / QUALITY_LAB_FILE).exists()
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
+    assert (tmp_path / PERFORMANCE_1H_COMPACT_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_SHADOW_FORWARD_1H_FILE).exists()
@@ -93,10 +97,11 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
 
     assert performance["cache"]["source"] == "artifact_snapshot"
     assert performance["snapshot"]["read_model"] == "artifact_snapshot"
+    assert performance["snapshot"]["filename"] == PERFORMANCE_COMPACT_FILE
     assert performance["filters"]["limit"] == 1
     assert performance["aggregate"]["tp_count"] == 3
     assert len(performance["items"]) == 1
-    assert performance_1h["snapshot"]["filename"] == PERFORMANCE_1H_FILE
+    assert performance_1h["snapshot"]["filename"] == PERFORMANCE_1H_COMPACT_FILE
     assert performance_1h["filters"]["timeframe"] == "1h"
     assert performance_1h["aggregate"]["tp_count"] == 2
     assert len(performance_1h["items"]) == 1
@@ -150,6 +155,7 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
 
         assert default_result["scope"] == "default"
         assert (tmp_path / PERFORMANCE_FILE).exists()
+        assert (tmp_path / PERFORMANCE_COMPACT_FILE).exists()
         assert (tmp_path / FORWARD_INTEGRITY_FILE).exists()
         assert (tmp_path / QUALITY_LAB_FILE).exists()
         assert not (tmp_path / PERFORMANCE_1H_FILE).exists()
@@ -164,6 +170,7 @@ def test_signal_performance_snapshot_scopes_do_not_rewrite_unrequested_artifacts
 
     assert one_hour_result["scope"] == "one-hour"
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
+    assert (tmp_path / PERFORMANCE_1H_COMPACT_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
     assert not (tmp_path / MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE).exists()

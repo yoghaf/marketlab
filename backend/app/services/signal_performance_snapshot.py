@@ -25,8 +25,10 @@ from app.services.utils import json_safe, utcnow
 
 DEFAULT_SIGNAL_PERFORMANCE_SNAPSHOT_DIR = REPO_ROOT / "backend" / "artifacts" / "signal_performance" / "live"
 PERFORMANCE_FILE = "performance_closed.json"
+PERFORMANCE_COMPACT_FILE = "performance_closed_compact.json"
 FORWARD_INTEGRITY_FILE = "forward_integrity.json"
 PERFORMANCE_1H_FILE = "performance_closed_1h.json"
+PERFORMANCE_1H_COMPACT_FILE = "performance_closed_1h_compact.json"
 FORWARD_INTEGRITY_1H_FILE = "forward_integrity_1h.json"
 MID_SHORT_FILTER_COMBO_1H_FILE = "mid_short_filter_combination_1h.json"
 QUALITY_LAB_FILE = "quality_lab.json"
@@ -43,6 +45,7 @@ MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE = "mid_short_v21_dynamic_exit_1h.json"
 MID_SHORT_VOLUME_SAFE_1H_FILE = "mid_short_volume_safe_1h.json"
 DEFAULT_PERFORMANCE_LIMIT = 500
 DEFAULT_PERFORMANCE_1H_LIMIT = 5000
+DEFAULT_PERFORMANCE_COMPACT_LIMIT = 100
 DEFAULT_FORWARD_INTEGRITY_LIMIT = 200
 DEFAULT_MID_SHORT_FILTER_COMBO_LIMIT = 100
 DEFAULT_MID_SHORT_FILTER_COMBO_MIN_SAMPLE = 20
@@ -150,14 +153,30 @@ class SignalPerformanceSnapshotRunner:
                 filename=QUALITY_LAB_FILE,
             )
             _atomic_write_json(self.artifact_dir / PERFORMANCE_FILE, json_safe(performance))
+            _atomic_write_json(
+                self.artifact_dir / PERFORMANCE_COMPACT_FILE,
+                json_safe(
+                    _compact_snapshot_payload(
+                        performance,
+                        filename=PERFORMANCE_COMPACT_FILE,
+                        limit=DEFAULT_PERFORMANCE_COMPACT_LIMIT,
+                        list_keys=("items",),
+                    )
+                ),
+            )
             _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_FILE, json_safe(forward_integrity))
             _atomic_write_json(self.artifact_dir / QUALITY_LAB_FILE, json_safe(quality_lab))
             result.update(
                 {
                     "performance_path": str(self.artifact_dir / PERFORMANCE_FILE),
+                    "performance_compact_path": str(self.artifact_dir / PERFORMANCE_COMPACT_FILE),
                     "forward_integrity_path": str(self.artifact_dir / FORWARD_INTEGRITY_FILE),
                     "quality_lab_path": str(self.artifact_dir / QUALITY_LAB_FILE),
                     "performance_items": len(performance.get("items") or []),
+                    "performance_compact_items": min(
+                        len(performance.get("items") or []),
+                        DEFAULT_PERFORMANCE_COMPACT_LIMIT,
+                    ),
                     "forward_integrity_items": len(forward_integrity.get("items") or []),
                     "quality_lab_items": len(quality_lab.get("best_signals") or []),
                 }
@@ -187,6 +206,17 @@ class SignalPerformanceSnapshotRunner:
                 filename=FORWARD_INTEGRITY_1H_FILE,
             )
             _atomic_write_json(self.artifact_dir / PERFORMANCE_1H_FILE, json_safe(performance_1h))
+            _atomic_write_json(
+                self.artifact_dir / PERFORMANCE_1H_COMPACT_FILE,
+                json_safe(
+                    _compact_snapshot_payload(
+                        performance_1h,
+                        filename=PERFORMANCE_1H_COMPACT_FILE,
+                        limit=DEFAULT_PERFORMANCE_COMPACT_LIMIT,
+                        list_keys=("items",),
+                    )
+                ),
+            )
             _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE, json_safe(forward_integrity_1h))
             mid_short_filter_combo = _with_snapshot_meta(
                 service.mid_short_1h_filter_combination_study(
@@ -207,9 +237,14 @@ class SignalPerformanceSnapshotRunner:
             result.update(
                 {
                     "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
+                    "performance_1h_compact_path": str(self.artifact_dir / PERFORMANCE_1H_COMPACT_FILE),
                     "forward_integrity_1h_path": str(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE),
                     "mid_short_filter_combo_1h_path": str(self.artifact_dir / MID_SHORT_FILTER_COMBO_1H_FILE),
                     "performance_1h_items": len(performance_1h.get("items") or []),
+                    "performance_1h_compact_items": min(
+                        len(performance_1h.get("items") or []),
+                        DEFAULT_PERFORMANCE_COMPACT_LIMIT,
+                    ),
                     "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
                     "mid_short_filter_combo_1h_rows": len(mid_short_filter_combo.get("combination_rows") or []),
                 }
@@ -238,12 +273,22 @@ class SignalPerformanceSnapshotService:
         self.artifact_dir = artifact_dir
 
     def performance(self, *, limit: int) -> dict[str, Any]:
-        payload = self._read(PERFORMANCE_FILE)
-        return _slice_payload(payload, limit=max(1, limit), list_keys=("items",))
+        normalized_limit = max(1, limit)
+        payload = self._read_performance_payload(
+            compact_filename=PERFORMANCE_COMPACT_FILE,
+            full_filename=PERFORMANCE_FILE,
+            limit=normalized_limit,
+        )
+        return _slice_payload(payload, limit=normalized_limit, list_keys=("items",))
 
     def performance_1h(self, *, limit: int) -> dict[str, Any]:
-        payload = self._read(PERFORMANCE_1H_FILE)
-        return _slice_payload(payload, limit=max(1, limit), list_keys=("items",))
+        normalized_limit = max(1, limit)
+        payload = self._read_performance_payload(
+            compact_filename=PERFORMANCE_1H_COMPACT_FILE,
+            full_filename=PERFORMANCE_1H_FILE,
+            limit=normalized_limit,
+        )
+        return _slice_payload(payload, limit=normalized_limit, list_keys=("items",))
 
     def forward_integrity(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(FORWARD_INTEGRITY_FILE)
@@ -421,6 +466,11 @@ class SignalPerformanceSnapshotService:
         if not path.exists():
             raise FileNotFoundError(f"Signal performance snapshot not found: {path}")
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _read_performance_payload(self, *, compact_filename: str, full_filename: str, limit: int) -> dict[str, Any]:
+        compact_path = self.artifact_dir / compact_filename
+        filename = compact_filename if limit <= DEFAULT_PERFORMANCE_COMPACT_LIMIT and compact_path.exists() else full_filename
+        return self._read(filename)
 
 
 def _mid_short_research_payloads(
@@ -629,6 +679,21 @@ def _slice_payload(payload: dict[str, Any], *, limit: int, list_keys: tuple[str,
         filters["limit"] = limit
     sliced["cache"] = {"hit": True, "source": "artifact_snapshot", "ttl_seconds": None}
     return sliced
+
+
+def _compact_snapshot_payload(
+    payload: dict[str, Any],
+    *,
+    filename: str,
+    limit: int,
+    list_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    compact = _slice_payload(payload, limit=limit, list_keys=list_keys)
+    snapshot = compact.get("snapshot")
+    if isinstance(snapshot, dict):
+        snapshot["filename"] = filename
+        snapshot["compact_limit"] = limit
+    return compact
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
