@@ -3750,6 +3750,7 @@ export type MidLongBaselineResponse = {
     max_realistic_drawdown_r?: string | number | null;
     read: string;
   };
+  definition_audit?: MidLongDefinitionAudit;
   evidence_comparison?: MidLongEvidenceComparisonRow[];
   entry_anatomy_summary?: {
     question: string;
@@ -3779,6 +3780,94 @@ export type MidLongBaselineResponse = {
     generated_at_utc?: string | null;
   } | null;
   guardrails: string[];
+};
+
+export type MidLongDefinitionAudit = {
+  scope: string;
+  method: string;
+  min_sample: number;
+  thresholds: Record<string, string>;
+  axis_specs: Record<string, { label: string; question: string }>;
+  layer_decomposition: MidLongDefinitionLayerRow[];
+  path_decision_summary: {
+    rows: MidLongPathDecisionRow[];
+    instant_sl_count: number;
+    partial_fail_count: number;
+    deep_fail_count: number;
+    instant_sl_share_pct?: string | number | null;
+    deep_fail_share_pct?: string | number | null;
+    read: string;
+  };
+  axis_rows: MidLongAxisAuditRow[];
+  cross_tables: Record<string, MidLongAxisCrossRow[]>;
+  geometry_diagnostic: {
+    mfe_threshold_rows: MidLongGeometryThresholdRow[];
+    winner_mae_quantiles: Record<string, string | number | null>;
+    loser_mfe_quantiles: Record<string, string | number | null>;
+    read: string;
+  };
+  ablation_preview: MidLongAblationRow[];
+  verdict: {
+    primary: string;
+    labels: string[];
+    reasons: string[];
+    recommended_next_step: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongDefinitionLayerRow = MidLongEntryCombinationRow & {
+  ideal_realistic_gap_r?: string | number | null;
+  median_cost_r?: string | number | null;
+};
+
+export type MidLongPathDecisionRow = {
+  bucket: string;
+  label: string;
+  definition: string;
+  count: number;
+  share_pct?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+};
+
+export type MidLongAxisAuditRow = MidLongEntryCombinationRow & {
+  axis: string;
+  axis_label: string;
+  state: string;
+  negative_r_abs?: string | number | null;
+  negative_r_share_pct?: string | number | null;
+  top3_symbol_share_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongAxisCrossRow = MidLongEntryCombinationRow & {
+  first_axis: string;
+  second_axis: string;
+  cell: string;
+  is_readable: boolean;
+  negative_r_abs?: string | number | null;
+  negative_r_share_pct?: string | number | null;
+};
+
+export type MidLongGeometryThresholdRow = {
+  threshold_r: string | number;
+  touched_count: number;
+  touched_share_pct?: string | number | null;
+  tp_after_count: number;
+  sl_after_count: number;
+  tp_given_touch_pct?: string | number | null;
+  sl_given_touch_pct?: string | number | null;
+};
+
+export type MidLongAblationRow = MidLongEntryCombinationRow & {
+  discarded_count: number;
+  discarded_tp_count: number;
+  discarded_sl_count: number;
+  discarded_realistic_total_r_closed?: string | number | null;
+  discarded_realistic_avg_r_closed?: string | number | null;
+  ablation_read: string;
 };
 
 export type MidLongEvidenceComparisonRow = {

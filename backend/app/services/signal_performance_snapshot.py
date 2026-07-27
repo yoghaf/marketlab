@@ -740,10 +740,11 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
         min_sample=20,
     )
     entry_rows = _mid_long_entry_combination_rows(items, baseline=baseline, min_sample=20)
+    definition_audit = _mid_long_definition_audit(items, baseline=baseline, min_sample=20)
     return {
         "research_summary": {
             "scope": "MID_LONG 1h closed V2 signals",
-            "method": "Read-only baseline reset plus transparent entry-combination ranking from logged evidence.",
+            "method": "Read-only definition audit from logged MID_LONG 1h evidence, path, structure, and realistic execution.",
             "min_sample": 20,
             "closed_count": baseline["closed_count"],
             "tp_count": baseline["tp_count"],
@@ -755,6 +756,7 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
             "max_realistic_drawdown_r": baseline["max_realistic_drawdown_r"],
             "read": _mid_long_baseline_read(baseline),
         },
+        "definition_audit": definition_audit,
         "evidence_comparison": _mid_long_evidence_comparison(items, min_sample=20),
         "entry_anatomy_summary": _mid_long_entry_anatomy_summary(items, baseline=baseline),
         "outcome_entry_profiles": _mid_long_outcome_entry_profiles(items),
@@ -1167,6 +1169,637 @@ MID_LONG_ANATOMY_EVIDENCE_FIELDS: tuple[tuple[str, str], ...] = (
     ("global_long_short_ratio", "Global L/S ratio"),
     ("top_trader_position_ratio", "Top trader position"),
 )
+
+
+MID_LONG_DEFINITION_AXIS_SPECS: dict[str, dict[str, str]] = {
+    "EXT": {
+        "label": "Extension",
+        "question": "Apakah entry MID_LONG sudah telat atau masih normal terhadap ATR?",
+    },
+    "STR": {
+        "label": "Structure",
+        "question": "Apakah entry punya support/breakout, dekat resistance, atau masuk tengah range?",
+    },
+    "FLW": {
+        "label": "Flow",
+        "question": "Apakah volume, taker buy, dan OI benar-benar mendukung long?",
+    },
+    "CRD": {
+        "label": "Crowding",
+        "question": "Apakah long sudah crowded dari funding/OI/positioning?",
+    },
+}
+
+MID_LONG_DEFINITION_THRESHOLDS: dict[str, str] = {
+    "EXTENDED_ATR_EXTENSION": "atr_extension_normalized >= 1.00",
+    "EXTENDED_PRICE_ATR": "price_atr_multiple >= 1.25",
+    "FLOW_VOLUME": "volume_ratio_vs_lookback >= 1.00",
+    "FLOW_TAKER_BUY": "kline_taker_buy_ratio >= 0.53",
+    "FLOW_OI": "oi_change_pct > 0",
+    "CROWDED_FUNDING": "funding_percentile_30d >= 75",
+    "CROWDED_OI_Z": "oi_zscore >= 3.00 with crowded positioning",
+    "EXECUTION_VALID": "realistic_fill_quality == FILL_GOOD OR realistic_cost_r_estimate <= 0.20",
+}
+
+
+def _mid_long_definition_audit(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    axis_states = {str(item.get("signal_id") or idx): _mid_long_definition_axis_state(item) for idx, item in enumerate(items)}
+    layer_rows = _mid_long_layer_decomposition(items, baseline=baseline, min_sample=min_sample)
+    path_summary = _mid_long_path_decision_summary(items)
+    axis_rows = _mid_long_axis_rows(items, axis_states=axis_states, baseline=baseline, min_sample=min_sample)
+    cross_tables = {
+        "EXTxSTR": _mid_long_axis_cross_rows(
+            items,
+            axis_states=axis_states,
+            first_axis="EXT",
+            second_axis="STR",
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        "FLWxCRD": _mid_long_axis_cross_rows(
+            items,
+            axis_states=axis_states,
+            first_axis="FLW",
+            second_axis="CRD",
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+    }
+    geometry = _mid_long_geometry_diagnostic(items)
+    ablation = _mid_long_ablation_preview(
+        items,
+        axis_states=axis_states,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    verdict = _mid_long_definition_verdict(
+        baseline=baseline,
+        layer_rows=layer_rows,
+        path_summary=path_summary,
+        axis_rows=axis_rows,
+        geometry=geometry,
+    )
+    return {
+        "scope": "MID_LONG 1h logged V2 closed signals",
+        "method": "Flag-first definition audit: every MID_LONG signal remains in the sample; flags are measured before any gate proposal.",
+        "min_sample": min_sample,
+        "thresholds": MID_LONG_DEFINITION_THRESHOLDS,
+        "axis_specs": MID_LONG_DEFINITION_AXIS_SPECS,
+        "layer_decomposition": layer_rows,
+        "path_decision_summary": path_summary,
+        "axis_rows": axis_rows,
+        "cross_tables": cross_tables,
+        "geometry_diagnostic": geometry,
+        "ablation_preview": ablation,
+        "verdict": verdict,
+        "guardrails": [
+            "Candidate flags are not live gates.",
+            "No Signal Factory rule, scanner behavior, TP/SL, or execution logic is changed.",
+            "Support/resistance readings must be treated as invalid if their timestamp uses future candles.",
+        ],
+    }
+
+
+def _mid_long_layer_decomposition(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    execution_valid = [item for item in items if _mid_long_execution_state(item) == "EXECUTION_VALID"]
+    execution_invalid = [item for item in items if _mid_long_execution_state(item) == "EXECUTION_RISK"]
+    execution_unknown = [item for item in items if _mid_long_execution_state(item) == "EXECUTION_UNKNOWN"]
+    rows: list[dict[str, Any]] = []
+    for row_id, label, row_items, note in (
+        ("ALL", "All MID_LONG 1h", items, "Raw baseline. Nothing is filtered out."),
+        ("EXECUTION_VALID", "Execution-valid subset", execution_valid, "Fill/cost looks usable; compare against ALL to isolate execution drag."),
+        ("EXECUTION_RISK", "Execution-risk subset", execution_invalid, "Bad fill or high cost; read as microstructure risk, not necessarily thesis failure."),
+        ("EXECUTION_UNKNOWN", "Execution unknown", execution_unknown, "Cost/fill data unavailable for these rows."),
+    ):
+        row = _mid_long_perf_row(
+            row_id,
+            label,
+            row_id,
+            row_items,
+            baseline=baseline if row_id != "ALL" else None,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row["ideal_realistic_gap_r"] = _decimal_delta_snapshot(
+            row.get("ideal_total_r_closed"),
+            row.get("realistic_total_r_closed"),
+        )
+        row["median_cost_r"] = _median_decimal_snapshot(
+            [
+                value
+                for item in row_items
+                if (value := _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))) is not None
+            ]
+        )
+        row["note"] = note
+        rows.append(row)
+    return rows
+
+
+def _mid_long_path_decision_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_path_decision_bucket(item)].append(item)
+    total = len(items)
+    for bucket, label, definition in (
+        ("INSTANT_SL", "Instant SL", "SL with MFE < +0.25R"),
+        ("PARTIAL_FAIL", "+0.25R to +1R then SL", "SL after some follow-through, but before +1R"),
+        ("DEEP_FAIL", "+1R+ then SL", "SL after thesis already moved at least +1R"),
+        ("CLEAN_TP", "Clean TP", "TP with MAE better than -0.50R"),
+        ("PULLBACK_TP", "TP after pullback", "TP after MAE <= -0.50R"),
+        ("BOTH_SAME_CANDLE", "Both same candle", "TP and SL touched in same candle"),
+        ("OTHER", "Other / open-like", "Rows outside TP/SL/BOTH"),
+    ):
+        bucket_items = grouped.get(bucket, [])
+        rows.append(
+            {
+                "bucket": bucket,
+                "label": label,
+                "definition": definition,
+                "count": len(bucket_items),
+                "share_pct": _pct_decimal(len(bucket_items), total),
+                "realistic_total_r_closed": sum(
+                    (
+                        _decimal_or_zero_snapshot(item.get("realistic_realized_r"))
+                        for item in bucket_items
+                        if item.get("result_status") in COMPLETED_OUTCOMES
+                    ),
+                    Decimal("0"),
+                ),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_values(bucket_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_values(bucket_items, "mae_r")),
+            }
+        )
+    instant = len(grouped.get("INSTANT_SL", []))
+    deep_fail = len(grouped.get("DEEP_FAIL", []))
+    partial = len(grouped.get("PARTIAL_FAIL", []))
+    return {
+        "rows": rows,
+        "instant_sl_count": instant,
+        "partial_fail_count": partial,
+        "deep_fail_count": deep_fail,
+        "instant_sl_share_pct": _pct_decimal(instant, total),
+        "deep_fail_share_pct": _pct_decimal(deep_fail, total),
+        "read": _mid_long_path_decision_read(total=total, instant=instant, partial=partial, deep_fail=deep_fail),
+    }
+
+
+def _mid_long_path_decision_bucket(item: dict[str, Any]) -> str:
+    status = str(item.get("result_status") or "UNKNOWN")
+    mfe = _decimal_or_zero_snapshot(item.get("mfe_r"))
+    mae = _decimal_or_zero_snapshot(item.get("mae_r"))
+    if status == "SL_HIT":
+        if mfe >= Decimal("1.0"):
+            return "DEEP_FAIL"
+        if mfe >= Decimal("0.25"):
+            return "PARTIAL_FAIL"
+        return "INSTANT_SL"
+    if status == "TP_HIT":
+        if mae <= Decimal("-0.50"):
+            return "PULLBACK_TP"
+        return "CLEAN_TP"
+    if status == "BOTH_HIT_SAME_CANDLE":
+        return "BOTH_SAME_CANDLE"
+    return "OTHER"
+
+
+def _mid_long_path_decision_read(*, total: int, instant: int, partial: int, deep_fail: int) -> str:
+    if total <= 0:
+        return "INSUFFICIENT_DATA"
+    instant_share = Decimal(instant) / Decimal(total)
+    harvest_share = Decimal(partial + deep_fail) / Decimal(total)
+    if instant_share >= Decimal("0.30"):
+        return "ENTRY_DEFINITION_PRESSURE"
+    if harvest_share >= Decimal("0.25"):
+        return "GEOMETRY_OR_EXIT_PRESSURE"
+    return "PATH_MIXED"
+
+
+def _mid_long_axis_rows(
+    items: list[dict[str, Any]],
+    *,
+    axis_states: dict[str, dict[str, str]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    total_negative_r = _mid_long_total_negative_r(items)
+    for axis in ("EXT", "STR", "FLW", "CRD"):
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for idx, item in enumerate(items):
+            state = axis_states[str(item.get("signal_id") or idx)][axis]
+            grouped[state].append(item)
+        for state, state_items in grouped.items():
+            row = _mid_long_perf_row(
+                f"{axis}:{state}",
+                state,
+                f"{axis} == {state}",
+                state_items,
+                baseline=baseline,
+                required_fields=(),
+                min_sample=min_sample,
+            )
+            row.update(
+                {
+                    "axis": axis,
+                    "axis_label": MID_LONG_DEFINITION_AXIS_SPECS[axis]["label"],
+                    "state": state,
+                    "negative_r_abs": _mid_long_total_negative_r(state_items),
+                    "negative_r_share_pct": _pct_decimal_decimal(_mid_long_total_negative_r(state_items), total_negative_r),
+                    "top3_symbol_share_pct": _mid_long_top_n_symbol_share(state_items, n=3),
+                    "read": _mid_long_axis_state_read(axis, state, row),
+                }
+            )
+            rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            str(row.get("axis") or ""),
+            _decimal_or_zero_snapshot(row.get("negative_r_abs")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_axis_cross_rows(
+    items: list[dict[str, Any]],
+    *,
+    axis_states: dict[str, dict[str, str]],
+    first_axis: str,
+    second_axis: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    total_negative_r = _mid_long_total_negative_r(items)
+    for idx, item in enumerate(items):
+        states = axis_states[str(item.get("signal_id") or idx)]
+        grouped[f"{states[first_axis]} x {states[second_axis]}"].append(item)
+    rows: list[dict[str, Any]] = []
+    for key, cell_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"{first_axis}x{second_axis}:{key}",
+            key,
+            f"{first_axis} x {second_axis} == {key}",
+            cell_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "first_axis": first_axis,
+                "second_axis": second_axis,
+                "cell": key,
+                "is_readable": int(row.get("closed_count") or 0) >= min_sample,
+                "negative_r_abs": _mid_long_total_negative_r(cell_items),
+                "negative_r_share_pct": _pct_decimal_decimal(_mid_long_total_negative_r(cell_items), total_negative_r),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            bool(row.get("is_readable")),
+            _decimal_or_zero_snapshot(row.get("negative_r_abs")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_geometry_diagnostic(items: list[dict[str, Any]]) -> dict[str, Any]:
+    completed = [
+        item
+        for item in items
+        if item.get("result_status") in COMPLETED_OUTCOMES and _decimal_or_none_snapshot(item.get("mfe_r")) is not None
+    ]
+    rows: list[dict[str, Any]] = []
+    for threshold in (Decimal("0.25"), Decimal("0.50"), Decimal("0.75"), Decimal("1.00"), Decimal("1.50")):
+        touched = [item for item in completed if _decimal_or_zero_snapshot(item.get("mfe_r")) >= threshold]
+        tp_after = [item for item in touched if item.get("result_status") == "TP_HIT"]
+        sl_after = [item for item in touched if item.get("result_status") == "SL_HIT"]
+        rows.append(
+            {
+                "threshold_r": threshold,
+                "touched_count": len(touched),
+                "touched_share_pct": _pct_decimal(len(touched), len(completed)),
+                "tp_after_count": len(tp_after),
+                "sl_after_count": len(sl_after),
+                "tp_given_touch_pct": _pct_decimal(len(tp_after), len(touched)),
+                "sl_given_touch_pct": _pct_decimal(len(sl_after), len(touched)),
+            }
+        )
+    winners = [item for item in completed if item.get("result_status") == "TP_HIT"]
+    losers = [item for item in completed if item.get("result_status") == "SL_HIT"]
+    winner_mae = _mid_long_item_values(winners, "mae_r")
+    loser_mfe = _mid_long_item_values(losers, "mfe_r")
+    return {
+        "mfe_threshold_rows": rows,
+        "winner_mae_quantiles": {
+            "q25": _percentile_decimal_snapshot(winner_mae, Decimal("0.25")),
+            "q50": _percentile_decimal_snapshot(winner_mae, Decimal("0.50")),
+            "q75": _percentile_decimal_snapshot(winner_mae, Decimal("0.75")),
+            "q90": _percentile_decimal_snapshot(winner_mae, Decimal("0.90")),
+        },
+        "loser_mfe_quantiles": {
+            "q25": _percentile_decimal_snapshot(loser_mfe, Decimal("0.25")),
+            "q50": _percentile_decimal_snapshot(loser_mfe, Decimal("0.50")),
+            "q75": _percentile_decimal_snapshot(loser_mfe, Decimal("0.75")),
+            "q90": _percentile_decimal_snapshot(loser_mfe, Decimal("0.90")),
+        },
+        "read": _mid_long_geometry_read(rows),
+    }
+
+
+def _mid_long_ablation_preview(
+    items: list[dict[str, Any]],
+    *,
+    axis_states: dict[str, dict[str, str]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    scenarios: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
+        ("DROP_EXTENDED", "Remove extended entries", (("EXT", "EXTENDED"),)),
+        ("DROP_UNDER_RESISTANCE", "Remove under-resistance entries", (("STR", "UNDER_RESISTANCE"),)),
+        ("DROP_WEAK_FLOW", "Remove weak-flow entries", (("FLW", "WEAK"),)),
+        ("DROP_CROWDED", "Remove crowded-long entries", (("CRD", "CROWDED"),)),
+        (
+            "DROP_EXTENDED_OR_UNDER_RESISTANCE",
+            "Remove extended OR under resistance",
+            (("EXT", "EXTENDED"), ("STR", "UNDER_RESISTANCE")),
+        ),
+        (
+            "KEEP_CLEAN_CONTINUATION",
+            "Keep normal + confirmed flow + clean crowding",
+            (("EXT", "NORMAL"), ("FLW", "CONFIRMED"), ("CRD", "CLEAN")),
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for scenario_id, label, rules in scenarios:
+        selected: list[dict[str, Any]] = []
+        discarded: list[dict[str, Any]] = []
+        if scenario_id == "KEEP_CLEAN_CONTINUATION":
+            for idx, item in enumerate(items):
+                states = axis_states[str(item.get("signal_id") or idx)]
+                if all(states[axis] == state for axis, state in rules):
+                    selected.append(item)
+                else:
+                    discarded.append(item)
+            expression = " AND ".join(f"{axis} == {state}" for axis, state in rules)
+        else:
+            for idx, item in enumerate(items):
+                states = axis_states[str(item.get("signal_id") or idx)]
+                if any(states[axis] == state for axis, state in rules):
+                    discarded.append(item)
+                else:
+                    selected.append(item)
+            expression = "Remove rows where " + " OR ".join(f"{axis} == {state}" for axis, state in rules)
+        row = _mid_long_perf_row(
+            scenario_id,
+            label,
+            expression,
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        discarded_perf = aggregate_signal_performance_items(discarded)
+        row.update(
+            {
+                "discarded_count": len(discarded),
+                "discarded_tp_count": discarded_perf["tp_count"],
+                "discarded_sl_count": discarded_perf["sl_count"],
+                "discarded_realistic_total_r_closed": discarded_perf["realistic_total_r_closed"],
+                "discarded_realistic_avg_r_closed": discarded_perf["realistic_avg_r_closed"],
+                "ablation_read": _mid_long_ablation_read(row, discarded_perf),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_delta_vs_baseline")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_definition_verdict(
+    *,
+    baseline: dict[str, Any],
+    layer_rows: list[dict[str, Any]],
+    path_summary: dict[str, Any],
+    axis_rows: list[dict[str, Any]],
+    geometry: dict[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    labels: list[str] = []
+    ideal_total = _decimal_or_zero_snapshot(baseline.get("ideal_total_r_closed"))
+    realistic_total = _decimal_or_zero_snapshot(baseline.get("realistic_total_r_closed"))
+    if ideal_total <= 0:
+        labels.append("ENTRY_OR_EDGE_PROBLEM")
+        reasons.append("Ideal R is not positive, so the issue exists before realistic costs.")
+    elif realistic_total <= 0:
+        labels.append("EXECUTION_COST_PROBLEM")
+        reasons.append("Ideal R is positive while realistic R is not; fee/spread/slippage drag matters.")
+    path_read = str(path_summary.get("read") or "")
+    if path_read == "ENTRY_DEFINITION_PRESSURE":
+        labels.append("ENTRY_DEFINITION_PROBLEM")
+        reasons.append("Instant-SL share is high enough to suspect the entry definition.")
+    if path_read == "GEOMETRY_OR_EXIT_PRESSURE":
+        labels.append("GEOMETRY_PROBLEM")
+        reasons.append("Many rows move in favor before failing, suggesting target/exit geometry needs study.")
+    damaging_axis = [
+        row
+        for row in axis_rows
+        if _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")) < 0
+        and _decimal_or_zero_snapshot(row.get("negative_r_share_pct")) >= Decimal("20")
+    ]
+    if damaging_axis:
+        labels.append("AXIS_DAMAGE_CONCENTRATION")
+        top = max(damaging_axis, key=lambda row: _decimal_or_zero_snapshot(row.get("negative_r_share_pct")))
+        reasons.append(
+            f"{top.get('axis')}:{top.get('state')} explains {top.get('negative_r_share_pct')}% of negative R."
+        )
+    geometry_read = str(geometry.get("read") or "")
+    if geometry_read == "HARVEST_PROBLEM":
+        labels.append("GEOMETRY_PROBLEM")
+        reasons.append("P(TP after +1R) is weak; the setup may be right but harvesting is poor.")
+    if not labels:
+        labels.append("MIXED_OR_INSUFFICIENT_SEPARATION")
+        reasons.append("No single layer dominates yet; read axis and path tables together.")
+    primary = "MIXED_PROBLEM" if len(set(labels)) > 1 else labels[0]
+    return {
+        "primary": primary,
+        "labels": sorted(set(labels)),
+        "reasons": reasons,
+        "recommended_next_step": "Run decision-tree/ablation only after this audit is reviewed; do not promote V2.1 from this page alone.",
+    }
+
+
+def _mid_long_definition_axis_state(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "EXT": _mid_long_ext_state(item),
+        "STR": _mid_long_structure_state(item),
+        "FLW": _mid_long_flow_state(item),
+        "CRD": _mid_long_crowding_state(item),
+    }
+
+
+def _mid_long_ext_state(item: dict[str, Any]) -> str:
+    atr_extension = _mid_long_evidence_value(item, "atr_extension_normalized")
+    price_atr = _mid_long_evidence_value(item, "price_atr_multiple")
+    if atr_extension is None and price_atr is None:
+        return "UNKNOWN"
+    if (atr_extension is not None and atr_extension >= Decimal("1.00")) or (
+        price_atr is not None and price_atr >= Decimal("1.25")
+    ):
+        return "EXTENDED"
+    return "NORMAL"
+
+
+def _mid_long_structure_state(item: dict[str, Any]) -> str:
+    status = str(item.get("structure_zone_status") or "").upper()
+    primary = str(item.get("structure_zone_primary_state") or "").upper()
+    context = str(item.get("structure_zone_context_status") or "").upper()
+    if not status and not primary and not context:
+        return "UNAVAILABLE"
+    if "RESISTANCE" in primary and "BREAK" not in primary:
+        return "UNDER_RESISTANCE"
+    if "CONFLICT" in status or "CONFLICT" in context:
+        return "UNDER_RESISTANCE"
+    if "BREAKOUT" in primary:
+        return "BREAKOUT_CONFIRMED"
+    if "SUPPORT" in primary:
+        return "AT_SUPPORT"
+    if "NEUTRAL" in status or "MID" in primary or "RANGE" in primary:
+        return "MID_RANGE"
+    if "UNAVAILABLE" in status or "UNKNOWN" in primary:
+        return "UNAVAILABLE"
+    if "ALIGNED" in status:
+        return "BREAKOUT_CONFIRMED"
+    return "MID_RANGE"
+
+
+def _mid_long_flow_state(item: dict[str, Any]) -> str:
+    volume = _mid_long_evidence_value(item, "volume_ratio_vs_lookback")
+    taker_buy = _mid_long_evidence_value(item, "kline_taker_buy_ratio")
+    oi_change = _mid_long_evidence_value(item, "oi_change_pct")
+    if volume is None and taker_buy is None and oi_change is None:
+        return "UNKNOWN"
+    checks = [
+        volume is not None and volume >= Decimal("1.00"),
+        taker_buy is not None and taker_buy >= Decimal("0.53"),
+        oi_change is not None and oi_change > Decimal("0"),
+    ]
+    passed = sum(1 for check in checks if check)
+    if passed == 3:
+        return "CONFIRMED"
+    if passed <= 1:
+        return "WEAK"
+    return "MIXED"
+
+
+def _mid_long_crowding_state(item: dict[str, Any]) -> str:
+    funding = _mid_long_evidence_value(item, "funding_percentile_30d")
+    oi_z = _mid_long_evidence_value(item, "oi_zscore")
+    glsr = _mid_long_evidence_value(item, "global_long_short_ratio")
+    top_position = _mid_long_evidence_value(item, "top_trader_position_ratio")
+    if funding is None and oi_z is None and glsr is None and top_position is None:
+        return "UNKNOWN"
+    crowded_funding = funding is not None and funding >= Decimal("75")
+    crowded_oi_positioning = (
+        oi_z is not None
+        and oi_z >= Decimal("3")
+        and (
+            (glsr is not None and glsr >= Decimal("1.30"))
+            or (top_position is not None and top_position >= Decimal("1.40"))
+        )
+    )
+    if crowded_funding or crowded_oi_positioning:
+        return "CROWDED"
+    return "CLEAN"
+
+
+def _mid_long_execution_state(item: dict[str, Any]) -> str:
+    fill = str(item.get("realistic_fill_quality") or "")
+    cost = _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))
+    if fill == "FILL_GOOD" or (cost is not None and cost <= Decimal("0.20")):
+        return "EXECUTION_VALID"
+    if fill == "FILL_BAD" or (cost is not None and cost > Decimal("0.20")):
+        return "EXECUTION_RISK"
+    return "EXECUTION_UNKNOWN"
+
+
+def _mid_long_total_negative_r(items: list[dict[str, Any]]) -> Decimal:
+    total = Decimal("0")
+    for item in items:
+        value = _decimal_or_none_snapshot(item.get("realistic_realized_r"))
+        if value is not None and value < 0:
+            total += abs(value)
+    return total
+
+
+def _pct_decimal_decimal(count: Decimal, total: Decimal) -> Decimal | None:
+    if total <= 0:
+        return None
+    return count / total * Decimal("100")
+
+
+def _mid_long_top_n_symbol_share(items: list[dict[str, Any]], *, n: int) -> Decimal | None:
+    if not items:
+        return None
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    top_count = sum(count for _symbol, count in symbols.most_common(n))
+    return _pct_decimal(top_count, len(items))
+
+
+def _mid_long_axis_state_read(axis: str, state: str, row: dict[str, Any]) -> str:
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    if axis == "EXT" and state == "EXTENDED":
+        return "Candidate late-chase damage flag." if total_r < 0 else "Extended entries are not harmful in this sample yet."
+    if axis == "STR" and state == "UNDER_RESISTANCE":
+        return "Candidate resistance-trap flag." if total_r < 0 else "Under-resistance entries need manual chart review."
+    if axis == "FLW" and state == "WEAK":
+        return "Candidate weak-sponsorship flag." if total_r < 0 else "Weak flow is not isolating damage yet."
+    if axis == "CRD" and state == "CROWDED":
+        return "Candidate crowded-long risk flag." if total_r < 0 else "Crowded context is not harmful in this sample yet."
+    return "Definition audit state; compare with complement and cross tables."
+
+
+def _mid_long_geometry_read(rows: list[dict[str, Any]]) -> str:
+    plus_one = next((row for row in rows if _decimal_or_zero_snapshot(row.get("threshold_r")) == Decimal("1.00")), None)
+    if not plus_one:
+        return "INSUFFICIENT_DATA"
+    touched = int(plus_one.get("touched_count") or 0)
+    tp_after_pct = _decimal_or_none_snapshot(plus_one.get("tp_given_touch_pct"))
+    if touched >= 20 and tp_after_pct is not None and tp_after_pct < Decimal("60"):
+        return "HARVEST_PROBLEM"
+    return "GEOMETRY_NOT_PRIMARY_YET"
+
+
+def _mid_long_ablation_read(row: dict[str, Any], discarded_perf: dict[str, Any]) -> str:
+    survivor_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    discarded_total = _decimal_or_zero_snapshot(discarded_perf.get("realistic_total_r_closed"))
+    if survivor_delta > 0 and discarded_total < 0:
+        return "Candidate gate: discarded set is negative and survivors improve."
+    if survivor_delta > 0:
+        return "Survivors improve, but check discarded set and sample starvation."
+    return "Does not improve baseline; keep as evidence only."
 
 
 def _mid_long_entry_anatomy_summary(items: list[dict[str, Any]], *, baseline: dict[str, Any]) -> dict[str, Any]:

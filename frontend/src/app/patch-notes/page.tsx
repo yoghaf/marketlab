@@ -18,6 +18,25 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-27",
+    version: "LAB-RESET-04",
+    title: "MID_LONG 1h Definition Audit",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Merombak halaman MID_LONG 1h dari filter study menjadi audit definisi untuk menjawab apakah loss datang dari entry definition, structure, flow, crowding, geometry, atau execution cost.",
+    changes: [
+      "Endpoint baseline MID_LONG 1h sekarang menambahkan definition_audit dengan layer decomposition, path decision summary, 4-axis EXT/STR/FLW/CRD, cross table, geometry diagnostic, dan ablation preview.",
+      "Halaman /mid-long-research-study sekarang fokus ke baseline reality, path anatomy, 4-axis definition flags, geometry P(TP setelah +xR), dan ablation read-only.",
+      "Semua MID_LONG 1h tetap masuk sampel; flag belum menjadi gate dan tidak ada rule V2.1 yang dipromosikan.",
+      "Patch ini tidak mengubah Signal Factory, scanner, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang menyerang akar definisi: kita bisa memisahkan apakah labelnya salah, area entry buruk, flow/crowding merusak, geometry gagal panen, atau realistic cost yang memakan hasil.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Definition Audit" },
+      { href: "/signal-performance?stage=MID_LONG&timeframe=1h", label: "Open Signal History" }
+    ]
+  },
+  {
     date: "2026-07-26",
     version: "LAB-RESET-03",
     title: "MID_LONG 1h Entry Anatomy Study",
