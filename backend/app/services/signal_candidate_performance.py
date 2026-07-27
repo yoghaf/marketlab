@@ -2692,6 +2692,8 @@ class SignalCandidatePerformanceService:
     ) -> dict[str, list[PerfCandle]]:
         if not symbols:
             return {}
+        if not start_times_by_symbol:
+            return self._load_15m_candles_raw(symbols, start_time=start_time, end_time=end_time)
         query = (
             select(
                 FuturesKline15m.symbol,
@@ -2743,6 +2745,58 @@ class SignalCandidatePerformanceService:
                     taker_sell_base_volume=(
                         Decimal(row.taker_sell_base_volume) if row.taker_sell_base_volume is not None else None
                     ),
+                    source_interval="15m",
+                )
+            )
+        return dict(output)
+
+    def _load_15m_candles_raw(
+        self,
+        symbols: set[str],
+        *,
+        start_time: datetime | None,
+        end_time: datetime | None = None,
+    ) -> dict[str, list[PerfCandle]]:
+        symbol_list = sorted(symbols)
+        if not symbol_list:
+            return {}
+        placeholders = ",".join("?" for _ in symbol_list)
+        clauses = [f"symbol IN ({placeholders})", "aggregation_status = ?"]
+        params: list[Any] = [*symbol_list, "AGG_READY"]
+        if start_time is not None:
+            clauses.append("open_time >= ?")
+            params.append(_sqlite_dt_param(start_time))
+        if end_time is not None:
+            clauses.append("open_time <= ?")
+            params.append(_sqlite_dt_param(end_time))
+        sql = f"""
+            SELECT symbol, open_time, close_time, open, high, low, close, volume,
+                   taker_buy_base_volume, taker_sell_base_volume
+            FROM futures_klines_15m
+            WHERE {' AND '.join(clauses)}
+            ORDER BY symbol, open_time
+        """
+        output: dict[str, list[PerfCandle]] = defaultdict(list)
+        for row in self.db.connection().exec_driver_sql(sql, tuple(params)):
+            open_time = _parse_dt(row[1])
+            close_time = _parse_dt(row[2])
+            open_price = _decimal_or_none(row[3])
+            high_price = _decimal_or_none(row[4])
+            low_price = _decimal_or_none(row[5])
+            close_price = _decimal_or_none(row[6])
+            if None in (open_time, close_time, open_price, high_price, low_price, close_price):
+                continue
+            output[row[0]].append(
+                PerfCandle(
+                    open_time=open_time,
+                    close_time=close_time,
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=_decimal_or_none(row[7]),
+                    taker_buy_base_volume=_decimal_or_none(row[8]),
+                    taker_sell_base_volume=_decimal_or_none(row[9]),
                     source_interval="15m",
                 )
             )
@@ -3761,6 +3815,10 @@ def mid_short_1h_quality_shadow_filter(
 
 def _naive(value: datetime) -> datetime:
     return value.replace(tzinfo=None)
+
+
+def _sqlite_dt_param(value: datetime) -> str:
+    return _naive(value).isoformat(sep=" ")
 
 
 def _parse_dt(value: Any) -> datetime | None:
