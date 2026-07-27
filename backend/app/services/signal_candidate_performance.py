@@ -2512,7 +2512,7 @@ class SignalCandidatePerformanceService:
             candles,
             position_lock=position_lock,
             global_latest_candle_time=global_latest_candle_time or latest_candle_time,
-            structure_zone_snapshots=self._structure_zone_snapshots_for_signals(signals),
+            structure_zone_snapshots=None,
         )
         self._apply_universe_context(evaluated, symbols)
         if with_shadow:
@@ -2604,6 +2604,34 @@ class SignalCandidatePerformanceService:
                 for signal in target_signals
             ]
         )
+
+    def enrich_mid_long_1h_breakout_diagnostics(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add causal breakout-zone diagnostics for the MID_LONG 1h research endpoint only."""
+        if not items:
+            return []
+        output = [dict(item) for item in items]
+        signal_ids = [
+            str(item.get("signal_id"))
+            for item in output
+            if item.get("stage") == "MID_LONG"
+            and item.get("timeframe") == "1h"
+            and item.get("signal_id")
+        ]
+        if not signal_ids:
+            return output
+        signals = self.db.scalars(
+            select(SignalForwardReturnLog).where(SignalForwardReturnLog.signal_id.in_(signal_ids))
+        ).all()
+        signals_by_id = {signal.signal_id: signal for signal in signals}
+        snapshots = self._structure_zone_snapshots_for_signals(signals)
+        for item in output:
+            signal_id = str(item.get("signal_id") or "")
+            signal = signals_by_id.get(signal_id)
+            snapshot = snapshots.get(signal_id)
+            if not snapshot and signal is not None:
+                snapshot = _structure_zone_snapshot(signal)
+            item.update(_structure_zone_result_fields(snapshot))
+        return output
 
     def _load_signals(
         self,

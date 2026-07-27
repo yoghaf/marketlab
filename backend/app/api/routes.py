@@ -76,6 +76,7 @@ _MID_SHORT_FAILURE_ANATOMY_CACHE_TTL_SECONDS = 900.0
 _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS = 3600.0
 _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS = 3600.0
 _MID_SHORT_V21_DYNAMIC_EXIT_CACHE_TTL_SECONDS = 3600.0
+_MID_LONG_BASELINE_CACHE_TTL_SECONDS = 300.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
@@ -88,6 +89,8 @@ _SIGNAL_QUALITY_CACHE_LOCK = Lock()
 _SIGNAL_QUALITY_CACHE: dict[tuple, tuple[float, dict]] = {}
 _STRUCTURE_ZONE_SHADOW_CACHE_LOCK = Lock()
 _STRUCTURE_ZONE_SHADOW_CACHE: dict[tuple, tuple[float, dict]] = {}
+_MID_LONG_BASELINE_CACHE_LOCK = Lock()
+_MID_LONG_BASELINE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_SHADOW_FORWARD_CACHE_LOCK = Lock()
 _MID_SHORT_SHADOW_FORWARD_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_FAILURE_ANATOMY_CACHE_LOCK = Lock()
@@ -555,14 +558,28 @@ def signal_candidates_quality_lab(
 @router.get("/api/signal-candidates/mid-long-1h-baseline")
 def signal_candidates_mid_long_1h_baseline(
     limit: int = 50,
+    db: Session = Depends(get_db),
 ):
     normalized_limit = max(1, min(limit, 100))
+    cache_key = (normalized_limit,)
+    now = monotonic()
+    with _MID_LONG_BASELINE_CACHE_LOCK:
+        cached = _MID_LONG_BASELINE_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _MID_LONG_BASELINE_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _MID_LONG_BASELINE_CACHE_TTL_SECONDS}
+            return payload
     try:
-        return json_safe(
+        payload = json_safe(
             SignalPerformanceSnapshotService().mid_long_1h_baseline(
                 limit=normalized_limit,
+                items_enricher=SignalCandidatePerformanceService(db).enrich_mid_long_1h_breakout_diagnostics,
             )
         )
+        payload["cache"] = {"hit": False, "ttl_seconds": _MID_LONG_BASELINE_CACHE_TTL_SECONDS}
+        with _MID_LONG_BASELINE_CACHE_LOCK:
+            _MID_LONG_BASELINE_CACHE[cache_key] = (monotonic(), payload)
+        return payload
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="MID_LONG 1h baseline snapshot is not available yet") from exc
 

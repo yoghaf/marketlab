@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -386,7 +386,12 @@ class SignalPerformanceSnapshotService:
         study["snapshot"] = payload.get("snapshot")
         return study
 
-    def mid_long_1h_baseline(self, *, limit: int) -> dict[str, Any]:
+    def mid_long_1h_baseline(
+        self,
+        *,
+        limit: int,
+        items_enricher: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
         payload = self._read(PERFORMANCE_1H_FILE)
         aggregate = payload.get("aggregate") or {}
         source_items = list(payload.get("items") or [])
@@ -396,6 +401,8 @@ class SignalPerformanceSnapshotService:
             if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"
         ]
         evaluated.sort(key=lambda item: str(item.get("signal_timestamp") or ""), reverse=True)
+        if items_enricher is not None:
+            evaluated = items_enricher(evaluated)
         baseline_aggregate = aggregate_signal_performance_items(evaluated)
         source_total = int(aggregate.get("signals_evaluated") or len(source_items))
         baseline_research = _mid_long_baseline_research(evaluated)
