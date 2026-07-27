@@ -12,9 +12,13 @@ import {
   MidLongBaselineResponse,
   MidLongDefinitionLayerRow,
   MidLongDraftPreviewRow,
+  MidLongDamageExperimentRow,
+  MidLongEconomicRow,
   MidLongEvidenceComparisonRow,
   MidLongGeometryThresholdRow,
+  MidLongIntegrityAudit,
   MidLongPathDecisionRow,
+  MidLongSubsetDimensionRow,
   MidLongTaxonomyDimensionRow,
   MidLongTaxonomyPathCrossRow,
   MidLongTaxonomyPathRow,
@@ -123,40 +127,58 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.integrity_audit && (
+            <SectionCard
+              title="0. Integrity audit"
+              description="Tahap kecil sebelum Damage Isolation: cek apakah label path/taxonomy ekonominya masuk akal. Kalau anomali masih ada, jangan buru-buru membuat protection rule."
+            >
+              <IntegrityAuditPanel audit={audit.integrity_audit} />
+            </SectionCard>
+          )}
+
+          {audit.damage_isolation && (
+            <SectionCard
+              title="1. Damage Isolation"
+              description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
+            >
+              <DamageIsolationPanel damage={audit.damage_isolation} />
+            </SectionCard>
+          )}
+
           {taxonomy && (
             <>
               <SectionCard
-                title="1. Taxonomy v1"
+                title="2. Taxonomy v1"
                 description="MID_LONG 1h sekarang dibedah sebagai banyak flag sekaligus: setup, breakout/retest, flow, crowding, room, cost, dan path setelah entry. Ini belum mengubah rule."
               >
                 <TaxonomyOverview taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="2. Pre-entry dimensions"
+                title="3. Pre-entry dimensions"
                 description="Bucket ini dibuat dari data sebelum entry. Tujuannya mencari bagian definisi MID_LONG yang paling sering membawa TP atau SL."
               >
                 <TaxonomyDimensionPanels taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="3. Path sequencing +0.5R"
+                title="4. Path sequencing +0.5R"
                 description="Path ini menjawab apakah signal langsung salah arah, cuma wick profit, close diterima lalu gagal, atau continuation bersih. Acceptance canonical sementara: close profit +0.5R."
               >
                 <TaxonomyPathTable rows={taxonomy.path_sequence_rows} />
               </SectionCard>
 
               <div className="grid gap-4 2xl:grid-cols-2">
-                <SectionCard title="4A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
+                <SectionCard title="5A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.setup_family_x_path || []} />
                 </SectionCard>
-                <SectionCard title="4B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
+                <SectionCard title="5B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.flow_x_path || []} />
                 </SectionCard>
               </div>
 
               <SectionCard
-                title="5. Draft V2.1 preview"
+                title="6. Draft V2.1 preview"
                 description="Empat skenario ini hanya preview riset. Retained/discarded dibandingkan untuk tahu apakah hygiene, breakout, retest, atau crowding interaction layak diteliti lanjut."
               >
                 <DraftPreviewTable rows={taxonomy.draft_v21_previews} />
@@ -165,58 +187,58 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           )}
 
           <SectionCard
-            title="6. Layer decomposition"
+            title="7. Layer decomposition"
             description="Pisahkan dulu apakah masalahnya sudah ada di ideal R, atau baru rusak setelah fee/spread/slippage. EXECUTION_VALID cuma strata audit, bukan filter live."
           >
             <LayerTable rows={audit.layer_decomposition} />
           </SectionCard>
 
           <SectionCard
-            title="7. Path anatomy legacy"
+            title="8. Path anatomy legacy"
             description="Ini pemisah utama: instant SL mengarah ke problem definisi entry; sempat +1R lalu SL mengarah ke problem geometry/exit."
           >
             <PathDecisionTable rows={audit.path_decision_summary.rows} read={audit.path_decision_summary.read} />
           </SectionCard>
 
           <SectionCard
-            title="8. 4-axis definition flags legacy"
+            title="9. 4-axis definition flags legacy"
             description="EXT, STR, FLW, dan CRD adalah flag kandidat, bukan gate. Kolom negative R share menunjukkan bucket mana yang menyumbang kerusakan terbesar."
           >
             <AxisAuditTable rows={audit.axis_rows} />
           </SectionCard>
 
           <div className="grid gap-4 2xl:grid-cols-2">
-            <SectionCard title="9A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
+            <SectionCard title="10A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
               <CrossTable rows={audit.cross_tables.EXTxSTR || []} />
             </SectionCard>
-            <SectionCard title="9B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
+            <SectionCard title="10B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
               <CrossTable rows={audit.cross_tables.FLWxCRD || []} />
             </SectionCard>
           </div>
 
           <SectionCard
-            title="10. Geometry diagnostic"
+            title="11. Geometry diagnostic"
             description="Kalau banyak signal pernah +0.5R/+1R tapi gagal TP, problemnya bukan hanya definisi, tapi cara panen target/stop."
           >
             <GeometryTable rows={audit.geometry_diagnostic.mfe_threshold_rows} read={audit.geometry_diagnostic.read} quantiles={audit.geometry_diagnostic} />
           </SectionCard>
 
           <SectionCard
-            title="11. Ablation preview"
+            title="12. Ablation preview"
             description="Simulasi read-only: jika flag tertentu dibuang, survivor membaik atau tidak. Ini belum rule, baru calon hipotesis."
           >
             <AblationTable rows={audit.ablation_preview} />
           </SectionCard>
 
           <SectionCard
-            title="12. TP vs SL evidence"
+            title="13. TP vs SL evidence"
             description="Median dan kuartil angka aktual. Ini menjawab data mana yang beda antara signal yang kena target dan stop."
           >
             <EvidenceTable rows={(payload.evidence_comparison || []).slice(0, 18)} sampleTotal={coverage.mid_long_1h_rows} />
           </SectionCard>
 
           <SectionCard
-            title="13. Recent closed MID_LONG 1h"
+            title="14. Recent closed MID_LONG 1h"
             description="Sample sinyal terbaru untuk dibuka ke detail chart. Gunakan ini untuk validasi visual bucket yang terlihat merusak."
           >
             <BaselineSignalTable rows={payload.items} />
@@ -233,6 +255,250 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function IntegrityAuditPanel({ audit }: { audit: MidLongIntegrityAudit }) {
+  const flags = audit.anomaly_flags || [];
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-5">
+        <Info label="Read" value={humanFlag(audit.read)} helper="Kalau ada warning, baca dulu sebelum damage filter." />
+        <Info label="Path rows" value={audit.path_economics_rows.length.toString()} helper="Path economics + cost drag." />
+        <Info label="Flow rows" value={audit.flow_economics_rows.length.toString()} helper="Flow vs realistic economics." />
+        <Info label="Room rows" value={audit.room_quality_rows.length.toString()} helper="Coverage dan non-monotonic risk." />
+        <Info label="Flags" value={flags.length.toString()} helper="Anomali yang harus diaudit." />
+      </div>
+
+      {flags.length > 0 && (
+        <div className="grid gap-3 border-b border-line p-4 lg:grid-cols-2">
+          {flags.map((flag) => (
+            <div key={flag.flag_id} className="rounded-md border border-amber-300 bg-amber-50 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge value={flag.severity} />
+                <div className="font-bold">{humanFlag(flag.flag_id)}</div>
+              </div>
+              <div className="mt-2 text-sm leading-6 text-slate-700">{flag.read}</div>
+              <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                {flag.sample_count !== undefined && <div>Sample: <b>{flag.sample_count}</b></div>}
+                {flag.sample_retention_pct !== undefined && <div>Share: <b>{formatPct(flag.sample_retention_pct)}</b></div>}
+                {flag.realistic_avg_r_closed !== undefined && <div>Avg R: <b>{fmtSigned(flag.realistic_avg_r_closed)}R</b></div>}
+                {flag.execution_drag_avg_r !== undefined && <div>Drag avg: <b>{fmtSigned(flag.execution_drag_avg_r)}R</b></div>}
+              </div>
+              {flag.next_check && <div className="mt-2 text-xs font-semibold text-slate-700">Next: {flag.next_check}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid gap-4 p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Path economics</div>
+            <div className="mt-1 text-xs text-slate-500">Ideal vs realistic, cost drag, stop distance, dan acceptance conversion per path.</div>
+          </div>
+          <EconomicTable rows={audit.path_economics_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Flow economics</div>
+            <div className="mt-1 text-xs text-slate-500">Flow confirmed/weak/mixed dibaca bersama drag dan conversion, bukan winrate saja.</div>
+          </div>
+          <EconomicTable rows={audit.flow_economics_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Room quality</div>
+            <div className="mt-1 text-xs text-slate-500">Room masih descriptive sampai coverage dan zone anchor lebih stabil.</div>
+          </div>
+          <EconomicTable rows={audit.room_quality_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Cost economics</div>
+            <div className="mt-1 text-xs text-slate-500">Biaya dalam R bisa membuat arah benar tetap tidak ekonomis.</div>
+          </div>
+          <EconomicTable rows={audit.cost_economics_rows} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DamageIsolationPanel({ damage }: { damage: NonNullable<MidLongBaselineResponse["definition_audit"]>["damage_isolation"] }) {
+  if (!damage) return null;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-4">
+        <Info label="Read" value={damage.read} helper="Filter paling kuat sementara, read-only." />
+        <Info label="Experiments" value={damage.experiment_rows.length.toString()} helper="DI-00 sampai DI-05." />
+        <Info label="MID_RANGE cross" value={Object.keys(damage.mid_range_interactions || {}).length.toString()} helper="Cari subset tersembunyi." />
+        <Info label="CONFIRMED cross" value={Object.keys(damage.confirmed_flow_interactions || {}).length.toString()} helper="Flow benar gagal di struktur apa." />
+      </div>
+
+      <DamageExperimentTable rows={damage.experiment_rows} />
+
+      <div className="grid gap-4 border-t border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">MID_RANGE interactions</div>
+            <div className="mt-1 text-xs text-slate-500">Pertanyaan: apakah ada subset MID_RANGE yang masih punya anchor tersembunyi?</div>
+          </div>
+          <SubsetInteractionTables tables={damage.mid_range_interactions || {}} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">CONFIRMED flow interactions</div>
+            <div className="mt-1 text-xs text-slate-500">Pertanyaan: flow sudah benar, tapi gagal karena setup, room, crowding, extension, atau cost?</div>
+          </div>
+          <SubsetInteractionTables tables={damage.confirmed_flow_interactions || {}} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EconomicTable({ rows }: { rows: MidLongEconomicRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Economics kosong" detail="Belum ada row untuk audit ini." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Ideal / realistic</th>
+            <th>Avg ideal / real</th>
+            <th>Drag</th>
+            <th>Cost / stop</th>
+            <th>Accept +0.5R</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 16).map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-64">
+                <StatusBadge value={humanFlag(row.label)} />
+                {row.path_read && <div className="mt-1 text-xs leading-5 text-slate-500">{row.path_read}</div>}
+              </td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>
+                <div>{fmtSigned(row.ideal_total_r_closed)}R ideal</div>
+                <div className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R real</div>
+              </td>
+              <td>{fmtSigned(row.ideal_avg_r_closed)}R / {fmtSigned(row.realistic_avg_r_closed)}R</td>
+              <td>
+                <div>{fmtSigned(row.execution_drag_r)}R</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.execution_drag_avg_r)}R avg</div>
+              </td>
+              <td>
+                <div>{fmtNumber(row.median_cost_r)}R cost</div>
+                <div className="text-xs text-slate-500">{fmtNumber(row.median_stop_pct)}% stop</div>
+              </td>
+              <td>
+                <div>{row.close_050_count || 0}/{row.touch_050_count || 0}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.close_acceptance_conversion_pct)}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DamageExperimentTable({ rows }: { rows: MidLongDamageExperimentRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Damage isolation kosong" detail="Belum ada eksperimen DI." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Experiment</th>
+            <th>Retained / removed</th>
+            <th>Retained TP/SL</th>
+            <th>Retained R</th>
+            <th>Avg delta</th>
+            <th>Removed R</th>
+            <th>Damage removed</th>
+            <th>Winner cost</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.experiment_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{row.experiment_id} - {row.label}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>{row.retained_count} / {row.removed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className={toneClass(row.removed_realistic_total_r_closed)}>{fmtSigned(row.removed_realistic_total_r_closed)}R</td>
+              <td>
+                <div>Close fail {row.close_profit_then_fail_removed_count} ({formatPct(row.close_profit_then_fail_removed_pct)})</div>
+                <div className="text-xs text-slate-500">Instant SL {row.instant_sl_removed_count} ({formatPct(row.instant_sl_removed_pct)})</div>
+              </td>
+              <td>Pullback TP removed {row.pullback_tp_removed_count} ({formatPct(row.pullback_tp_removed_pct)})</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.damage_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SubsetInteractionTables({ tables }: { tables: Record<string, MidLongSubsetDimensionRow[]> }) {
+  const entries = Object.entries(tables);
+  if (!entries.length) return <div className="p-4"><EmptyState title="Interaction kosong" detail="Belum ada interaction table." /></div>;
+  return (
+    <div className="grid gap-4 p-4">
+      {entries.map(([key, rows]) => (
+        <div key={key} className="rounded-md border border-line bg-field/30">
+          <div className="border-b border-line px-3 py-2 text-sm font-bold">{humanFlag(key)}</div>
+          <SubsetInteractionTable rows={rows.slice(0, 8)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SubsetInteractionTable({ rows }: { rows: MidLongSubsetDimensionRow[] }) {
+  if (!rows.length) return <div className="p-3 text-sm text-slate-500">No rows.</div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>N</th>
+            <th>Share</th>
+            <th>TP / SL</th>
+            <th>R</th>
+            <th>Avg</th>
+            <th>Path mix</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td><StatusBadge value={humanFlag(row.state)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{formatPct(row.anchor_retention_pct)}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

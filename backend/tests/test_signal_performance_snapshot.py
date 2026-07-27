@@ -154,6 +154,11 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "setup_family" in baseline["definition_audit"]["taxonomy_study"]["dimension_rows"]
     assert "path_sequence_rows" in baseline["definition_audit"]["taxonomy_study"]
     assert "draft_v21_previews" in baseline["definition_audit"]["taxonomy_study"]
+    assert "integrity_audit" in baseline["definition_audit"]
+    assert "path_economics_rows" in baseline["definition_audit"]["integrity_audit"]
+    assert "damage_isolation" in baseline["definition_audit"]
+    assert len(baseline["definition_audit"]["damage_isolation"]["experiment_rows"]) == 6
+    assert "mid_range_interactions" in baseline["definition_audit"]["damage_isolation"]
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

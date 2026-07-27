@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-27",
+    version: "LAB-RESET-06",
+    title: "MID_LONG Damage Isolation + Integrity Audit",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan tahap integrity audit dan Damage Isolation sebelum protection study, supaya MID_LONG 1h tidak langsung diubah rule-nya sebelum sumber damage entry benar-benar terbaca.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan integrity_audit dengan path economics, flow economics, room quality, cost economics, dan anomaly flags.",
+      "Endpoint MID_LONG 1h menambahkan damage_isolation DI-00 sampai DI-05 untuk membandingkan retained cohort versus removed damage.",
+      "Damage Isolation menampilkan MID_RANGE interactions dan CONFIRMED flow interactions agar terlihat apakah damage berasal dari setup, flow, crowding, extension, room, atau cost.",
+      "Halaman /mid-long-research-study sekarang menaruh Integrity Audit dan Damage Isolation di bagian paling atas sebelum taxonomy detail.",
+      "Patch ini tetap read-only: tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang lebih runtut: audit anomali dulu, isolasi bucket yang merusak, baru nanti boleh meneliti protection/dynamic exit pada populasi yang sudah lebih bersih.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Damage Isolation" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-27",
     version: "LAB-RESET-05",
     title: "MID_LONG 1h Taxonomy + Path Sequencing",
     status: "LIVE",

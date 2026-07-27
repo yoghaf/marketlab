@@ -3818,6 +3818,8 @@ export type MidLongDefinitionAudit = {
   };
   ablation_preview: MidLongAblationRow[];
   taxonomy_study?: MidLongTaxonomyStudy;
+  integrity_audit?: MidLongIntegrityAudit;
+  damage_isolation?: MidLongDamageIsolation;
   verdict: {
     primary: string;
     labels: string[];
@@ -3825,6 +3827,105 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongIntegrityAudit = {
+  scope: string;
+  method: string;
+  path_economics_rows: MidLongEconomicRow[];
+  flow_economics_rows: MidLongEconomicRow[];
+  room_quality_rows: MidLongEconomicRow[];
+  cost_economics_rows: MidLongEconomicRow[];
+  anomaly_flags: MidLongIntegrityFlag[];
+  read: string;
+};
+
+export type MidLongIntegrityFlag = {
+  flag_id: string;
+  severity: string;
+  read: string;
+  sample_count?: number | string | null;
+  sample_retention_pct?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  execution_drag_avg_r?: string | number | null;
+  low_room_avg_r?: string | number | null;
+  moderate_room_avg_r?: string | number | null;
+  high_room_avg_r?: string | number | null;
+  next_check?: string | null;
+};
+
+export type MidLongEconomicRow = MidLongEntryCombinationRow & {
+  ideal_avg_r_closed?: string | number | null;
+  execution_drag_r?: string | number | null;
+  execution_drag_avg_r?: string | number | null;
+  median_cost_r?: string | number | null;
+  median_stop_pct?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_time_to_tp_bars?: string | number | null;
+  touch_050_count?: number;
+  close_050_count?: number;
+  close_acceptance_conversion_pct?: string | number | null;
+  path_label?: string;
+  path_read?: string;
+  taxonomy_key?: string;
+  taxonomy_label?: string;
+  state?: string;
+};
+
+export type MidLongDamageIsolation = {
+  scope: string;
+  method: string;
+  experiment_rows: MidLongDamageExperimentRow[];
+  mid_range_interactions: Record<string, MidLongSubsetDimensionRow[]>;
+  confirmed_flow_interactions: Record<string, MidLongSubsetDimensionRow[]>;
+  guardrails: string[];
+  read: string;
+};
+
+export type MidLongDamageExperimentRow = MidLongEntryCombinationRow & {
+  experiment_id: string;
+  retained_count: number;
+  removed_count: number;
+  retained_ideal_avg_r_closed?: string | number | null;
+  retained_realistic_avg_r_closed?: string | number | null;
+  retained_execution_drag_r?: string | number | null;
+  retained_execution_drag_avg_r?: string | number | null;
+  removed_tp_count: number;
+  removed_sl_count: number;
+  removed_realistic_total_r_closed?: string | number | null;
+  removed_realistic_avg_r_closed?: string | number | null;
+  retained_path_mix: Record<string, number>;
+  removed_path_mix: Record<string, number>;
+  close_profit_then_fail_removed_count: number;
+  close_profit_then_fail_removed_pct?: string | number | null;
+  pullback_tp_removed_count: number;
+  pullback_tp_removed_pct?: string | number | null;
+  instant_sl_removed_count: number;
+  instant_sl_removed_pct?: string | number | null;
+  month_rows: MidLongDamageMonthRow[];
+  damage_read: string;
+};
+
+export type MidLongDamageMonthRow = {
+  month: string;
+  sample_count: number;
+  tp_count: number;
+  sl_count: number;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidLongSubsetDimensionRow = MidLongEntryCombinationRow & {
+  anchor_key: string;
+  anchor_value: string;
+  dimension_key: string;
+  dimension_label: string;
+  state: string;
+  anchor_sample_count: number;
+  anchor_retention_pct?: string | number | null;
+  path_mix: Record<string, number>;
 };
 
 export type MidLongTaxonomyStudy = {

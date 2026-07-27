@@ -1209,6 +1209,7 @@ def _mid_long_definition_audit(
     min_sample: int,
 ) -> dict[str, Any]:
     axis_states = {str(item.get("signal_id") or idx): _mid_long_definition_axis_state(item) for idx, item in enumerate(items)}
+    taxonomy_by_id = _mid_long_taxonomy_by_id(items)
     layer_rows = _mid_long_layer_decomposition(items, baseline=baseline, min_sample=min_sample)
     path_summary = _mid_long_path_decision_summary(items)
     axis_rows = _mid_long_axis_rows(items, axis_states=axis_states, baseline=baseline, min_sample=min_sample)
@@ -1237,7 +1238,24 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
-    taxonomy = _mid_long_taxonomy_context(items, baseline=baseline, min_sample=min_sample)
+    taxonomy = _mid_long_taxonomy_context(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    integrity = _mid_long_integrity_audit(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    damage = _mid_long_damage_isolation(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     verdict = _mid_long_definition_verdict(
         baseline=baseline,
         layer_rows=layer_rows,
@@ -1258,6 +1276,8 @@ def _mid_long_definition_audit(
         "geometry_diagnostic": geometry,
         "ablation_preview": ablation,
         "taxonomy_study": taxonomy,
+        "integrity_audit": integrity,
+        "damage_isolation": damage,
         "verdict": verdict,
         "guardrails": [
             "Candidate flags are not live gates.",
@@ -1605,21 +1625,16 @@ def _mid_long_ablation_preview(
 def _mid_long_taxonomy_context(
     items: list[dict[str, Any]],
     *,
+    taxonomy_by_id: dict[str, dict[str, Any]] | None = None,
     baseline: dict[str, Any],
     min_sample: int,
 ) -> dict[str, Any]:
+    taxonomy_by_id = taxonomy_by_id or _mid_long_taxonomy_by_id(items)
     extension_values = [
         value
         for item in items
         if (value := _mid_long_evidence_value(item, "atr_extension_normalized")) is not None
     ]
-    taxonomy_by_id = {
-        str(item.get("signal_id") or idx): _mid_long_taxonomy_state(
-            item,
-            extension_values=extension_values,
-        )
-        for idx, item in enumerate(items)
-    }
     dimensions: tuple[tuple[str, str], ...] = (
         ("structure_status", "Structure status"),
         ("setup_family", "Setup family"),
@@ -1710,6 +1725,21 @@ def _mid_long_taxonomy_context(
             "breakout follow-through is post-entry diagnostic and must not be used as an entry gate.",
             "path_label_050 is based on +0.50R close acceptance; +0.25R/+0.75R/+1R events are retained in path_events when the snapshot is refreshed.",
         ],
+    }
+
+
+def _mid_long_taxonomy_by_id(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    extension_values = [
+        value
+        for item in items
+        if (value := _mid_long_evidence_value(item, "atr_extension_normalized")) is not None
+    ]
+    return {
+        str(item.get("signal_id") or idx): _mid_long_taxonomy_state(
+            item,
+            extension_values=extension_values,
+        )
+        for idx, item in enumerate(items)
     }
 
 
@@ -2235,6 +2265,635 @@ def _mid_long_preview_read(row: dict[str, Any], discarded_perf: dict[str, Any]) 
     if avg_delta > 0:
         return "Improves average R, but total R/sample/path mix must be checked."
     return "Not improving baseline yet; keep as diagnosis only."
+
+
+def _mid_long_integrity_audit(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    path_rows = _mid_long_economic_rows_by_path(items, baseline=baseline, min_sample=min_sample)
+    flow_rows = _mid_long_economic_rows_by_taxonomy(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        taxonomy_key="flow_state_provisional",
+        label_prefix="Flow",
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    room_rows = _mid_long_economic_rows_by_taxonomy(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        taxonomy_key="room_to_resistance_bucket",
+        label_prefix="Room",
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    cost_rows = _mid_long_economic_rows_by_taxonomy(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        taxonomy_key="projected_cost_bucket",
+        label_prefix="Cost",
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    flags = _mid_long_integrity_flags(
+        items,
+        path_rows=path_rows,
+        room_rows=room_rows,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h taxonomy/path integrity audit",
+        "method": (
+            "Checks whether taxonomy/path labels are economically coherent before any damage/protection rule is studied."
+        ),
+        "path_economics_rows": path_rows,
+        "flow_economics_rows": flow_rows,
+        "room_quality_rows": room_rows,
+        "cost_economics_rows": cost_rows,
+        "anomaly_flags": flags,
+        "read": _mid_long_integrity_read(flags),
+    }
+
+
+def _mid_long_damage_isolation(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    experiments: tuple[tuple[str, str, str], ...] = (
+        ("DI-00", "Baseline V2", "No damage filter; control row."),
+        ("DI-01", "Exclude MID_RANGE", "setup_family != MID_RANGE"),
+        ("DI-02", "Exclude WEAK flow", "flow_state_provisional != WEAK"),
+        ("DI-03", "Exclude MID_RANGE + WEAK", "DI-01 AND DI-02"),
+        ("DI-04", "DI-03 + exclude extreme cost", "DI-03 AND projected_cost_bucket != EXTREME_COST"),
+        (
+            "DI-05",
+            "DI-04 + conditional crowding reject",
+            "DI-04 AND NOT(high/extreme crowding with high extension, mixed/weak flow, or low room)",
+        ),
+    )
+    rows = [
+        _mid_long_damage_experiment_row(
+            experiment_id,
+            label,
+            expression,
+            items,
+            taxonomy_by_id=taxonomy_by_id,
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+        for experiment_id, label, expression in experiments
+    ]
+    return {
+        "scope": "MID_LONG 1h damage isolation, read-only",
+        "method": (
+            "Each DI row keeps a retained cohort and reports what damage/winners were removed. "
+            "This is not a Signal Factory gate."
+        ),
+        "experiment_rows": rows,
+        "mid_range_interactions": {
+            "flow_state_provisional": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="setup_family",
+                anchor_value="MID_RANGE",
+                dimension_key="flow_state_provisional",
+                dimension_label="MID_RANGE x flow",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "crowding_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="setup_family",
+                anchor_value="MID_RANGE",
+                dimension_key="crowding_bucket",
+                dimension_label="MID_RANGE x crowding",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "extension_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="setup_family",
+                anchor_value="MID_RANGE",
+                dimension_key="extension_bucket",
+                dimension_label="MID_RANGE x extension",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "room_to_resistance_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="setup_family",
+                anchor_value="MID_RANGE",
+                dimension_key="room_to_resistance_bucket",
+                dimension_label="MID_RANGE x room",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "path_label_050": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="setup_family",
+                anchor_value="MID_RANGE",
+                dimension_key="path_label_050",
+                dimension_label="MID_RANGE x path",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+        },
+        "confirmed_flow_interactions": {
+            "setup_family": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="flow_state_provisional",
+                anchor_value="CONFIRMED",
+                dimension_key="setup_family",
+                dimension_label="CONFIRMED flow x setup",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "room_to_resistance_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="flow_state_provisional",
+                anchor_value="CONFIRMED",
+                dimension_key="room_to_resistance_bucket",
+                dimension_label="CONFIRMED flow x room",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "crowding_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="flow_state_provisional",
+                anchor_value="CONFIRMED",
+                dimension_key="crowding_bucket",
+                dimension_label="CONFIRMED flow x crowding",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "extension_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="flow_state_provisional",
+                anchor_value="CONFIRMED",
+                dimension_key="extension_bucket",
+                dimension_label="CONFIRMED flow x extension",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "projected_cost_bucket": _mid_long_subset_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                anchor_key="flow_state_provisional",
+                anchor_value="CONFIRMED",
+                dimension_key="projected_cost_bucket",
+                dimension_label="CONFIRMED flow x cost",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+        },
+        "guardrails": [
+            "DI rows are not production hard rejects.",
+            "A damage filter must be validated chronologically before becoming any shadow rule.",
+            "Protection/BE study must be run after damage-cleaned cohorts are understood.",
+        ],
+        "read": _mid_long_damage_isolation_read(rows),
+    }
+
+
+def _mid_long_economic_rows_by_path(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_path_label_050(item)].append(item)
+    rows = [
+        _mid_long_economic_row(
+            f"PATH_ECON:{label}",
+            label,
+            f"path_label_050 == {label}",
+            label_items,
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+        for label, label_items in grouped.items()
+    ]
+    for row in rows:
+        row["path_label"] = row["label"]
+        row["path_read"] = _mid_long_path_sequence_read(str(row["label"]))
+    rows.sort(
+        key=lambda row: (
+            _mid_long_path_priority(str(row.get("path_label") or "")),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_economic_rows_by_taxonomy(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    taxonomy_key: str,
+    label_prefix: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        grouped[str(taxonomy.get(taxonomy_key) or "UNKNOWN")].append(item)
+    rows = [
+        _mid_long_economic_row(
+            f"ECON:{taxonomy_key}:{state}",
+            state,
+            f"{taxonomy_key} == {state}",
+            state_items,
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+        for state, state_items in grouped.items()
+    ]
+    for row in rows:
+        row["taxonomy_key"] = taxonomy_key
+        row["taxonomy_label"] = label_prefix
+        row["state"] = row["label"]
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_economic_row(
+    filter_id: str,
+    label: str,
+    expression: str,
+    row_items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    row = _mid_long_perf_row(
+        filter_id,
+        label,
+        expression,
+        row_items,
+        baseline=baseline,
+        required_fields=(),
+        min_sample=min_sample,
+    )
+    closed_count = int(row.get("closed_count") or 0)
+    ideal_total = _decimal_or_zero_snapshot(row.get("ideal_total_r_closed"))
+    realistic_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    row.update(
+        {
+            "ideal_avg_r_closed": ideal_total / Decimal(closed_count) if closed_count > 0 else None,
+            "execution_drag_r": ideal_total - realistic_total,
+            "execution_drag_avg_r": (ideal_total - realistic_total) / Decimal(closed_count) if closed_count > 0 else None,
+            "median_cost_r": _median_decimal_snapshot(_mid_long_item_decimal_values(row_items, "realistic_cost_r_estimate")),
+            "median_stop_pct": _median_decimal_snapshot(_mid_long_stop_pct_values(row_items)),
+            "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(row_items, "mfe_r")),
+            "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(row_items, "mae_r")),
+            "median_time_to_tp_bars": _median_decimal_snapshot(
+                _mid_long_path_event_decimal_values(row_items, "tp_hit_bar")
+            ),
+            "touch_050_count": _mid_long_path_event_count(row_items, "first_touch_050_bar"),
+            "close_050_count": _mid_long_path_event_count(row_items, "first_close_050_bar"),
+            "close_acceptance_conversion_pct": _pct_decimal(
+                _mid_long_path_event_count(row_items, "first_close_050_bar"),
+                _mid_long_path_event_count(row_items, "first_touch_050_bar"),
+            ),
+        }
+    )
+    return row
+
+
+def _mid_long_integrity_flags(
+    items: list[dict[str, Any]],
+    *,
+    path_rows: list[dict[str, Any]],
+    room_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    flags: list[dict[str, Any]] = []
+    clean = next((row for row in path_rows if row.get("path_label") == "CLEAN_CONTINUATION_TP"), None)
+    if clean and int(clean.get("closed_count") or 0) >= min_sample:
+        clean_avg = _decimal_or_zero_snapshot(clean.get("realistic_avg_r_closed"))
+        if clean_avg < Decimal("1.0"):
+            flags.append(
+                {
+                    "flag_id": "CLEAN_CONTINUATION_LOW_REALISTIC_R",
+                    "severity": "HIGH",
+                    "read": "CLEAN_CONTINUATION_TP exists, but realistic average is far below the nominal target.",
+                    "sample_count": clean.get("closed_count"),
+                    "realistic_avg_r_closed": clean.get("realistic_avg_r_closed"),
+                    "execution_drag_avg_r": clean.get("execution_drag_avg_r"),
+                    "next_check": "Check cost_R, stop_pct, same-bar handling, and path classifier priority.",
+                }
+            )
+    room_unavailable = next((row for row in room_rows if row.get("state") == "ROOM_UNAVAILABLE"), None)
+    if room_unavailable and _decimal_or_zero_snapshot(room_unavailable.get("sample_retention_pct")) >= Decimal("50"):
+        flags.append(
+            {
+                "flag_id": "ROOM_UNAVAILABLE_HIGH",
+                "severity": "MEDIUM",
+                "read": "Most MID_LONG rows do not have usable room-to-resistance data yet.",
+                "sample_count": room_unavailable.get("closed_count"),
+                "sample_retention_pct": room_unavailable.get("sample_retention_pct"),
+                "next_check": "Do not make room a gate until coverage and zone anchoring are audited.",
+            }
+        )
+    room_by_state = {str(row.get("state")): row for row in room_rows}
+    low_avg = _decimal_or_none_snapshot((room_by_state.get("LOW_ROOM") or {}).get("realistic_avg_r_closed"))
+    moderate_avg = _decimal_or_none_snapshot((room_by_state.get("MODERATE_ROOM") or {}).get("realistic_avg_r_closed"))
+    high_avg = _decimal_or_none_snapshot((room_by_state.get("HIGH_ROOM") or {}).get("realistic_avg_r_closed"))
+    if low_avg is not None and moderate_avg is not None and high_avg is not None and moderate_avg < low_avg and moderate_avg < high_avg:
+        flags.append(
+            {
+                "flag_id": "ROOM_BUCKET_NON_MONOTONIC",
+                "severity": "MEDIUM",
+                "read": "Moderate room is worse than both low and high room; zone selection/bucket boundaries need audit.",
+                "low_room_avg_r": low_avg,
+                "moderate_room_avg_r": moderate_avg,
+                "high_room_avg_r": high_avg,
+                "next_check": "Audit nearest resistance zone, room distance, stop distance, cost, and zone confidence.",
+            }
+        )
+    same_bar = [item for item in items if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"]
+    if same_bar:
+        flags.append(
+            {
+                "flag_id": "SAME_BAR_AMBIGUITY_PRESENT",
+                "severity": "LOW",
+                "read": "Some rows touch TP and SL in the same candle; keep conservative handling.",
+                "sample_count": len(same_bar),
+                "next_check": "Use lower timeframe ordering only if available; never assume favorable ordering.",
+            }
+        )
+    return flags
+
+
+def _mid_long_integrity_read(flags: list[dict[str, Any]]) -> str:
+    if any(flag.get("severity") == "HIGH" for flag in flags):
+        return "INTEGRITY_AUDIT_REQUIRED"
+    if flags:
+        return "INTEGRITY_WARNINGS_PRESENT"
+    return "INTEGRITY_NO_MAJOR_ANOMALY"
+
+
+def _mid_long_damage_experiment_row(
+    experiment_id: str,
+    label: str,
+    expression: str,
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    retained: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        (retained if _mid_long_damage_retains(experiment_id, taxonomy) else removed).append(item)
+    row = _mid_long_perf_row(
+        experiment_id,
+        label,
+        expression,
+        retained,
+        baseline=baseline if experiment_id != "DI-00" else None,
+        required_fields=(),
+        min_sample=min_sample,
+    )
+    retained_closed = int(row.get("closed_count") or 0)
+    ideal_total = _decimal_or_zero_snapshot(row.get("ideal_total_r_closed"))
+    realistic_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    removed_perf = aggregate_signal_performance_items(removed)
+    baseline_paths = _mid_long_path_mix(items)
+    removed_paths = _mid_long_path_mix(removed)
+    row.update(
+        {
+            "experiment_id": experiment_id,
+            "retained_count": len(retained),
+            "removed_count": len(removed),
+            "retained_ideal_avg_r_closed": ideal_total / Decimal(retained_closed) if retained_closed > 0 else None,
+            "retained_realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+            "retained_execution_drag_r": ideal_total - realistic_total,
+            "retained_execution_drag_avg_r": (ideal_total - realistic_total) / Decimal(retained_closed) if retained_closed > 0 else None,
+            "removed_tp_count": removed_perf["tp_count"],
+            "removed_sl_count": removed_perf["sl_count"],
+            "removed_realistic_total_r_closed": removed_perf["realistic_total_r_closed"],
+            "removed_realistic_avg_r_closed": removed_perf["realistic_avg_r_closed"],
+            "retained_path_mix": _mid_long_path_mix(retained),
+            "removed_path_mix": removed_paths,
+            "close_profit_then_fail_removed_count": removed_paths.get("CLOSE_PROFIT_THEN_FAIL", 0),
+            "close_profit_then_fail_removed_pct": _pct_decimal(
+                removed_paths.get("CLOSE_PROFIT_THEN_FAIL", 0),
+                baseline_paths.get("CLOSE_PROFIT_THEN_FAIL", 0),
+            ),
+            "pullback_tp_removed_count": removed_paths.get("PULLBACK_TP", 0),
+            "pullback_tp_removed_pct": _pct_decimal(
+                removed_paths.get("PULLBACK_TP", 0),
+                baseline_paths.get("PULLBACK_TP", 0),
+            ),
+            "instant_sl_removed_count": removed_paths.get("INSTANT_SL", 0),
+            "instant_sl_removed_pct": _pct_decimal(
+                removed_paths.get("INSTANT_SL", 0),
+                baseline_paths.get("INSTANT_SL", 0),
+            ),
+            "month_rows": _mid_long_month_rows(retained),
+            "damage_read": _mid_long_damage_row_read(row, removed_perf),
+        }
+    )
+    return row
+
+
+def _mid_long_damage_retains(experiment_id: str, taxonomy: dict[str, Any]) -> bool:
+    if experiment_id == "DI-00":
+        return True
+    if experiment_id == "DI-01":
+        return taxonomy.get("setup_family") != "MID_RANGE"
+    if experiment_id == "DI-02":
+        return taxonomy.get("flow_state_provisional") != "WEAK"
+    if experiment_id == "DI-03":
+        return taxonomy.get("setup_family") != "MID_RANGE" and taxonomy.get("flow_state_provisional") != "WEAK"
+    if experiment_id == "DI-04":
+        return (
+            taxonomy.get("setup_family") != "MID_RANGE"
+            and taxonomy.get("flow_state_provisional") != "WEAK"
+            and taxonomy.get("projected_cost_bucket") != "EXTREME_COST"
+        )
+    if experiment_id == "DI-05":
+        crowding = taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"}
+        danger_pair = (
+            taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+            or taxonomy.get("flow_state_provisional") in {"MIXED", "WEAK"}
+            or taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM"
+        )
+        return (
+            taxonomy.get("setup_family") != "MID_RANGE"
+            and taxonomy.get("flow_state_provisional") != "WEAK"
+            and taxonomy.get("projected_cost_bucket") != "EXTREME_COST"
+            and not (crowding and danger_pair)
+        )
+    return True
+
+
+def _mid_long_subset_dimension_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    anchor_key: str,
+    anchor_value: str,
+    dimension_key: str,
+    dimension_label: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    anchored: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        if taxonomy.get(anchor_key) != anchor_value:
+            continue
+        anchored.append(item)
+        grouped[str(taxonomy.get(dimension_key) or "UNKNOWN")].append(item)
+    rows = [
+        _mid_long_perf_row(
+            f"{anchor_key}:{anchor_value}:{dimension_key}:{state}",
+            state,
+            f"{anchor_key} == {anchor_value} AND {dimension_key} == {state}",
+            state_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        for state, state_items in grouped.items()
+    ]
+    for row in rows:
+        row.update(
+            {
+                "anchor_key": anchor_key,
+                "anchor_value": anchor_value,
+                "dimension_key": dimension_key,
+                "dimension_label": dimension_label,
+                "state": row.get("label"),
+                "anchor_sample_count": len(anchored),
+                "anchor_retention_pct": _pct_decimal(int(row.get("sample_count") or 0), len(anchored)),
+                "path_mix": _mid_long_path_mix(grouped[str(row.get("label"))]),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_damage_row_read(row: dict[str, Any], removed_perf: dict[str, Any]) -> str:
+    if str(row.get("experiment_id")) == "DI-00":
+        return "Baseline control."
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    removed_total = _decimal_or_zero_snapshot(removed_perf.get("realistic_total_r_closed"))
+    retained_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    if avg_delta > Decimal("0.10") and removed_total < 0 and retained_total > 0:
+        return "Strong damage isolation candidate; still needs chronological validation."
+    if avg_delta > 0 and removed_total < 0:
+        return "Damage is reduced, but survivor total/sample/path mix still needs review."
+    if avg_delta > 0:
+        return "Average improves but removed set is not clearly the only damage source."
+    return "Does not isolate damage yet."
+
+
+def _mid_long_damage_isolation_read(rows: list[dict[str, Any]]) -> str:
+    candidates = [
+        row
+        for row in rows
+        if str(row.get("experiment_id")) != "DI-00"
+        and _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")) > 0
+        and _decimal_or_zero_snapshot(row.get("removed_realistic_total_r_closed")) < 0
+    ]
+    if not candidates:
+        return "NO_DAMAGE_FILTER_READY"
+    best = max(candidates, key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")))
+    return f"{best.get('experiment_id')} is the strongest read-only damage-isolation candidate."
+
+
+def _mid_long_item_decimal_values(items: list[dict[str, Any]], key: str) -> list[Decimal]:
+    return [value for item in items if (value := _decimal_or_none_snapshot(item.get(key))) is not None]
+
+
+def _mid_long_path_event_decimal_values(items: list[dict[str, Any]], key: str) -> list[Decimal]:
+    values: list[Decimal] = []
+    for item in items:
+        events = item.get("path_events") if isinstance(item.get("path_events"), dict) else {}
+        value = _decimal_or_none_snapshot(events.get(key))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _mid_long_path_event_count(items: list[dict[str, Any]], key: str) -> int:
+    count = 0
+    for item in items:
+        events = item.get("path_events") if isinstance(item.get("path_events"), dict) else {}
+        if events.get(key) not in (None, ""):
+            count += 1
+    return count
+
+
+def _mid_long_stop_pct_values(items: list[dict[str, Any]]) -> list[Decimal]:
+    values: list[Decimal] = []
+    for item in items:
+        entry = _decimal_or_none_snapshot(item.get("price_at_signal"))
+        stop = _decimal_or_none_snapshot(item.get("sl_ref"))
+        if entry is None or stop is None or entry <= 0:
+            continue
+        values.append(abs(entry - stop) / entry * Decimal("100"))
+    return values
+
+
+def _mid_long_month_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        stamp = str(item.get("signal_timestamp") or item.get("window_close_time") or "UNKNOWN")
+        grouped[stamp[:7] if len(stamp) >= 7 else "UNKNOWN"].append(item)
+    rows: list[dict[str, Any]] = []
+    for month, month_items in grouped.items():
+        perf = aggregate_signal_performance_items(month_items)
+        rows.append(
+            {
+                "month": month,
+                "sample_count": len(month_items),
+                "tp_count": perf["tp_count"],
+                "sl_count": perf["sl_count"],
+                "realistic_total_r_closed": perf["realistic_total_r_closed"],
+                "realistic_avg_r_closed": perf["realistic_avg_r_closed"],
+                "top_symbol_share_pct": _mid_long_top_n_symbol_share(month_items, n=1),
+            }
+        )
+    rows.sort(key=lambda row: str(row.get("month") or ""))
+    return rows
 
 
 def _mid_long_definition_verdict(
