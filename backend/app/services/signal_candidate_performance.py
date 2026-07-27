@@ -2982,6 +2982,16 @@ class SignalCandidatePerformanceService:
             "realism_penalty_r": None,
             "mfe_r": None,
             "mae_r": None,
+            "path_acceptance_threshold_r": Decimal("0.50"),
+            "path_label_050": "WAITING_DATA",
+            "path_same_bar_ambiguity": False,
+            "path_events": {},
+            "wick_to_close_decay_r": None,
+            "close_followthrough_1h_r": None,
+            "next_1h_close_direction": "UNAVAILABLE",
+            "close_above_entry_after_1h": None,
+            "time_to_mfe_050_bucket": "NEVER",
+            "time_to_mae_050_bucket": "NEVER",
             "candles_seen": 0,
             "stale_forward_data": False,
             "stale_reason": None,
@@ -3036,6 +3046,13 @@ class SignalCandidatePerformanceService:
                     **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
+                    **_forward_path_diagnostic(
+                        entry=entry,
+                        risk=risk,
+                        direction=direction,
+                        candles=future[:index],
+                        terminal_status="BOTH_HIT_SAME_CANDLE",
+                    ),
                     "candles_seen": index,
                 }
             if tp_hit:
@@ -3060,6 +3077,13 @@ class SignalCandidatePerformanceService:
                     **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
+                    **_forward_path_diagnostic(
+                        entry=entry,
+                        risk=risk,
+                        direction=direction,
+                        candles=future[:index],
+                        terminal_status="TP_HIT",
+                    ),
                     "candles_seen": index,
                 }
             if sl_hit:
@@ -3083,6 +3107,13 @@ class SignalCandidatePerformanceService:
                     **realistic_fields,
                     "mfe_r": mfe,
                     "mae_r": mae,
+                    **_forward_path_diagnostic(
+                        entry=entry,
+                        risk=risk,
+                        direction=direction,
+                        candles=future[:index],
+                        terminal_status="SL_HIT",
+                    ),
                     "candles_seen": index,
                 }
 
@@ -3113,6 +3144,13 @@ class SignalCandidatePerformanceService:
                     **{**realistic_open_fields, "realistic_result_status": "STALE_FORWARD_DATA"},
                     "mfe_r": mfe,
                     "mae_r": mae,
+                    **_forward_path_diagnostic(
+                        entry=entry,
+                        risk=risk,
+                        direction=direction,
+                        candles=future,
+                        terminal_status="STALE_FORWARD_DATA",
+                    ),
                     "candles_seen": len(future),
                     "stale_forward_data": True,
                     "stale_reason": "Symbol futures candles are behind the global evaluation candle.",
@@ -3131,6 +3169,13 @@ class SignalCandidatePerformanceService:
             **realistic_open_fields,
             "mfe_r": mfe,
             "mae_r": mae,
+            **_forward_path_diagnostic(
+                entry=entry,
+                risk=risk,
+                direction=direction,
+                candles=future,
+                terminal_status="OPEN",
+            ),
             "candles_seen": len(future),
             "freshness_gap_minutes": freshness_gap_minutes,
             "latest_symbol_candle_time": latest.close_time,
@@ -3736,6 +3781,199 @@ def _realistic_result_fields(
         fields["realistic_realized_r"] = None
         fields["realistic_unrealized_r"] = realistic_r
     return fields
+
+
+PATH_ACCEPTANCE_THRESHOLD_R = Decimal("0.50")
+PATH_EVENT_THRESHOLDS_R: tuple[tuple[str, Decimal], ...] = (
+    ("025", Decimal("0.25")),
+    ("050", Decimal("0.50")),
+    ("075", Decimal("0.75")),
+    ("100", Decimal("1.00")),
+)
+
+
+def _forward_path_diagnostic(
+    *,
+    entry: Decimal,
+    risk: Decimal,
+    direction: str,
+    candles: list[PerfCandle],
+    terminal_status: str,
+) -> dict[str, Any]:
+    if risk <= 0 or direction not in {"LONG", "SHORT"}:
+        return {
+            "path_acceptance_threshold_r": PATH_ACCEPTANCE_THRESHOLD_R,
+            "path_label_050": "UNAVAILABLE",
+            "path_same_bar_ambiguity": False,
+            "path_events": {},
+            "wick_to_close_decay_r": None,
+            "close_followthrough_1h_r": None,
+            "next_1h_close_direction": "UNAVAILABLE",
+            "close_above_entry_after_1h": None,
+            "time_to_mfe_050_bucket": "NEVER",
+            "time_to_mae_050_bucket": "NEVER",
+        }
+
+    events: dict[str, Any] = {}
+    first_touch_bar: dict[str, int] = {}
+    first_close_bar: dict[str, int] = {}
+    first_mae_bar: dict[str, int] = {}
+    max_wick_decay: Decimal | None = None
+    first_close_below_entry_bar: int | None = None
+    first_retrace_from_peak_050_bar: int | None = None
+    peak_profit_r = Decimal("-999")
+    terminal_bar = len(candles) if terminal_status in {"TP_HIT", "SL_HIT", "BOTH_HIT_SAME_CANDLE"} else None
+
+    for index, candle in enumerate(candles, start=1):
+        touch_r = _candle_profit_touch_r(entry=entry, risk=risk, direction=direction, candle=candle)
+        close_r = _candle_profit_close_r(entry=entry, risk=risk, direction=direction, candle=candle)
+        adverse_r = _candle_adverse_touch_r(entry=entry, risk=risk, direction=direction, candle=candle)
+        peak_profit_r = max(peak_profit_r, touch_r)
+        wick_decay = max(touch_r - close_r, Decimal("0"))
+        max_wick_decay = wick_decay if max_wick_decay is None else max(max_wick_decay, wick_decay)
+        if first_retrace_from_peak_050_bar is None and peak_profit_r - close_r >= Decimal("0.50"):
+            first_retrace_from_peak_050_bar = index
+            events["first_retrace_from_peak_050_bar"] = index
+            events["first_retrace_from_peak_050_time_utc"] = candle.close_time
+        if first_close_below_entry_bar is None and close_r < 0:
+            first_close_below_entry_bar = index
+            events["first_close_below_entry_bar"] = index
+            events["first_close_below_entry_time_utc"] = candle.close_time
+        for label, threshold in PATH_EVENT_THRESHOLDS_R:
+            if label not in first_touch_bar and touch_r >= threshold:
+                first_touch_bar[label] = index
+                events[f"first_touch_{label}_bar"] = index
+                events[f"first_touch_{label}_time_utc"] = candle.close_time
+            if label not in first_close_bar and close_r >= threshold:
+                first_close_bar[label] = index
+                events[f"first_close_{label}_bar"] = index
+                events[f"first_close_{label}_time_utc"] = candle.close_time
+            if label not in first_mae_bar and adverse_r <= -threshold:
+                first_mae_bar[label] = index
+                events[f"first_mae_{label}_bar"] = index
+                events[f"first_mae_{label}_time_utc"] = candle.close_time
+
+    if terminal_bar is not None:
+        events[f"{terminal_status.lower()}_bar"] = terminal_bar
+        events[f"{terminal_status.lower()}_time_utc"] = candles[-1].close_time if candles else None
+
+    first_close_050 = first_close_bar.get("050")
+    first_touch_050 = first_touch_bar.get("050")
+    first_mae_050 = first_mae_bar.get("050")
+    path_label = _forward_path_label_050(
+        terminal_status=terminal_status,
+        max_profit_r=max(((_candle_profit_touch_r(entry=entry, risk=risk, direction=direction, candle=c) for c in candles)), default=Decimal("0")),
+        first_touch_050=first_touch_050,
+        first_close_050=first_close_050,
+        first_mae_050=first_mae_050,
+        first_retrace_from_peak_050=first_retrace_from_peak_050_bar,
+    )
+    followthrough_r = _close_followthrough_1h_r(entry=entry, risk=risk, direction=direction, candles=candles)
+    return {
+        "path_acceptance_threshold_r": PATH_ACCEPTANCE_THRESHOLD_R,
+        "path_label_050": path_label,
+        "path_same_bar_ambiguity": terminal_status == "BOTH_HIT_SAME_CANDLE",
+        "path_events": events,
+        "wick_to_close_decay_r": max_wick_decay,
+        "close_followthrough_1h_r": followthrough_r,
+        "next_1h_close_direction": _direction_bucket_from_r(followthrough_r),
+        "close_above_entry_after_1h": (followthrough_r is not None and followthrough_r > 0),
+        "time_to_mfe_050_bucket": _path_bar_bucket(first_touch_050),
+        "time_to_mae_050_bucket": _path_bar_bucket(first_mae_050),
+    }
+
+
+def _forward_path_label_050(
+    *,
+    terminal_status: str,
+    max_profit_r: Decimal,
+    first_touch_050: int | None,
+    first_close_050: int | None,
+    first_mae_050: int | None,
+    first_retrace_from_peak_050: int | None,
+) -> str:
+    if terminal_status == "BOTH_HIT_SAME_CANDLE":
+        return "SAME_BAR_AMBIGUOUS"
+    if terminal_status == "SL_HIT":
+        if max_profit_r < Decimal("0.25"):
+            return "INSTANT_SL"
+        if max_profit_r < PATH_ACCEPTANCE_THRESHOLD_R:
+            return "SHALLOW_PROFIT_THEN_FAIL"
+        if first_close_050 is None:
+            return "WICK_PROFIT_THEN_FAIL"
+        return "CLOSE_PROFIT_THEN_FAIL"
+    if terminal_status == "TP_HIT":
+        if first_touch_050 is not None and first_close_050 is None:
+            return "WICK_PROFIT_THEN_TP"
+        if first_mae_050 is not None and (first_close_050 is None or first_mae_050 < first_close_050):
+            return "DRAWDOWN_FIRST_THEN_TP"
+        if first_retrace_from_peak_050 is not None and first_close_050 is not None:
+            return "PULLBACK_TP"
+        return "CLEAN_CONTINUATION_TP"
+    if terminal_status in {"OPEN", "STALE_FORWARD_DATA"}:
+        if first_close_050 is not None:
+            return "OPEN_CLOSE_ACCEPTED"
+        if first_touch_050 is not None:
+            return "OPEN_WICK_PROFIT"
+        return "OPEN_NO_ACCEPTANCE"
+    return "UNAVAILABLE"
+
+
+def _candle_profit_touch_r(*, entry: Decimal, risk: Decimal, direction: str, candle: PerfCandle) -> Decimal:
+    return (candle.high - entry) / risk if direction == "LONG" else (entry - candle.low) / risk
+
+
+def _candle_profit_close_r(*, entry: Decimal, risk: Decimal, direction: str, candle: PerfCandle) -> Decimal:
+    return (candle.close - entry) / risk if direction == "LONG" else (entry - candle.close) / risk
+
+
+def _candle_adverse_touch_r(*, entry: Decimal, risk: Decimal, direction: str, candle: PerfCandle) -> Decimal:
+    return (candle.low - entry) / risk if direction == "LONG" else (entry - candle.high) / risk
+
+
+def _close_followthrough_1h_r(
+    *,
+    entry: Decimal,
+    risk: Decimal,
+    direction: str,
+    candles: list[PerfCandle],
+) -> Decimal | None:
+    if not candles:
+        return None
+    signal_time = candles[0].open_time
+    target_close_time = signal_time + timedelta(hours=1)
+    for candle in candles:
+        if candle.close_time >= target_close_time:
+            return _candle_profit_close_r(entry=entry, risk=risk, direction=direction, candle=candle)
+    return None
+
+
+def _direction_bucket_from_r(value: Decimal | None) -> str:
+    if value is None:
+        return "UNAVAILABLE"
+    if value >= Decimal("0.50"):
+        return "STRONG_UP"
+    if value >= Decimal("0.10"):
+        return "WEAK_UP"
+    if value > Decimal("-0.10"):
+        return "FLAT"
+    if value > Decimal("-0.50"):
+        return "WEAK_DOWN"
+    return "STRONG_DOWN"
+
+
+def _path_bar_bucket(bar: int | None) -> str:
+    if bar is None:
+        return "NEVER"
+    if bar <= 1:
+        return "SAME_BAR"
+    if bar == 2:
+        return "1_BAR"
+    if bar == 3:
+        return "2_BARS"
+    if bar <= 5:
+        return "3_4_BARS"
+    return "5_PLUS_BARS"
 
 
 def _realistic_entry_price(entry: Decimal, direction: str, base: dict[str, Any]) -> Decimal | None:

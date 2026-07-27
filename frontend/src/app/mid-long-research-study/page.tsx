@@ -11,9 +11,14 @@ import {
   MidLongAxisCrossRow,
   MidLongBaselineResponse,
   MidLongDefinitionLayerRow,
+  MidLongDraftPreviewRow,
   MidLongEvidenceComparisonRow,
   MidLongGeometryThresholdRow,
   MidLongPathDecisionRow,
+  MidLongTaxonomyDimensionRow,
+  MidLongTaxonomyPathCrossRow,
+  MidLongTaxonomyPathRow,
+  MidLongTaxonomyStudy,
   SignalPerformanceItem,
   fetchJson,
   fmtNumber,
@@ -45,6 +50,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
   const coverage = payload?.snapshot_coverage;
   const summary = payload?.research_summary;
   const verdict = audit?.verdict;
+  const taxonomy = audit?.taxonomy_study;
 
   return (
     <div className="space-y-5">
@@ -117,59 +123,100 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {taxonomy && (
+            <>
+              <SectionCard
+                title="1. Taxonomy v1"
+                description="MID_LONG 1h sekarang dibedah sebagai banyak flag sekaligus: setup, breakout/retest, flow, crowding, room, cost, dan path setelah entry. Ini belum mengubah rule."
+              >
+                <TaxonomyOverview taxonomy={taxonomy} />
+              </SectionCard>
+
+              <SectionCard
+                title="2. Pre-entry dimensions"
+                description="Bucket ini dibuat dari data sebelum entry. Tujuannya mencari bagian definisi MID_LONG yang paling sering membawa TP atau SL."
+              >
+                <TaxonomyDimensionPanels taxonomy={taxonomy} />
+              </SectionCard>
+
+              <SectionCard
+                title="3. Path sequencing +0.5R"
+                description="Path ini menjawab apakah signal langsung salah arah, cuma wick profit, close diterima lalu gagal, atau continuation bersih. Acceptance canonical sementara: close profit +0.5R."
+              >
+                <TaxonomyPathTable rows={taxonomy.path_sequence_rows} />
+              </SectionCard>
+
+              <div className="grid gap-4 2xl:grid-cols-2">
+                <SectionCard title="4A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
+                  <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.setup_family_x_path || []} />
+                </SectionCard>
+                <SectionCard title="4B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
+                  <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.flow_x_path || []} />
+                </SectionCard>
+              </div>
+
+              <SectionCard
+                title="5. Draft V2.1 preview"
+                description="Empat skenario ini hanya preview riset. Retained/discarded dibandingkan untuk tahu apakah hygiene, breakout, retest, atau crowding interaction layak diteliti lanjut."
+              >
+                <DraftPreviewTable rows={taxonomy.draft_v21_previews} />
+              </SectionCard>
+            </>
+          )}
+
           <SectionCard
-            title="1. Layer decomposition"
+            title="6. Layer decomposition"
             description="Pisahkan dulu apakah masalahnya sudah ada di ideal R, atau baru rusak setelah fee/spread/slippage. EXECUTION_VALID cuma strata audit, bukan filter live."
           >
             <LayerTable rows={audit.layer_decomposition} />
           </SectionCard>
 
           <SectionCard
-            title="2. Path anatomy"
+            title="7. Path anatomy legacy"
             description="Ini pemisah utama: instant SL mengarah ke problem definisi entry; sempat +1R lalu SL mengarah ke problem geometry/exit."
           >
             <PathDecisionTable rows={audit.path_decision_summary.rows} read={audit.path_decision_summary.read} />
           </SectionCard>
 
           <SectionCard
-            title="3. 4-axis definition flags"
+            title="8. 4-axis definition flags legacy"
             description="EXT, STR, FLW, dan CRD adalah flag kandidat, bukan gate. Kolom negative R share menunjukkan bucket mana yang menyumbang kerusakan terbesar."
           >
             <AxisAuditTable rows={audit.axis_rows} />
           </SectionCard>
 
           <div className="grid gap-4 2xl:grid-cols-2">
-            <SectionCard title="4A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
+            <SectionCard title="9A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
               <CrossTable rows={audit.cross_tables.EXTxSTR || []} />
             </SectionCard>
-            <SectionCard title="4B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
+            <SectionCard title="9B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
               <CrossTable rows={audit.cross_tables.FLWxCRD || []} />
             </SectionCard>
           </div>
 
           <SectionCard
-            title="5. Geometry diagnostic"
+            title="10. Geometry diagnostic"
             description="Kalau banyak signal pernah +0.5R/+1R tapi gagal TP, problemnya bukan hanya definisi, tapi cara panen target/stop."
           >
             <GeometryTable rows={audit.geometry_diagnostic.mfe_threshold_rows} read={audit.geometry_diagnostic.read} quantiles={audit.geometry_diagnostic} />
           </SectionCard>
 
           <SectionCard
-            title="6. Ablation preview"
+            title="11. Ablation preview"
             description="Simulasi read-only: jika flag tertentu dibuang, survivor membaik atau tidak. Ini belum rule, baru calon hipotesis."
           >
             <AblationTable rows={audit.ablation_preview} />
           </SectionCard>
 
           <SectionCard
-            title="7. TP vs SL evidence"
+            title="12. TP vs SL evidence"
             description="Median dan kuartil angka aktual. Ini menjawab data mana yang beda antara signal yang kena target dan stop."
           >
             <EvidenceTable rows={(payload.evidence_comparison || []).slice(0, 18)} sampleTotal={coverage.mid_long_1h_rows} />
           </SectionCard>
 
           <SectionCard
-            title="8. Recent closed MID_LONG 1h"
+            title="13. Recent closed MID_LONG 1h"
             description="Sample sinyal terbaru untuk dibuka ke detail chart. Gunakan ini untuk validasi visual bucket yang terlihat merusak."
           >
             <BaselineSignalTable rows={payload.items} />
@@ -186,6 +233,206 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function TaxonomyOverview({ taxonomy }: { taxonomy: MidLongTaxonomyStudy }) {
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-5">
+        <Info label="Scope" value={taxonomy.scope} />
+        <Info label="Acceptance" value={`+${fmtNumber(taxonomy.canonical_acceptance_threshold_r)}R close`} helper="Profit dianggap diterima kalau close sudah minimal +0.5R." />
+        <Info label="Extension q25" value={`${fmtNumber(taxonomy.extension_quantiles.q25)}x`} helper="Bucket low extension." />
+        <Info label="Extension q75/q90" value={`${fmtNumber(taxonomy.extension_quantiles.q75)}x / ${fmtNumber(taxonomy.extension_quantiles.q90)}x`} helper="High dan extreme extension." />
+        <Info label="Mode" value="Read-only taxonomy" helper="Flag belum jadi gate live." />
+      </div>
+      <div className="grid gap-2 p-4 text-sm text-slate-700 md:grid-cols-2">
+        {taxonomy.raw_feature_notes.map((note) => (
+          <div key={note} className="rounded-md border border-line bg-field/40 p-3">- {note}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TaxonomyDimensionPanels({ taxonomy }: { taxonomy: MidLongTaxonomyStudy }) {
+  const panels: { key: string; title: string; description: string }[] = [
+    { key: "setup_family", title: "Setup family", description: "Breakout, retest, support bounce, mid-range, atau belum terklasifikasi." },
+    { key: "breakout_state_pre_entry", title: "Breakout state", description: "Apakah breakout cuma wick atau sudah close accepted." },
+    { key: "retest_quality_pre_entry", title: "Retest quality", description: "Apakah retest hold kuat, hold dalam zona, gagal, atau tidak ada retest." },
+    { key: "entry_timing_bucket", title: "Entry timing", description: "Early/normal/late chase berbasis extension quantile." },
+    { key: "flow_state_provisional", title: "Flow state", description: "Flow buy/weak/mixed berbasis price, OI, dan taker buy." },
+    { key: "crowding_bucket", title: "Crowding", description: "Funding, OI z-score, global/top-trader long ratio." },
+    { key: "room_to_resistance_bucket", title: "Room to resistance", description: "Jarak ATR ke resistance terdekat dari structure zone." },
+    { key: "projected_cost_bucket", title: "Projected cost", description: "Estimasi fee + spread + slippage dalam R." }
+  ];
+
+  return (
+    <div className="grid gap-4 p-4 2xl:grid-cols-2">
+      {panels.map((panel) => (
+        <div key={panel.key} className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">{panel.title}</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">{panel.description}</div>
+          </div>
+          <TaxonomyDimensionTable rows={(taxonomy.dimension_rows[panel.key] || []).slice(0, 8)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TaxonomyDimensionTable({ rows }: { rows: MidLongTaxonomyDimensionRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Bucket kosong" detail="Belum ada row untuk dimensi ini." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg / median</th>
+            <th>Cost / room</th>
+            <th>Path mix</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td>
+                <StatusBadge value={humanFlag(row.state)} />
+                <div className="mt-1 text-xs text-slate-500">{humanFlag(row.verdict)}</div>
+              </td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R / {fmtSigned(row.median_realistic_r_closed)}R</td>
+              <td>
+                <div>{fmtNumber(row.median_cost_r)}R cost</div>
+                <div className="text-xs text-slate-500">{fmtNumber(row.median_room_to_resistance_atr)} ATR room</div>
+              </td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TaxonomyPathTable({ rows }: { rows: MidLongTaxonomyPathRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Path sequencing kosong" detail="Snapshot perlu direfresh agar path +0.5R tersedia." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Path label</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg / median</th>
+            <th>Wick decay</th>
+            <th>1h followthrough</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td><StatusBadge value={humanFlag(row.path_label)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R / {fmtSigned(row.median_realistic_r_closed)}R</td>
+              <td>{fmtSigned(row.median_wick_decay_r)}R</td>
+              <td>{fmtSigned(row.median_followthrough_1h_r)}R</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.path_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TaxonomyCrossTable({ rows }: { rows: MidLongTaxonomyPathCrossRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Cross path kosong" detail="Belum ada kombinasi taxonomy x path." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cell</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg</th>
+            <th>Top symbol</th>
+            <th>Readable</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 18).map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72 font-semibold">{humanFlag(row.cell)}</td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R</td>
+              <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
+              <td><StatusBadge value={row.is_readable ? "Readable" : "Small sample"} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DraftPreviewTable({ rows }: { rows: MidLongDraftPreviewRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Draft preview kosong" detail="Belum ada skenario draft V2.1." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Preview</th>
+            <th>Retained N</th>
+            <th>Retained TP/SL</th>
+            <th>Retained R</th>
+            <th>Avg delta</th>
+            <th>Discarded</th>
+            <th>Retained path mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.preview_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{row.preview_id}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.label}</div>
+                {row.note && <div className="mt-1 text-xs leading-5 text-slate-500">{row.note}</div>}
+              </td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td>
+                <div>{row.discarded_count} rows</div>
+                <div className="text-xs text-slate-500">{row.discarded_tp_count} TP / {row.discarded_sl_count} SL</div>
+                <div className={toneClass(row.discarded_realistic_total_r_closed)}>{fmtSigned(row.discarded_realistic_total_r_closed)}R</div>
+              </td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.retained_path_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.preview_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -588,6 +835,15 @@ function toneClass(value?: string | number | null): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "";
   return numeric >= 0 ? "font-semibold text-ready" : "font-semibold text-stale";
+}
+
+function pathMixSummary(pathMix?: Record<string, number>): string {
+  if (!pathMix || !Object.keys(pathMix).length) return "-";
+  return Object.entries(pathMix)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 4)
+    .map(([label, count]) => `${humanFlag(label)} ${count}`)
+    .join(" | ");
 }
 
 function humanFlag(value: string): string {

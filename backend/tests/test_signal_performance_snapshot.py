@@ -149,6 +149,11 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "outcome_entry_profiles" in baseline
     assert "entry_area_anatomy" in baseline
     assert "path_anatomy" in baseline
+    assert "taxonomy_study" in baseline["definition_audit"]
+    assert baseline["definition_audit"]["taxonomy_study"]["canonical_acceptance_threshold_r"] == Decimal("0.50")
+    assert "setup_family" in baseline["definition_audit"]["taxonomy_study"]["dimension_rows"]
+    assert "path_sequence_rows" in baseline["definition_audit"]["taxonomy_study"]
+    assert "draft_v21_previews" in baseline["definition_audit"]["taxonomy_study"]
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

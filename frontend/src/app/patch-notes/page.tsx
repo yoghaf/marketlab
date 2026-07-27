@@ -19,6 +19,25 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-27",
+    version: "LAB-RESET-05",
+    title: "MID_LONG 1h Taxonomy + Path Sequencing",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Memperluas Definition Audit menjadi taxonomy multidimensi dan path sequencing +0.5R supaya MID_LONG 1h bisa dibedah sebagai setup, flow, crowding, room, cost, dan jalur candle setelah entry.",
+    changes: [
+      "Evaluator paper-live sekarang menambahkan path_label_050, path_events, wick_to_close_decay_r, close_followthrough_1h_r, dan bucket waktu MFE/MAE +0.5R tanpa mengubah TP/SL.",
+      "Endpoint baseline MID_LONG 1h sekarang menambahkan taxonomy_study dengan setup_family, breakout/retest state, entry timing, flow regime, crowding bucket, room-to-resistance, cost bucket, path sequence, dan taxonomy x path cross table.",
+      "Halaman /mid-long-research-study menampilkan Taxonomy v1, Pre-entry Dimensions, Path Sequencing +0.5R, Setup/Flow x Path, dan Draft V2.1 Preview.",
+      "Draft V2.1 preview tetap read-only hypothesis; tidak ada gate live yang berubah."
+    ],
+    impact: "Riset MID_LONG tidak lagi cuma bertanya RR mana yang bagus. Sekarang kita bisa melihat apakah loss muncul karena salah family setup, breakout belum accepted, retest lemah, flow/crowding buruk, room sempit, biaya mahal, atau path profit cuma wick.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Taxonomy" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-27",
     version: "LAB-RESET-04",
     title: "MID_LONG 1h Definition Audit",
     status: "LIVE",

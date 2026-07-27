@@ -817,6 +817,16 @@ export type SignalPerformanceItem = {
   mfe_r?: string | number | null;
   mae_r?: string | number | null;
   path_type?: string | null;
+  path_acceptance_threshold_r?: string | number | null;
+  path_label_050?: string | null;
+  path_same_bar_ambiguity?: boolean | null;
+  path_events?: Record<string, string | number | boolean | null>;
+  wick_to_close_decay_r?: string | number | null;
+  close_followthrough_1h_r?: string | number | null;
+  next_1h_close_direction?: string | null;
+  close_above_entry_after_1h?: boolean | null;
+  time_to_mfe_050_bucket?: string | null;
+  time_to_mae_050_bucket?: string | null;
   direction_15m?: string | null;
   direction_30m?: string | null;
   direction_1h?: string | null;
@@ -3807,6 +3817,7 @@ export type MidLongDefinitionAudit = {
     read: string;
   };
   ablation_preview: MidLongAblationRow[];
+  taxonomy_study?: MidLongTaxonomyStudy;
   verdict: {
     primary: string;
     labels: string[];
@@ -3814,6 +3825,55 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongTaxonomyStudy = {
+  scope: string;
+  method: string;
+  canonical_acceptance_threshold_r?: string | number | null;
+  extension_quantiles: Record<string, string | number | null>;
+  dimension_rows: Record<string, MidLongTaxonomyDimensionRow[]>;
+  path_sequence_rows: MidLongTaxonomyPathRow[];
+  taxonomy_path_cross_tables: Record<string, MidLongTaxonomyPathCrossRow[]>;
+  draft_v21_previews: MidLongDraftPreviewRow[];
+  raw_feature_notes: string[];
+};
+
+export type MidLongTaxonomyDimensionRow = MidLongEntryCombinationRow & {
+  dimension_key: string;
+  dimension_label: string;
+  state: string;
+  path_mix: Record<string, number>;
+  median_cost_r?: string | number | null;
+  median_room_to_resistance_atr?: string | number | null;
+};
+
+export type MidLongTaxonomyPathRow = MidLongEntryCombinationRow & {
+  path_label: string;
+  path_read: string;
+  median_wick_decay_r?: string | number | null;
+  median_followthrough_1h_r?: string | number | null;
+};
+
+export type MidLongTaxonomyPathCrossRow = MidLongEntryCombinationRow & {
+  taxonomy_key: string;
+  taxonomy_label: string;
+  cell: string;
+  is_readable: boolean;
+};
+
+export type MidLongDraftPreviewRow = MidLongEntryCombinationRow & {
+  preview_id: string;
+  preview_status: string;
+  discarded_count: number;
+  discarded_tp_count: number;
+  discarded_sl_count: number;
+  discarded_realistic_total_r_closed?: string | number | null;
+  discarded_realistic_avg_r_closed?: string | number | null;
+  retained_path_mix: Record<string, number>;
+  discarded_path_mix: Record<string, number>;
+  preview_read: string;
+  note?: string | null;
 };
 
 export type MidLongDefinitionLayerRow = MidLongEntryCombinationRow & {

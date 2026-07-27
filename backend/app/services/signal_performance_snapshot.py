@@ -1237,6 +1237,7 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    taxonomy = _mid_long_taxonomy_context(items, baseline=baseline, min_sample=min_sample)
     verdict = _mid_long_definition_verdict(
         baseline=baseline,
         layer_rows=layer_rows,
@@ -1256,11 +1257,14 @@ def _mid_long_definition_audit(
         "cross_tables": cross_tables,
         "geometry_diagnostic": geometry,
         "ablation_preview": ablation,
+        "taxonomy_study": taxonomy,
         "verdict": verdict,
         "guardrails": [
             "Candidate flags are not live gates.",
             "No Signal Factory rule, scanner behavior, TP/SL, or execution logic is changed.",
             "Support/resistance readings must be treated as invalid if their timestamp uses future candles.",
+            "Pre-entry taxonomy must not use post-entry follow-through as a live entry gate.",
+            "Draft V2.1 previews are hypothesis previews only, not production rule changes.",
         ],
     }
 
@@ -1596,6 +1600,641 @@ def _mid_long_ablation_preview(
         reverse=True,
     )
     return rows
+
+
+def _mid_long_taxonomy_context(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    extension_values = [
+        value
+        for item in items
+        if (value := _mid_long_evidence_value(item, "atr_extension_normalized")) is not None
+    ]
+    taxonomy_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_taxonomy_state(
+            item,
+            extension_values=extension_values,
+        )
+        for idx, item in enumerate(items)
+    }
+    dimensions: tuple[tuple[str, str], ...] = (
+        ("structure_status", "Structure status"),
+        ("setup_family", "Setup family"),
+        ("breakout_state_pre_entry", "Breakout pre-entry"),
+        ("retest_quality_pre_entry", "Retest quality"),
+        ("entry_timing_bucket", "Entry timing"),
+        ("extension_bucket", "Extension bucket"),
+        ("flow_state_provisional", "Flow state"),
+        ("crowding_bucket", "Crowding bucket"),
+        ("room_to_resistance_bucket", "Room to resistance"),
+        ("projected_cost_bucket", "Projected cost"),
+    )
+    return {
+        "scope": "MID_LONG 1h multidimensional taxonomy, read-only",
+        "method": (
+            "Pre-entry taxonomy is separated from post-entry path sequencing. "
+            "Continuous fields remain the source of truth; buckets are provisional research labels."
+        ),
+        "canonical_acceptance_threshold_r": Decimal("0.50"),
+        "extension_quantiles": {
+            "q25": _percentile_decimal_snapshot(extension_values, Decimal("0.25")),
+            "q75": _percentile_decimal_snapshot(extension_values, Decimal("0.75")),
+            "q90": _percentile_decimal_snapshot(extension_values, Decimal("0.90")),
+        },
+        "dimension_rows": {
+            key: _mid_long_taxonomy_dimension_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                dimension_key=key,
+                dimension_label=label,
+                baseline=baseline,
+                min_sample=min_sample,
+            )
+            for key, label in dimensions
+        },
+        "path_sequence_rows": _mid_long_path_sequence_rows(items, baseline=baseline, min_sample=min_sample),
+        "taxonomy_path_cross_tables": {
+            "setup_family_x_path": _mid_long_taxonomy_path_cross_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="setup_family",
+                taxonomy_label="Setup family",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "breakout_state_x_path": _mid_long_taxonomy_path_cross_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="breakout_state_pre_entry",
+                taxonomy_label="Breakout pre-entry",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "flow_x_path": _mid_long_taxonomy_path_cross_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="flow_state_provisional",
+                taxonomy_label="Flow",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "crowding_x_path": _mid_long_taxonomy_path_cross_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="crowding_bucket",
+                taxonomy_label="Crowding",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+            "cost_x_path": _mid_long_taxonomy_path_cross_rows(
+                items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="projected_cost_bucket",
+                taxonomy_label="Projected cost",
+                baseline=baseline,
+                min_sample=min_sample,
+            ),
+        },
+        "draft_v21_previews": _mid_long_draft_preview_rows(
+            items,
+            taxonomy_by_id=taxonomy_by_id,
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        "raw_feature_notes": [
+            "room_to_resistance uses current structure-zone ATR distance as a provisional proxy; final R-based room needs a stricter zone anchor.",
+            "entry_timing uses ATR-extension quantile buckets until anchor-specific extension is available.",
+            "breakout follow-through is post-entry diagnostic and must not be used as an entry gate.",
+            "path_label_050 is based on +0.50R close acceptance; +0.25R/+0.75R/+1R events are retained in path_events when the snapshot is refreshed.",
+        ],
+    }
+
+
+def _mid_long_taxonomy_state(
+    item: dict[str, Any],
+    *,
+    extension_values: list[Decimal],
+) -> dict[str, Any]:
+    structure_status = _mid_long_structure_status(item)
+    setup_family = _mid_long_setup_family(item, structure_status=structure_status)
+    extension_raw = _mid_long_evidence_value(item, "atr_extension_normalized")
+    extension_bucket = _mid_long_quantile_bucket(extension_raw, extension_values)
+    flow_state = _mid_long_flow_state(item)
+    crowding_score = _mid_long_crowding_score(item)
+    cost = _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))
+    room_to_resistance = _decimal_or_none_snapshot(item.get("structure_zone_nearest_resistance_distance_atr"))
+    return {
+        "structure_status": structure_status,
+        "setup_family": setup_family,
+        "breakout_state_pre_entry": _mid_long_breakout_state(item, setup_family=setup_family),
+        "retest_quality_pre_entry": _mid_long_retest_quality(item, setup_family=setup_family),
+        "entry_anchor_type": _mid_long_entry_anchor_type(setup_family),
+        "entry_extension_raw": extension_raw,
+        "entry_timing_bucket": _mid_long_entry_timing_bucket(setup_family, extension_bucket),
+        "extension_bucket": extension_bucket,
+        "flow_state_provisional": flow_state,
+        "flow_regime": _mid_long_flow_regime(item),
+        "crowding_score": crowding_score,
+        "crowding_bucket": _mid_long_crowding_bucket(crowding_score),
+        "room_to_resistance_atr": room_to_resistance,
+        "room_to_resistance_bucket": _mid_long_room_bucket(room_to_resistance),
+        "projected_cost_r": cost,
+        "projected_cost_bucket": _mid_long_cost_bucket(cost),
+        "path_label_050": _mid_long_path_label_050(item),
+    }
+
+
+def _mid_long_structure_status(item: dict[str, Any]) -> str:
+    status = str(item.get("structure_zone_status") or "").upper()
+    primary = str(item.get("structure_zone_primary_state") or "").upper()
+    if not status or "UNAVAILABLE" in status:
+        return "UNAVAILABLE"
+    if not primary or "UNKNOWN" in primary:
+        return "PARTIAL"
+    return "AVAILABLE"
+
+
+def _mid_long_setup_family(item: dict[str, Any], *, structure_status: str) -> str:
+    if structure_status == "UNAVAILABLE":
+        return "UNCLASSIFIED"
+    status = str(item.get("structure_zone_status") or "").upper()
+    primary = str(item.get("structure_zone_primary_state") or "").upper()
+    reason = str(item.get("structure_zone_primary_reason") or "").upper()
+    if "RETEST" in primary or "RETEST" in reason or "ROLE" in reason:
+        return "RETEST"
+    if "BREAKOUT" in primary or "RESISTANCE_BREAK" in primary:
+        return "BREAKOUT_ATTEMPT"
+    if "SUPPORT" in primary:
+        return "SUPPORT_BOUNCE"
+    if "NEUTRAL" in status or "MID" in primary or "RANGE" in primary:
+        return "MID_RANGE"
+    return "UNCLASSIFIED"
+
+
+def _mid_long_breakout_state(item: dict[str, Any], *, setup_family: str) -> str:
+    if setup_family != "BREAKOUT_ATTEMPT":
+        return "NO_BREAKOUT_ATTEMPT"
+    status = str(item.get("structure_zone_status") or "").upper()
+    reason = str(item.get("structure_zone_primary_reason") or "").upper()
+    if "ALIGNED" in status or "CLOSE" in reason or "CLOSED" in reason:
+        return "CLOSE_ACCEPTED"
+    return "WICK_ONLY"
+
+
+def _mid_long_retest_quality(item: dict[str, Any], *, setup_family: str) -> str:
+    if setup_family != "RETEST":
+        return "NO_RETEST"
+    status = str(item.get("structure_zone_status") or "").upper()
+    reason = str(item.get("structure_zone_primary_reason") or "").upper()
+    if "UNAVAILABLE" in status:
+        return "UNAVAILABLE"
+    if "FAILED" in reason or "BREAKDOWN" in reason or "CONFLICT" in status:
+        return "RETEST_FAILED"
+    if "ABOVE" in reason or "HOLD" in reason or "ALIGNED" in status:
+        return "RETEST_HOLD_STRONG"
+    return "RETEST_HOLD_IN_ZONE"
+
+
+def _mid_long_entry_anchor_type(setup_family: str) -> str:
+    if setup_family == "BREAKOUT_ATTEMPT":
+        return "BREAKOUT_ZONE"
+    if setup_family == "RETEST":
+        return "RETEST_ZONE"
+    if setup_family == "SUPPORT_BOUNCE":
+        return "SUPPORT_ZONE"
+    if setup_family == "MID_RANGE":
+        return "RANGE_INTERIOR"
+    return "UNAVAILABLE"
+
+
+def _mid_long_entry_timing_bucket(setup_family: str, extension_bucket: str) -> str:
+    if setup_family in {"UNCLASSIFIED", "MID_RANGE"} or extension_bucket == "UNKNOWN":
+        return "UNAVAILABLE"
+    if extension_bucket == "LOW_EXTENSION":
+        return "EARLY"
+    if extension_bucket in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}:
+        return "LATE_CHASE"
+    return "NORMAL"
+
+
+def _mid_long_quantile_bucket(value: Decimal | None, values: list[Decimal]) -> str:
+    if value is None or len(values) < 4:
+        return "UNKNOWN"
+    q25 = _percentile_decimal_snapshot(values, Decimal("0.25"))
+    q75 = _percentile_decimal_snapshot(values, Decimal("0.75"))
+    q90 = _percentile_decimal_snapshot(values, Decimal("0.90"))
+    if q25 is None or q75 is None or q90 is None:
+        return "UNKNOWN"
+    if value >= q90:
+        return "EXTREME_EXTENSION"
+    if value >= q75:
+        return "HIGH_EXTENSION"
+    if value <= q25:
+        return "LOW_EXTENSION"
+    return "MID_EXTENSION"
+
+
+def _mid_long_flow_regime(item: dict[str, Any]) -> str:
+    price_return = _mid_long_evidence_value(item, "price_return")
+    oi_change = _mid_long_evidence_value(item, "oi_change_pct")
+    taker_buy = _mid_long_evidence_value(item, "kline_taker_buy_ratio")
+    if price_return is None or oi_change is None or taker_buy is None:
+        return "UNKNOWN"
+    buy_imbalance = taker_buy >= Decimal("0.53")
+    if price_return > 0 and oi_change > 0 and buy_imbalance:
+        return "PRICE_UP_OI_UP_BUY_IMBALANCE"
+    if price_return > 0 and oi_change <= 0:
+        return "PRICE_UP_OI_DOWN_SHORT_COVER"
+    if price_return > 0 and oi_change > 0 and not buy_imbalance:
+        return "PRICE_UP_OI_UP_WEAK_BUY"
+    if price_return <= 0 and oi_change > 0:
+        return "PRICE_NOT_UP_OI_UP_CROWDING_RISK"
+    return "MIXED_OR_NEUTRAL"
+
+
+def _mid_long_crowding_score(item: dict[str, Any]) -> int:
+    score = 0
+    funding = _mid_long_evidence_value(item, "funding_percentile_30d")
+    oi_z = _mid_long_evidence_value(item, "oi_zscore")
+    glsr = _mid_long_evidence_value(item, "global_long_short_ratio")
+    top_position = _mid_long_evidence_value(item, "top_trader_position_ratio")
+    top_account = _mid_long_evidence_value(item, "top_trader_account_ratio")
+    if funding is not None and funding >= Decimal("90"):
+        score += 2
+    elif funding is not None and funding >= Decimal("75"):
+        score += 1
+    if oi_z is not None and oi_z >= Decimal("3"):
+        score += 1
+    if glsr is not None and glsr >= Decimal("1.30"):
+        score += 1
+    if top_position is not None and top_position >= Decimal("1.40"):
+        score += 1
+    if top_account is not None and top_account >= Decimal("1.30"):
+        score += 1
+    return score
+
+
+def _mid_long_crowding_bucket(score: int) -> str:
+    if score >= 5:
+        return "EXTREME_CROWDING"
+    if score >= 3:
+        return "HIGH_CROWDING"
+    if score >= 1:
+        return "MODERATE_CROWDING"
+    return "LOW_CROWDING"
+
+
+def _mid_long_room_bucket(value: Decimal | None) -> str:
+    if value is None:
+        return "ROOM_UNAVAILABLE"
+    if value <= Decimal("0.75"):
+        return "LOW_ROOM"
+    if value <= Decimal("1.50"):
+        return "MODERATE_ROOM"
+    return "HIGH_ROOM"
+
+
+def _mid_long_cost_bucket(value: Decimal | None) -> str:
+    if value is None:
+        return "COST_UNKNOWN"
+    if value <= Decimal("0.10"):
+        return "LOW_COST"
+    if value <= Decimal("0.20"):
+        return "MODERATE_COST"
+    if value <= Decimal("0.35"):
+        return "HIGH_COST"
+    return "EXTREME_COST"
+
+
+def _mid_long_path_label_050(item: dict[str, Any]) -> str:
+    label = str(item.get("path_label_050") or "")
+    if label:
+        return label
+    return _mid_long_path_label_050_fallback(item)
+
+
+def _mid_long_path_label_050_fallback(item: dict[str, Any]) -> str:
+    status = str(item.get("result_status") or "")
+    mfe = _decimal_or_zero_snapshot(item.get("mfe_r"))
+    mae = _decimal_or_zero_snapshot(item.get("mae_r"))
+    if status == "BOTH_HIT_SAME_CANDLE":
+        return "SAME_BAR_AMBIGUOUS"
+    if status == "SL_HIT":
+        if mfe < Decimal("0.25"):
+            return "INSTANT_SL"
+        if mfe < Decimal("0.50"):
+            return "SHALLOW_PROFIT_THEN_FAIL"
+        return "PROFIT_THEN_FAIL_LEGACY"
+    if status == "TP_HIT":
+        if mae <= Decimal("-0.50"):
+            return "PULLBACK_TP"
+        return "CLEAN_CONTINUATION_TP"
+    if status in {"OPEN", "STALE_FORWARD_DATA"}:
+        return "OPEN_PATH"
+    return "UNAVAILABLE"
+
+
+def _mid_long_taxonomy_dimension_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    dimension_key: str,
+    dimension_label: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        state = str(taxonomy_by_id[str(item.get("signal_id") or idx)].get(dimension_key) or "UNKNOWN")
+        grouped[state].append(item)
+    rows: list[dict[str, Any]] = []
+    for state, state_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"{dimension_key}:{state}",
+            state,
+            f"{dimension_key} == {state}",
+            state_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "dimension_key": dimension_key,
+                "dimension_label": dimension_label,
+                "state": state,
+                "path_mix": _mid_long_path_mix(state_items),
+                "median_cost_r": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in state_items
+                        if (value := _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))) is not None
+                    ]
+                ),
+                "median_room_to_resistance_atr": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in state_items
+                        if (
+                            value := _decimal_or_none_snapshot(
+                                item.get("structure_zone_nearest_resistance_distance_atr")
+                            )
+                        )
+                        is not None
+                    ]
+                ),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_path_sequence_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_path_label_050(item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for label, label_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"PATH050:{label}",
+            label,
+            f"path_label_050 == {label}",
+            label_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "path_label": label,
+                "path_read": _mid_long_path_sequence_read(label),
+                "median_wick_decay_r": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in label_items
+                        if (value := _decimal_or_none_snapshot(item.get("wick_to_close_decay_r"))) is not None
+                    ]
+                ),
+                "median_followthrough_1h_r": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in label_items
+                        if (value := _decimal_or_none_snapshot(item.get("close_followthrough_1h_r"))) is not None
+                    ]
+                ),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_path_priority(str(row.get("path_label") or "")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_taxonomy_path_cross_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    taxonomy_key: str,
+    taxonomy_label: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        key = f"{taxonomy.get(taxonomy_key) or 'UNKNOWN'} x {taxonomy.get('path_label_050') or 'UNKNOWN'}"
+        grouped[key].append(item)
+    rows: list[dict[str, Any]] = []
+    for cell, cell_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"{taxonomy_key}:PATH:{cell}",
+            cell,
+            f"{taxonomy_key} x path_label_050 == {cell}",
+            cell_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "taxonomy_key": taxonomy_key,
+                "taxonomy_label": taxonomy_label,
+                "cell": cell,
+                "is_readable": int(row.get("closed_count") or 0) >= min_sample,
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            bool(row.get("is_readable")),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_draft_preview_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    scenarios: tuple[tuple[str, str, str], ...] = (
+        (
+            "DRAFT_HYGIENE",
+            "Structure available + no weak flow + not mid-range + cost not extreme",
+            "Obvious hygiene gates only; tests whether low-quality rows are dragging baseline.",
+        ),
+        (
+            "DRAFT_BREAKOUT",
+            "Hygiene + breakout close accepted + room not low",
+            "Breakout-specific preview; not a production rule.",
+        ),
+        (
+            "DRAFT_RETEST",
+            "Hygiene + retest hold strong",
+            "Retest-specific preview; likely small sample until detector is audited.",
+        ),
+        (
+            "DRAFT_CROWDING_INTERACTION",
+            "Hygiene + reject high crowding when paired with high extension, mixed flow, or low room",
+            "Interaction preview; crowding is not rejected by itself.",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for scenario_id, label, note in scenarios:
+        selected: list[dict[str, Any]] = []
+        discarded: list[dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+            passed = _mid_long_preview_pass(scenario_id, taxonomy)
+            (selected if passed else discarded).append(item)
+        row = _mid_long_perf_row(
+            scenario_id,
+            label,
+            scenario_id,
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        discarded_perf = aggregate_signal_performance_items(discarded)
+        row.update(
+            {
+                "preview_id": scenario_id,
+                "preview_status": "DRAFT_PREVIEW",
+                "discarded_count": len(discarded),
+                "discarded_tp_count": discarded_perf["tp_count"],
+                "discarded_sl_count": discarded_perf["sl_count"],
+                "discarded_realistic_total_r_closed": discarded_perf["realistic_total_r_closed"],
+                "retained_path_mix": _mid_long_path_mix(selected),
+                "discarded_path_mix": _mid_long_path_mix(discarded),
+                "preview_read": _mid_long_preview_read(row, discarded_perf),
+                "note": note,
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_preview_pass(scenario_id: str, taxonomy: dict[str, Any]) -> bool:
+    hygiene = (
+        taxonomy.get("structure_status") in {"AVAILABLE", "PARTIAL"}
+        and taxonomy.get("flow_state_provisional") != "WEAK"
+        and taxonomy.get("setup_family") != "MID_RANGE"
+        and taxonomy.get("projected_cost_bucket") != "EXTREME_COST"
+    )
+    if scenario_id == "DRAFT_HYGIENE":
+        return hygiene
+    if scenario_id == "DRAFT_BREAKOUT":
+        return (
+            hygiene
+            and taxonomy.get("setup_family") == "BREAKOUT_ATTEMPT"
+            and taxonomy.get("breakout_state_pre_entry") == "CLOSE_ACCEPTED"
+            and taxonomy.get("room_to_resistance_bucket") != "LOW_ROOM"
+        )
+    if scenario_id == "DRAFT_RETEST":
+        return hygiene and taxonomy.get("setup_family") == "RETEST" and taxonomy.get("retest_quality_pre_entry") == "RETEST_HOLD_STRONG"
+    if scenario_id == "DRAFT_CROWDING_INTERACTION":
+        crowding = taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"}
+        danger_pair = (
+            taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+            or taxonomy.get("flow_state_provisional") == "MIXED"
+            or taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM"
+        )
+        return hygiene and not (crowding and danger_pair)
+    return False
+
+
+def _mid_long_path_mix(items: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(Counter(_mid_long_path_label_050(item) for item in items))
+
+
+def _mid_long_path_priority(label: str) -> int:
+    priorities = {
+        "CLOSE_PROFIT_THEN_FAIL": 90,
+        "WICK_PROFIT_THEN_FAIL": 85,
+        "SHALLOW_PROFIT_THEN_FAIL": 80,
+        "INSTANT_SL": 75,
+        "SAME_BAR_AMBIGUOUS": 70,
+        "PULLBACK_TP": 60,
+        "DRAWDOWN_FIRST_THEN_TP": 55,
+        "WICK_PROFIT_THEN_TP": 50,
+        "CLEAN_CONTINUATION_TP": 45,
+    }
+    return priorities.get(label, 10)
+
+
+def _mid_long_path_sequence_read(label: str) -> str:
+    reads = {
+        "INSTANT_SL": "Entry definition/location problem candidate.",
+        "SHALLOW_PROFIT_THEN_FAIL": "Tiny follow-through only; likely not enough acceptance.",
+        "WICK_PROFIT_THEN_FAIL": "Profit existed intrabar but was not accepted by close.",
+        "CLOSE_PROFIT_THEN_FAIL": "Acceptance existed; protection/dynamic exit deserves study.",
+        "WICK_PROFIT_THEN_TP": "Wick-first winner; do not reject wick-only blindly.",
+        "DRAWDOWN_FIRST_THEN_TP": "Winner needs stop tolerance before follow-through.",
+        "CLEAN_CONTINUATION_TP": "Best continuation profile; study pre-entry features.",
+        "PULLBACK_TP": "Winner retraces materially; aggressive protection may cut it.",
+        "SAME_BAR_AMBIGUOUS": "OHLC ordering ambiguous; needs lower timeframe or conservative handling.",
+    }
+    return reads.get(label, "Path diagnostic row.")
+
+
+def _mid_long_preview_read(row: dict[str, Any], discarded_perf: dict[str, Any]) -> str:
+    selected_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    discarded_total = _decimal_or_zero_snapshot(discarded_perf.get("realistic_total_r_closed"))
+    sample = int(row.get("closed_count") or 0)
+    if sample <= 0:
+        return "No retained sample; detector/gate is not usable yet."
+    if selected_total > 0 and avg_delta > 0 and discarded_total < 0:
+        return "Promising research preview, but still needs time split and detector audit."
+    if avg_delta > 0:
+        return "Improves average R, but total R/sample/path mix must be checked."
+    return "Not improving baseline yet; keep as diagnosis only."
 
 
 def _mid_long_definition_verdict(
