@@ -3821,6 +3821,7 @@ export type MidLongDefinitionAudit = {
   integrity_audit?: MidLongIntegrityAudit;
   damage_isolation?: MidLongDamageIsolation;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
+  breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
   verdict: {
     primary: string;
     labels: string[];
@@ -3876,6 +3877,92 @@ export type MidLongSubSetupRow = MidLongEntryCombinationRow & {
   close_050_count?: number;
   touch_050_count?: number;
   close_acceptance_conversion_pct?: string | number | null;
+};
+
+export type MidLongBreakoutAcceptedDeepDive = {
+  scope: string;
+  method: string;
+  control: MidLongEntryCombinationRow;
+  field_availability_rows: MidLongBreakoutFieldAvailabilityRow[];
+  mechanism_rows: MidLongBreakoutMechanismRow[];
+  evidence_path_tables: Record<string, MidLongTaxonomyPathCrossRow[]>;
+  single_filter_rows: MidLongBreakoutFilterRow[];
+  interaction_rows: MidLongBreakoutInteractionRow[];
+  draft_cohort_rows: MidLongBreakoutDraftRow[];
+  summary: {
+    read: string;
+    label_purity_read: string;
+    precise_zone_fields_missing_count: number;
+    best_filter?: MidLongBreakoutSummaryRow | null;
+    worst_mechanism?: MidLongBreakoutSummaryRow | null;
+    best_draft?: MidLongBreakoutSummaryRow | null;
+  };
+  guardrails: string[];
+};
+
+export type MidLongBreakoutSummaryRow = {
+  id?: string | null;
+  label?: string | null;
+  closed_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  status?: string | null;
+};
+
+export type MidLongBreakoutFieldAvailabilityRow = {
+  field: string;
+  label: string;
+  source: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongBreakoutMechanismRow = MidLongEntryCombinationRow & {
+  mechanism: string;
+  mechanism_read: string;
+  path_mix: Record<string, number>;
+  flow_mix: Record<string, number>;
+  room_mix: Record<string, number>;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_wick_decay_r?: string | number | null;
+};
+
+export type MidLongBreakoutFilterRow = MidLongEntryCombinationRow & {
+  filter_class: string;
+  retained_count: number;
+  removed_count: number;
+  removed_tp_count: number;
+  removed_sl_count: number;
+  removed_realistic_total_r_closed?: string | number | null;
+  retained_path_mix: Record<string, number>;
+  removed_path_mix: Record<string, number>;
+  removed_mechanism_mix: Record<string, number>;
+  filter_read: string;
+};
+
+export type MidLongBreakoutInteractionRow = MidLongEntryCombinationRow & {
+  interaction_id: string;
+  path_mix: Record<string, number>;
+  mechanism_mix: Record<string, number>;
+  interaction_read: string;
+};
+
+export type MidLongBreakoutDraftRow = MidLongEntryCombinationRow & {
+  draft_id: string;
+  draft_status: string;
+  discarded_count: number;
+  discarded_tp_count: number;
+  discarded_sl_count: number;
+  discarded_realistic_total_r_closed?: string | number | null;
+  retained_path_mix: Record<string, number>;
+  discarded_path_mix: Record<string, number>;
+  draft_read: string;
 };
 
 export type MidLongIntegrityAudit = {

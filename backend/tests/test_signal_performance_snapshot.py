@@ -166,6 +166,19 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "SUB_SETUP_WATCH_ONLY",
         "NO_SUB_SETUP_READY",
     }
+    assert "breakout_accepted_deep_dive" in baseline["definition_audit"]
+    breakout_deep_dive = baseline["definition_audit"]["breakout_accepted_deep_dive"]
+    assert "field_availability_rows" in breakout_deep_dive
+    assert "mechanism_rows" in breakout_deep_dive
+    assert "single_filter_rows" in breakout_deep_dive
+    assert "draft_cohort_rows" in breakout_deep_dive
+    assert breakout_deep_dive["summary"]["read"] in {
+        "NO_BREAKOUT_SAMPLE",
+        "BREAKOUT_PROXY_ONLY",
+        "BREAKOUT_DRAFT_READY_FOR_VALIDATION",
+        "BREAKOUT_FILTER_WATCH_ONLY",
+        "BREAKOUT_NOT_IMPROVING",
+    }
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

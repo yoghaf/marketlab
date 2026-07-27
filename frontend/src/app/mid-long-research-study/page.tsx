@@ -10,6 +10,12 @@ import {
   MidLongAxisAuditRow,
   MidLongAxisCrossRow,
   MidLongBaselineResponse,
+  MidLongBreakoutAcceptedDeepDive,
+  MidLongBreakoutDraftRow,
+  MidLongBreakoutFieldAvailabilityRow,
+  MidLongBreakoutFilterRow,
+  MidLongBreakoutInteractionRow,
+  MidLongBreakoutMechanismRow,
   MidLongDefinitionLayerRow,
   MidLongDraftPreviewRow,
   MidLongDamageExperimentRow,
@@ -147,9 +153,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.breakout_accepted_deep_dive && (
+            <SectionCard
+              title="2. Breakout Accepted Deep Dive"
+              description="Audit khusus sub-setup terbaik sementara. Fokusnya label purity: apakah ini benar breakout valid, false breakout, atau breakout yang sudah diterima tapi gagal lanjut."
+            >
+              <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
+            </SectionCard>
+          )}
+
           {audit.damage_isolation && (
             <SectionCard
-              title="2. Damage Isolation"
+              title="3. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -159,37 +174,37 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           {taxonomy && (
             <>
               <SectionCard
-                title="3. Taxonomy v1"
+                title="4. Taxonomy v1"
                 description="MID_LONG 1h sekarang dibedah sebagai banyak flag sekaligus: setup, breakout/retest, flow, crowding, room, cost, dan path setelah entry. Ini belum mengubah rule."
               >
                 <TaxonomyOverview taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="4. Pre-entry dimensions"
+                title="5. Pre-entry dimensions"
                 description="Bucket ini dibuat dari data sebelum entry. Tujuannya mencari bagian definisi MID_LONG yang paling sering membawa TP atau SL."
               >
                 <TaxonomyDimensionPanels taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="5. Path sequencing +0.5R"
+                title="6. Path sequencing +0.5R"
                 description="Path ini menjawab apakah signal langsung salah arah, cuma wick profit, close diterima lalu gagal, atau continuation bersih. Acceptance canonical sementara: close profit +0.5R."
               >
                 <TaxonomyPathTable rows={taxonomy.path_sequence_rows} />
               </SectionCard>
 
               <div className="grid gap-4 2xl:grid-cols-2">
-                <SectionCard title="6A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
+                <SectionCard title="7A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.setup_family_x_path || []} />
                 </SectionCard>
-                <SectionCard title="6B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
+                <SectionCard title="7B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.flow_x_path || []} />
                 </SectionCard>
               </div>
 
               <SectionCard
-                title="7. Draft V2.1 preview"
+                title="8. Draft V2.1 preview"
                 description="Empat skenario ini hanya preview riset. Retained/discarded dibandingkan untuk tahu apakah hygiene, breakout, retest, atau crowding interaction layak diteliti lanjut."
               >
                 <DraftPreviewTable rows={taxonomy.draft_v21_previews} />
@@ -198,58 +213,58 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           )}
 
           <SectionCard
-            title="8. Layer decomposition"
+            title="9. Layer decomposition"
             description="Pisahkan dulu apakah masalahnya sudah ada di ideal R, atau baru rusak setelah fee/spread/slippage. EXECUTION_VALID cuma strata audit, bukan filter live."
           >
             <LayerTable rows={audit.layer_decomposition} />
           </SectionCard>
 
           <SectionCard
-            title="9. Path anatomy legacy"
+            title="10. Path anatomy legacy"
             description="Ini pemisah utama: instant SL mengarah ke problem definisi entry; sempat +1R lalu SL mengarah ke problem geometry/exit."
           >
             <PathDecisionTable rows={audit.path_decision_summary.rows} read={audit.path_decision_summary.read} />
           </SectionCard>
 
           <SectionCard
-            title="10. 4-axis definition flags legacy"
+            title="11. 4-axis definition flags legacy"
             description="EXT, STR, FLW, dan CRD adalah flag kandidat, bukan gate. Kolom negative R share menunjukkan bucket mana yang menyumbang kerusakan terbesar."
           >
             <AxisAuditTable rows={audit.axis_rows} />
           </SectionCard>
 
           <div className="grid gap-4 2xl:grid-cols-2">
-            <SectionCard title="11A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
+            <SectionCard title="12A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
               <CrossTable rows={audit.cross_tables.EXTxSTR || []} />
             </SectionCard>
-            <SectionCard title="11B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
+            <SectionCard title="12B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
               <CrossTable rows={audit.cross_tables.FLWxCRD || []} />
             </SectionCard>
           </div>
 
           <SectionCard
-            title="12. Geometry diagnostic"
+            title="13. Geometry diagnostic"
             description="Kalau banyak signal pernah +0.5R/+1R tapi gagal TP, problemnya bukan hanya definisi, tapi cara panen target/stop."
           >
             <GeometryTable rows={audit.geometry_diagnostic.mfe_threshold_rows} read={audit.geometry_diagnostic.read} quantiles={audit.geometry_diagnostic} />
           </SectionCard>
 
           <SectionCard
-            title="13. Ablation preview"
+            title="14. Ablation preview"
             description="Simulasi read-only: jika flag tertentu dibuang, survivor membaik atau tidak. Ini belum rule, baru calon hipotesis."
           >
             <AblationTable rows={audit.ablation_preview} />
           </SectionCard>
 
           <SectionCard
-            title="14. TP vs SL evidence"
+            title="15. TP vs SL evidence"
             description="Median dan kuartil angka aktual. Ini menjawab data mana yang beda antara signal yang kena target dan stop."
           >
             <EvidenceTable rows={(payload.evidence_comparison || []).slice(0, 18)} sampleTotal={coverage.mid_long_1h_rows} />
           </SectionCard>
 
           <SectionCard
-            title="15. Recent closed MID_LONG 1h"
+            title="16. Recent closed MID_LONG 1h"
             description="Sample sinyal terbaru untuk dibuka ke detail chart. Gunakan ini untuk validasi visual bucket yang terlihat merusak."
           >
             <BaselineSignalTable rows={payload.items} />
@@ -369,6 +384,305 @@ function SubSetupTable({ rows }: { rows: MidLongSubSetupRow[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }) {
+  const summary = lab.summary;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(summary.read)} helper="Apakah breakout sudah siap diuji atau masih proxy." />
+        <Info label="Label purity" value={humanFlag(summary.label_purity_read)} helper={`${summary.precise_zone_fields_missing_count} precise zone field kosong.`} />
+        <Info label="Control sample" value={String(lab.control.closed_count || 0)} helper={`${lab.control.tp_count || 0} TP / ${lab.control.sl_count || 0} SL`} />
+        <Info label="Control R" value={`${fmtSigned(lab.control.realistic_total_r_closed)}R`} helper={`${fmtSigned(lab.control.realistic_avg_r_closed)}R avg`} />
+        <BreakoutSummaryCard title="Best filter" row={summary.best_filter} />
+        <BreakoutSummaryCard title="Worst mechanism" row={summary.worst_mechanism} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Label purity fields</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Field yang tersedia vs field presisi yang masih belum ada di log saat ini.</div>
+          </div>
+          <BreakoutFieldAvailabilityTable rows={lab.field_availability_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Mechanism split</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Loss/win tidak disamaratakan: false breakout, accepted-but-failed, atau pullback winner.</div>
+          </div>
+          <BreakoutMechanismTable rows={lab.mechanism_rows} />
+        </div>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Single damage filters</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Semua masih read-only. Filter post-entry hanya bukti perilaku, bukan calon gate live.</div>
+        </div>
+        <BreakoutFilterTable rows={lab.single_filter_rows} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Interaction clusters</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Cluster risiko yang bisa menjelaskan kenapa breakout accepted tetap gagal.</div>
+          </div>
+          <BreakoutInteractionTable rows={lab.interaction_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Draft cohorts</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Draft proxy untuk nanti divalidasi waktu. Belum rule V2.1.</div>
+          </div>
+          <BreakoutDraftTable rows={lab.draft_cohort_rows} />
+        </div>
+      </div>
+
+      <BreakoutCrossPanels tables={lab.evidence_path_tables} />
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {lab.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BreakoutSummaryCard({
+  title,
+  row
+}: {
+  title: string;
+  row?: MidLongBreakoutAcceptedDeepDive["summary"]["best_filter"];
+}) {
+  return (
+    <div className="rounded-md border border-line bg-field/40 p-3">
+      <div className="text-xs font-semibold uppercase text-slate-500">{title}</div>
+      {row ? (
+        <>
+          <div className="mt-1 break-words font-bold text-ink">{humanFlag(row.label || "-")}</div>
+          <div className="mt-1 text-xs leading-5 text-slate-600">
+            {row.closed_count || 0} rows | {row.tp_count || 0}/{row.sl_count || 0} TP/SL
+          </div>
+          <div className={`mt-1 text-xs ${toneClass(row.realistic_total_r_closed)}`}>
+            {fmtSigned(row.realistic_total_r_closed)}R total | {fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R delta
+          </div>
+        </>
+      ) : (
+        <div className="mt-1 text-sm text-slate-500">Belum tersedia</div>
+      )}
+    </div>
+  );
+}
+
+function BreakoutFieldAvailabilityTable({ rows }: { rows: MidLongBreakoutFieldAvailabilityRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Field audit kosong" detail="Belum ada field untuk diaudit." /></div>;
+  return (
+    <div className="table-wrap max-h-[34rem] overflow-y-auto">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Source</th>
+            <th>Available</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td>
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field}</div>
+              </td>
+              <td>{humanFlag(row.source)}</td>
+              <td>{row.available_count} / miss {row.missing_count} ({formatPct(row.available_pct)})</td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutMechanismTable({ rows }: { rows: MidLongBreakoutMechanismRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Mechanism kosong" detail="Belum ada breakout accepted sample." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Mechanism</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg / median</th>
+            <th>MFE / MAE</th>
+            <th>Path mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72"><StatusBadge value={humanFlag(row.mechanism)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R / {fmtSigned(row.median_realistic_r_closed)}R</td>
+              <td>{fmtSigned(row.median_mfe_r)}R / {fmtSigned(row.median_mae_r)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.mechanism_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutFilterTable({ rows }: { rows: MidLongBreakoutFilterRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Filter kosong" detail="Belum ada single-filter breakout row." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Filter</th>
+            <th>Class</th>
+            <th>Retained / removed</th>
+            <th>TP / SL</th>
+            <th>Retained R</th>
+            <th>Avg delta</th>
+            <th>Removed R</th>
+            <th>Removed mechanism</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{row.label}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.filter_class)} /></td>
+              <td>{row.retained_count} / {row.removed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className={toneClass(row.removed_realistic_total_r_closed)}>{fmtSigned(row.removed_realistic_total_r_closed)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.removed_mechanism_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.filter_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutInteractionTable({ rows }: { rows: MidLongBreakoutInteractionRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Interaction kosong" detail="Belum ada cluster interaction." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cluster</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>R</th>
+            <th>Avg delta</th>
+            <th>Mechanism</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.interaction_id}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.expression}</div>
+              </td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.mechanism_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.interaction_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutDraftTable({ rows }: { rows: MidLongBreakoutDraftRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Draft kosong" detail="Belum ada draft cohort breakout." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Draft</th>
+            <th>Status</th>
+            <th>Retained</th>
+            <th>TP / SL</th>
+            <th>R</th>
+            <th>Avg delta</th>
+            <th>Discarded</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.draft_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.label)}</div>
+                <div className="text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.draft_status)} /></td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td>
+                <div>{row.discarded_count} rows</div>
+                <div className="text-xs text-slate-500">{row.discarded_tp_count}/{row.discarded_sl_count} TP/SL</div>
+                <div className={toneClass(row.discarded_realistic_total_r_closed)}>{fmtSigned(row.discarded_realistic_total_r_closed)}R</div>
+              </td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.draft_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutCrossPanels({ tables }: { tables: Record<string, MidLongTaxonomyPathCrossRow[]> }) {
+  const entries = Object.entries(tables);
+  if (!entries.length) return null;
+  return (
+    <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
+      {entries.slice(0, 4).map(([key, rows]) => (
+        <div key={key} className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">{humanFlag(key)}</div>
+            <div className="mt-1 text-xs text-slate-500">Path cross untuk breakout accepted cohort.</div>
+          </div>
+          <TaxonomyCrossTable rows={rows.slice(0, 10)} />
+        </div>
+      ))}
     </div>
   );
 }

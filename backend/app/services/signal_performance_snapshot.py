@@ -1201,6 +1201,40 @@ MID_LONG_DEFINITION_THRESHOLDS: dict[str, str] = {
     "EXECUTION_VALID": "realistic_fill_quality == FILL_GOOD OR realistic_cost_r_estimate <= 0.20",
 }
 
+MID_LONG_BREAKOUT_AUDIT_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("structure_zone_status", "Structure zone status", "top_level"),
+    ("structure_zone_primary_state", "Primary zone state", "top_level"),
+    ("structure_zone_primary_reason", "Primary zone reason", "top_level"),
+    ("structure_zone_nearest_resistance_distance_atr", "Room to resistance ATR", "top_level"),
+    ("structure_zone_nearest_support_distance_atr", "Distance to support ATR", "top_level"),
+    ("path_label_050", "+0.5R path label", "post_entry_diagnostic"),
+    ("path_events", "Path event timestamps", "post_entry_diagnostic"),
+    ("wick_to_close_decay_r", "Wick-to-close decay R", "post_entry_diagnostic"),
+    ("close_followthrough_1h_r", "1h close follow-through R", "post_entry_diagnostic"),
+    ("atr_extension_normalized", "ATR extension", "evidence"),
+    ("volume_ratio_vs_lookback", "Volume vs 30-candle lookback", "evidence"),
+    ("kline_taker_buy_ratio", "Taker buy ratio", "evidence"),
+    ("oi_change_pct", "OI change pct", "evidence"),
+    ("oi_zscore", "OI z-score", "evidence"),
+    ("funding_percentile_30d", "Funding percentile 30d", "evidence"),
+    ("global_long_short_ratio", "Global long/short ratio", "evidence"),
+    ("top_trader_position_ratio", "Top trader position ratio", "evidence"),
+    ("top_trader_account_ratio", "Top trader account ratio", "evidence"),
+    ("realistic_cost_r_estimate", "Realistic cost R", "top_level"),
+    ("futures_spread_pct", "Futures spread pct", "evidence"),
+    ("spot_spread_pct", "Spot spread pct", "evidence"),
+    ("close_penetration_atr", "Close penetration ATR", "missing_precise_zone_metric"),
+    ("close_penetration_zone_width", "Close penetration zone width", "missing_precise_zone_metric"),
+    ("body_above_zone_ratio", "Body above zone ratio", "missing_precise_zone_metric"),
+    ("close_location_in_candle", "Close location in candle", "missing_precise_zone_metric"),
+    ("upper_wick_to_body_ratio", "Upper wick/body ratio", "missing_precise_zone_metric"),
+    ("breakout_candle_range_atr", "Breakout candle range ATR", "missing_precise_zone_metric"),
+    ("bars_since_breakout", "Bars since breakout", "missing_precise_zone_metric"),
+    ("zone_touch_count", "Zone touch count", "missing_precise_zone_metric"),
+    ("zone_age_bars", "Zone age bars", "missing_precise_zone_metric"),
+    ("zone_width_atr", "Zone width ATR", "missing_precise_zone_metric"),
+)
+
 
 def _mid_long_definition_audit(
     items: list[dict[str, Any]],
@@ -1262,6 +1296,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    breakout_deep_dive = _mid_long_breakout_accepted_deep_dive(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     verdict = _mid_long_definition_verdict(
         baseline=baseline,
         layer_rows=layer_rows,
@@ -1285,6 +1325,7 @@ def _mid_long_definition_audit(
         "integrity_audit": integrity,
         "damage_isolation": damage,
         "sub_setup_split_lab": sub_setup,
+        "breakout_accepted_deep_dive": breakout_deep_dive,
         "verdict": verdict,
         "guardrails": [
             "Candidate flags are not live gates.",
@@ -2704,6 +2745,718 @@ def _mid_long_sub_setup_read(rows: list[dict[str, Any]]) -> str:
     if watch:
         return "SUB_SETUP_WATCH_ONLY"
     return "NO_SUB_SETUP_READY"
+
+
+def _mid_long_breakout_accepted_deep_dive(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    breakout_items = _mid_long_breakout_accepted_items(items, taxonomy_by_id=taxonomy_by_id)
+    control = _mid_long_perf_row(
+        "BA-00",
+        "Breakout accepted control",
+        "sub_setup == MID_LONG_BREAKOUT_ACCEPTED",
+        breakout_items,
+        baseline=baseline,
+        required_fields=(),
+        min_sample=min_sample,
+    )
+    field_rows = _mid_long_breakout_field_availability_rows(breakout_items)
+    mechanism_rows = _mid_long_breakout_mechanism_rows(
+        breakout_items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    single_filter_rows = _mid_long_breakout_single_filter_rows(
+        breakout_items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    interaction_rows = _mid_long_breakout_interaction_rows(
+        breakout_items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    draft_rows = _mid_long_breakout_draft_rows(
+        breakout_items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=control,
+        field_rows=field_rows,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG_BREAKOUT_ACCEPTED / BREAKOUT_CANDIDATE deep dive",
+        "method": (
+            "Audits whether the breakout label is structurally proven or only proxy-based, then separates "
+            "false-breakout candidates from accepted-but-failed continuation and pullback winners."
+        ),
+        "control": control,
+        "field_availability_rows": field_rows,
+        "mechanism_rows": mechanism_rows,
+        "evidence_path_tables": {
+            "extension_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
+                breakout_items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="extension_bucket",
+                taxonomy_label="Extension x path",
+                baseline=control,
+                min_sample=min_sample,
+            ),
+            "room_to_resistance_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
+                breakout_items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="room_to_resistance_bucket",
+                taxonomy_label="Room x path",
+                baseline=control,
+                min_sample=min_sample,
+            ),
+            "flow_state_provisional_x_path": _mid_long_taxonomy_path_cross_rows(
+                breakout_items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="flow_state_provisional",
+                taxonomy_label="Flow x path",
+                baseline=control,
+                min_sample=min_sample,
+            ),
+            "crowding_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
+                breakout_items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="crowding_bucket",
+                taxonomy_label="Crowding x path",
+                baseline=control,
+                min_sample=min_sample,
+            ),
+            "projected_cost_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
+                breakout_items,
+                taxonomy_by_id=taxonomy_by_id,
+                taxonomy_key="projected_cost_bucket",
+                taxonomy_label="Cost x path",
+                baseline=control,
+                min_sample=min_sample,
+            ),
+        },
+        "single_filter_rows": single_filter_rows,
+        "interaction_rows": interaction_rows,
+        "draft_cohort_rows": draft_rows,
+        "summary": _mid_long_breakout_summary(
+            control=control,
+            field_rows=field_rows,
+            mechanism_rows=mechanism_rows,
+            single_filter_rows=single_filter_rows,
+            draft_rows=draft_rows,
+        ),
+        "guardrails": [
+            "Breakout Accepted is treated as BREAKOUT_CANDIDATE until precise zone-penetration fields exist.",
+            "Post-entry path labels explain behavior; they must not become live entry gates.",
+            "Room-to-resistance UNKNOWN is not a hard reject.",
+            "No Signal Factory rule, scanner decision, TP/SL formula, threshold, or execution behavior is changed.",
+        ],
+    }
+
+
+def _mid_long_breakout_accepted_items(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        if _mid_long_sub_setup_label(taxonomy) == "MID_LONG_BREAKOUT_ACCEPTED":
+            rows.append(item)
+    return rows
+
+
+def _mid_long_breakout_field_availability_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for field, label, source in MID_LONG_BREAKOUT_AUDIT_FIELDS:
+        available = sum(1 for item in items if _mid_long_item_field_available(item, field))
+        rows.append(
+            {
+                "field": field,
+                "label": label,
+                "source": source,
+                "available_count": available,
+                "missing_count": max(len(items) - available, 0),
+                "available_pct": _pct_decimal(available, len(items)),
+                "read": _mid_long_breakout_field_read(source=source, available_count=available, total=len(items)),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            row["source"] == "missing_precise_zone_metric",
+            int(row["available_count"] or 0),
+            str(row["field"]),
+        )
+    )
+    return rows
+
+
+def _mid_long_item_field_available(item: dict[str, Any], field: str) -> bool:
+    value = item.get(field)
+    if isinstance(value, dict):
+        return bool(value)
+    if value not in (None, ""):
+        return True
+    evidence = item.get("evidence_snapshot")
+    if isinstance(evidence, dict):
+        evidence_value = evidence.get(field)
+        if isinstance(evidence_value, dict):
+            return bool(evidence_value)
+        return evidence_value not in (None, "")
+    return False
+
+
+def _mid_long_breakout_field_read(*, source: str, available_count: int, total: int) -> str:
+    if total <= 0:
+        return "NO_SAMPLE"
+    if available_count <= 0:
+        if source == "missing_precise_zone_metric":
+            return "MISSING_IN_CURRENT_LOG"
+        return "UNAVAILABLE"
+    if available_count < total:
+        return "PARTIAL_AVAILABLE"
+    return "AVAILABLE"
+
+
+def _mid_long_breakout_mechanism_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_breakout_mechanism(item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for mechanism, mechanism_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"BA-MECH:{mechanism}",
+            mechanism,
+            _mid_long_breakout_mechanism_expression(mechanism),
+            mechanism_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "mechanism": mechanism,
+                "mechanism_read": _mid_long_breakout_mechanism_read(mechanism),
+                "path_mix": _mid_long_path_mix(mechanism_items),
+                "flow_mix": _mid_long_taxonomy_mix(
+                    mechanism_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="flow_state_provisional",
+                ),
+                "room_mix": _mid_long_taxonomy_mix(
+                    mechanism_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="room_to_resistance_bucket",
+                ),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(mechanism_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(mechanism_items, "mae_r")),
+                "median_wick_decay_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(mechanism_items, "wick_to_close_decay_r")
+                ),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_breakout_mechanism_rank(str(row.get("mechanism") or "")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_mechanism(item: dict[str, Any]) -> str:
+    path = _mid_long_path_label_050(item)
+    if path in {"INSTANT_SL", "SHALLOW_PROFIT_THEN_FAIL", "WICK_PROFIT_THEN_FAIL", "SAME_BAR_AMBIGUOUS"}:
+        return "STRUCTURAL_FALSE_BREAKOUT_CANDIDATE"
+    if path == "CLOSE_PROFIT_THEN_FAIL":
+        return "ACCEPTED_BUT_FAILED_CONTINUATION"
+    if path in {"PULLBACK_TP", "DRAWDOWN_FIRST_THEN_TP", "WICK_PROFIT_THEN_TP", "CLEAN_CONTINUATION_TP"}:
+        return "VALID_CONTINUATION_WITH_PULLBACK"
+    return "OPEN_OR_OTHER_PATH"
+
+
+def _mid_long_breakout_mechanism_expression(mechanism: str) -> str:
+    expressions = {
+        "STRUCTURAL_FALSE_BREAKOUT_CANDIDATE": "Path has instant/shallow/wick fail or same-candle ambiguity.",
+        "ACCEPTED_BUT_FAILED_CONTINUATION": "Path closed at least +0.50R, then failed before target.",
+        "VALID_CONTINUATION_WITH_PULLBACK": "Path reached target after continuation or material pullback.",
+        "OPEN_OR_OTHER_PATH": "Open/other path; keep out of closed-result conclusions.",
+    }
+    return expressions.get(mechanism, "Breakout mechanism bucket.")
+
+
+def _mid_long_breakout_mechanism_read(mechanism: str) -> str:
+    reads = {
+        "STRUCTURAL_FALSE_BREAKOUT_CANDIDATE": "Candidate label-purity problem; test pre-entry close/wick/zone quality.",
+        "ACCEPTED_BUT_FAILED_CONTINUATION": "Not a pure false breakout; study room, crowding, and management separately.",
+        "VALID_CONTINUATION_WITH_PULLBACK": "Do not over-tighten filters that remove pullback winners.",
+        "OPEN_OR_OTHER_PATH": "Diagnostic only until closed.",
+    }
+    return reads.get(mechanism, "Breakout mechanism diagnostic.")
+
+
+def _mid_long_breakout_mechanism_rank(mechanism: str) -> int:
+    return {
+        "STRUCTURAL_FALSE_BREAKOUT_CANDIDATE": 4,
+        "ACCEPTED_BUT_FAILED_CONTINUATION": 3,
+        "VALID_CONTINUATION_WITH_PULLBACK": 2,
+        "OPEN_OR_OTHER_PATH": 1,
+    }.get(mechanism, 0)
+
+
+def _mid_long_breakout_single_filter_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    scenarios = (
+        (
+            "BA-02A",
+            "Exclude wick/unconfirmed proxy",
+            "breakout_state_pre_entry == CLOSE_ACCEPTED",
+            lambda _item, taxonomy: taxonomy.get("breakout_state_pre_entry") == "CLOSE_ACCEPTED",
+            "PRE_ENTRY_PROXY",
+        ),
+        (
+            "BA-02B",
+            "Exclude high wick decay",
+            "wick_to_close_decay_r < 0.50 OR unavailable",
+            lambda item, _taxonomy: not _mid_long_high_wick_decay(item),
+            "POST_ENTRY_DIAGNOSTIC_ONLY",
+        ),
+        (
+            "BA-02C",
+            "Exclude high/extreme extension",
+            "extension_bucket NOT IN HIGH/EXTREME",
+            lambda _item, taxonomy: taxonomy.get("extension_bucket") not in {"HIGH_EXTENSION", "EXTREME_EXTENSION"},
+            "PRE_ENTRY_PROXY",
+        ),
+        (
+            "BA-02D",
+            "Exclude low room when available",
+            "room_to_resistance_bucket != LOW_ROOM; ROOM_UNAVAILABLE retained",
+            lambda _item, taxonomy: taxonomy.get("room_to_resistance_bucket") != "LOW_ROOM",
+            "PRE_ENTRY_PROXY_WITH_UNKNOWN_ALLOWED",
+        ),
+        (
+            "BA-02E",
+            "Exclude weak flow",
+            "flow_state_provisional != WEAK",
+            lambda _item, taxonomy: taxonomy.get("flow_state_provisional") != "WEAK",
+            "PRE_ENTRY_EVIDENCE",
+        ),
+        (
+            "BA-02F",
+            "Exclude extreme cost",
+            "projected_cost_bucket != EXTREME_COST",
+            lambda _item, taxonomy: taxonomy.get("projected_cost_bucket") != "EXTREME_COST",
+            "EXECUTION_REALISM",
+        ),
+        (
+            "BA-02G",
+            "Exclude crowding danger pair",
+            "NOT(high/extreme crowding with high extension, mixed/weak flow, or low room)",
+            lambda _item, taxonomy: not _mid_long_breakout_crowding_danger_pair(taxonomy),
+            "PRE_ENTRY_INTERACTION",
+        ),
+    )
+    rows = [
+        _mid_long_breakout_filter_row(
+            filter_id,
+            label,
+            expression,
+            items,
+            taxonomy_by_id=taxonomy_by_id,
+            baseline=baseline,
+            predicate=predicate,
+            min_sample=min_sample,
+            filter_class=filter_class,
+        )
+        for filter_id, label, expression, predicate, filter_class in scenarios
+    ]
+    rows.sort(
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_filter_row(
+    filter_id: str,
+    label: str,
+    expression: str,
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    predicate: Any,
+    min_sample: int,
+    filter_class: str,
+) -> dict[str, Any]:
+    retained: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        (retained if predicate(item, taxonomy) else removed).append(item)
+    row = _mid_long_perf_row(
+        filter_id,
+        label,
+        expression,
+        retained,
+        baseline=baseline,
+        required_fields=(),
+        min_sample=min_sample,
+    )
+    removed_perf = aggregate_signal_performance_items(removed)
+    row.update(
+        {
+            "filter_class": filter_class,
+            "retained_count": len(retained),
+            "removed_count": len(removed),
+            "removed_tp_count": removed_perf["tp_count"],
+            "removed_sl_count": removed_perf["sl_count"],
+            "removed_realistic_total_r_closed": removed_perf["realistic_total_r_closed"],
+            "retained_path_mix": _mid_long_path_mix(retained),
+            "removed_path_mix": _mid_long_path_mix(removed),
+            "removed_mechanism_mix": dict(Counter(_mid_long_breakout_mechanism(item) for item in removed)),
+            "filter_read": _mid_long_breakout_filter_read(row, removed_perf, filter_class=filter_class),
+        }
+    )
+    return row
+
+
+def _mid_long_high_wick_decay(item: dict[str, Any]) -> bool:
+    value = _decimal_or_none_snapshot(item.get("wick_to_close_decay_r"))
+    return value is not None and value >= Decimal("0.50")
+
+
+def _mid_long_breakout_crowding_danger_pair(taxonomy: dict[str, Any]) -> bool:
+    crowding = taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"}
+    danger_pair = (
+        taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+        or taxonomy.get("flow_state_provisional") in {"MIXED", "WEAK"}
+        or taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM"
+    )
+    return bool(crowding and danger_pair)
+
+
+def _mid_long_breakout_filter_read(
+    row: dict[str, Any],
+    removed_perf: dict[str, Any],
+    *,
+    filter_class: str,
+) -> str:
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    retained_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    removed_total = _decimal_or_zero_snapshot(removed_perf.get("realistic_total_r_closed"))
+    if filter_class == "POST_ENTRY_DIAGNOSTIC_ONLY":
+        return "Post-entry diagnostic only; do not promote as entry gate."
+    if avg_delta > Decimal("0.10") and retained_total > 0 and removed_total < 0:
+        return "Promising breakout damage-isolation candidate; validate chronologically before any shadow rule."
+    if avg_delta > 0 and removed_total < 0:
+        return "Improves breakout cohort, but still not enough alone for promotion."
+    if avg_delta > 0:
+        return "Average improves, but removed bucket is not clearly isolated damage."
+    return "Does not improve breakout cohort."
+
+
+def _mid_long_breakout_interaction_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    interactions = (
+        (
+            "BA-03A",
+            "High extension + low room",
+            "extension high/extreme AND room low",
+            lambda taxonomy: taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+            and taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM",
+        ),
+        (
+            "BA-03B",
+            "High crowding + high extension",
+            "crowding high/extreme AND extension high/extreme",
+            lambda taxonomy: taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"}
+            and taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"},
+        ),
+        (
+            "BA-03C",
+            "High crowding + mixed/weak flow",
+            "crowding high/extreme AND flow mixed/weak",
+            lambda taxonomy: taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"}
+            and taxonomy.get("flow_state_provisional") in {"MIXED", "WEAK"},
+        ),
+        (
+            "BA-03D",
+            "Weak flow + low room",
+            "flow weak AND room low",
+            lambda taxonomy: taxonomy.get("flow_state_provisional") == "WEAK"
+            and taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM",
+        ),
+        (
+            "BA-03E",
+            "Confirmed flow + low room",
+            "flow confirmed AND room low",
+            lambda taxonomy: taxonomy.get("flow_state_provisional") == "CONFIRMED"
+            and taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for interaction_id, label, expression, predicate in interactions:
+        selected: list[dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+            if predicate(taxonomy):
+                selected.append(item)
+        row = _mid_long_perf_row(
+            interaction_id,
+            label,
+            expression,
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "interaction_id": interaction_id,
+                "path_mix": _mid_long_path_mix(selected),
+                "mechanism_mix": dict(Counter(_mid_long_breakout_mechanism(item) for item in selected)),
+                "interaction_read": _mid_long_breakout_interaction_read(row),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_interaction_read(row: dict[str, Any]) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    if closed <= 0:
+        return "No sample in this interaction."
+    if total < 0 and avg_delta < 0:
+        return "Interaction is worse than breakout control; candidate damage cluster."
+    if total < 0:
+        return "Negative cluster, but compare removed winners before treating as filter."
+    return "Not harmful in this sample."
+
+
+def _mid_long_breakout_draft_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    field_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    precise_ready = _mid_long_breakout_precise_zone_ready(field_rows)
+    drafts = (
+        (
+            "BA-04A",
+            "DRAFT_BREAKOUT_STRUCTURAL_PROXY",
+            "close accepted proxy; exact zone penetration fields are reported separately",
+            lambda _item, taxonomy: taxonomy.get("breakout_state_pre_entry") == "CLOSE_ACCEPTED",
+        ),
+        (
+            "BA-04B",
+            "DRAFT_BREAKOUT_SPATIAL_PROXY",
+            "structural proxy + not high/extreme extension + room not low",
+            lambda _item, taxonomy: taxonomy.get("breakout_state_pre_entry") == "CLOSE_ACCEPTED"
+            and taxonomy.get("extension_bucket") not in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+            and taxonomy.get("room_to_resistance_bucket") != "LOW_ROOM",
+        ),
+        (
+            "BA-04C",
+            "DRAFT_BREAKOUT_EVIDENCE_PROXY",
+            "spatial proxy + flow not weak + cost not extreme",
+            lambda _item, taxonomy: taxonomy.get("breakout_state_pre_entry") == "CLOSE_ACCEPTED"
+            and taxonomy.get("extension_bucket") not in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}
+            and taxonomy.get("room_to_resistance_bucket") != "LOW_ROOM"
+            and taxonomy.get("flow_state_provisional") != "WEAK"
+            and taxonomy.get("projected_cost_bucket") != "EXTREME_COST",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for draft_id, label, expression, predicate in drafts:
+        selected: list[dict[str, Any]] = []
+        discarded: list[dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+            (selected if predicate(item, taxonomy) else discarded).append(item)
+        row = _mid_long_perf_row(
+            draft_id,
+            label,
+            expression,
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        discarded_perf = aggregate_signal_performance_items(discarded)
+        row.update(
+            {
+                "draft_id": draft_id,
+                "draft_status": _mid_long_breakout_draft_status(row, precise_ready=precise_ready, min_sample=min_sample),
+                "discarded_count": len(discarded),
+                "discarded_tp_count": discarded_perf["tp_count"],
+                "discarded_sl_count": discarded_perf["sl_count"],
+                "discarded_realistic_total_r_closed": discarded_perf["realistic_total_r_closed"],
+                "retained_path_mix": _mid_long_path_mix(selected),
+                "discarded_path_mix": _mid_long_path_mix(discarded),
+                "draft_read": _mid_long_breakout_draft_read(row, precise_ready=precise_ready),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_breakout_precise_zone_ready(field_rows: list[dict[str, Any]]) -> bool:
+    precise = [row for row in field_rows if row.get("source") == "missing_precise_zone_metric"]
+    return bool(precise) and all(int(row.get("available_count") or 0) > 0 for row in precise)
+
+
+def _mid_long_breakout_draft_status(
+    row: dict[str, Any],
+    *,
+    precise_ready: bool,
+    min_sample: int,
+) -> str:
+    if int(row.get("closed_count") or 0) < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    if not precise_ready:
+        return "PROXY_ONLY_NEEDS_ZONE_FIELDS"
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    sl_delta = _decimal_or_none_snapshot(row.get("sl_share_delta_vs_baseline"))
+    if total > 0 and avg_delta > Decimal("0.10") and (sl_delta is None or sl_delta <= 0):
+        return "READY_FOR_WALK_FORWARD"
+    if avg_delta > 0:
+        return "WATCH_MORE"
+    return "NOT_IMPROVING"
+
+
+def _mid_long_breakout_draft_read(row: dict[str, Any], *, precise_ready: bool) -> str:
+    if not precise_ready:
+        return "Use as proxy research only; exact breakout close/body/zone-width metrics are not in current log."
+    if str(row.get("draft_status")) == "READY_FOR_WALK_FORWARD":
+        return "Candidate for chronological validation, not live rule."
+    if _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")) > 0:
+        return "Improves average, but not enough for promotion."
+    return "Does not improve breakout accepted control."
+
+
+def _mid_long_breakout_summary(
+    *,
+    control: dict[str, Any],
+    field_rows: list[dict[str, Any]],
+    mechanism_rows: list[dict[str, Any]],
+    single_filter_rows: list[dict[str, Any]],
+    draft_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    precise_missing = [
+        row
+        for row in field_rows
+        if row.get("source") == "missing_precise_zone_metric" and int(row.get("available_count") or 0) <= 0
+    ]
+    best_filter = max(
+        single_filter_rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+        default=None,
+    )
+    worst_mechanism = min(
+        mechanism_rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        default=None,
+    )
+    best_draft = max(
+        draft_rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+        default=None,
+    )
+    if precise_missing:
+        label_purity_read = "PROXY_LABEL_ONLY_NEEDS_ZONE_FIELDS"
+    else:
+        label_purity_read = "ZONE_FIELDS_AVAILABLE_FOR_PURITY_AUDIT"
+    return {
+        "read": _mid_long_breakout_deep_dive_read(
+            control=control,
+            best_filter=best_filter,
+            best_draft=best_draft,
+            precise_missing=precise_missing,
+        ),
+        "label_purity_read": label_purity_read,
+        "precise_zone_fields_missing_count": len(precise_missing),
+        "best_filter": _mid_long_breakout_summary_row(best_filter),
+        "worst_mechanism": _mid_long_breakout_summary_row(worst_mechanism),
+        "best_draft": _mid_long_breakout_summary_row(best_draft),
+    }
+
+
+def _mid_long_breakout_deep_dive_read(
+    *,
+    control: dict[str, Any],
+    best_filter: dict[str, Any] | None,
+    best_draft: dict[str, Any] | None,
+    precise_missing: list[dict[str, Any]],
+) -> str:
+    if int(control.get("closed_count") or 0) <= 0:
+        return "NO_BREAKOUT_SAMPLE"
+    if precise_missing:
+        return "BREAKOUT_PROXY_ONLY"
+    if best_draft and str(best_draft.get("draft_status")) == "READY_FOR_WALK_FORWARD":
+        return "BREAKOUT_DRAFT_READY_FOR_VALIDATION"
+    if best_filter and _decimal_or_zero_snapshot(best_filter.get("realistic_avg_r_delta_vs_baseline")) > 0:
+        return "BREAKOUT_FILTER_WATCH_ONLY"
+    return "BREAKOUT_NOT_IMPROVING"
+
+
+def _mid_long_breakout_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "id": row.get("filter_id") or row.get("draft_id") or row.get("mechanism"),
+        "label": row.get("label"),
+        "closed_count": row.get("closed_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": row.get("realistic_avg_r_delta_vs_baseline"),
+        "status": row.get("draft_status") or row.get("verdict") or row.get("mechanism"),
+    }
 
 
 def _mid_long_taxonomy_mix(

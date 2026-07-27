@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-27",
+    version: "LAB-RESET-08",
+    title: "MID_LONG Breakout Accepted Deep Dive",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan lab khusus untuk membedah MID_LONG_BREAKOUT_ACCEPTED sebagai breakout candidate, bukan langsung dianggap breakout valid.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan breakout_accepted_deep_dive dengan control row, label-purity field audit, mechanism split, single damage filters, interaction clusters, dan draft cohorts.",
+      "Mechanism split membedakan STRUCTURAL_FALSE_BREAKOUT_CANDIDATE, ACCEPTED_BUT_FAILED_CONTINUATION, dan VALID_CONTINUATION_WITH_PULLBACK agar loss tidak disamaratakan sebagai false breakout.",
+      "Field availability menampilkan jelas metrik presisi zona yang belum ada seperti close penetration, body above zone, zone width, zone age, dan bars since breakout.",
+      "Halaman /mid-long-research-study sekarang punya section Breakout Accepted Deep Dive tepat setelah Sub-Setup Split Lab.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG bisa lanjut lebih tajam: sebelum membuat V2.1, kita tahu apakah breakout accepted saat ini masih proxy-only, bagian mana yang gagal struktural, dan bagian mana yang sebenarnya sudah accepted tapi butuh studi lanjutan.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Breakout Deep Dive" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-27",
     version: "LAB-RESET-07",
     title: "MID_LONG Sub-Setup Split Lab",
     status: "LIVE",
