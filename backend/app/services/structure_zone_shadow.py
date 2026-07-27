@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -101,6 +102,7 @@ class StructureZoneShadowService:
         specs = [self._normalize_signal(signal) for signal in signals]
         specs = [spec for spec in specs if spec is not None]
         candles = self._load_required_candles(specs)
+        close_times = {key: [candle.close_time for candle in rows] for key, rows in candles.items()}
         return {
             spec["signal_id"]: build_structure_zone_snapshot(
                 signal_id=spec["signal_id"],
@@ -110,7 +112,12 @@ class StructureZoneShadowService:
                 direction=spec["direction"],
                 entry=spec["entry"],
                 candles_by_timeframe={
-                    timeframe: candles.get((timeframe, spec["symbol"]), [])
+                    timeframe: _slice_candles_for_signal(
+                        candles.get((timeframe, spec["symbol"]), []),
+                        close_times.get((timeframe, spec["symbol"]), []),
+                        signal_time=spec["signal_time"],
+                        config=ZONE_CONFIGS[timeframe],
+                    )
                     for timeframe in KLINE_BY_TIMEFRAME
                 },
             )
@@ -176,6 +183,22 @@ class StructureZoneShadowService:
                     )
                 )
         return loaded
+
+
+def _slice_candles_for_signal(
+    candles: list[ZoneCandle],
+    close_times: list[datetime],
+    *,
+    signal_time: datetime,
+    config: ZoneConfig,
+) -> list[ZoneCandle]:
+    if not candles:
+        return []
+    start_time = _naive(signal_time) - config.lookback - config.independent_touch_gap
+    end_time = _naive(signal_time)
+    left = bisect_left(close_times, start_time)
+    right = bisect_right(close_times, end_time)
+    return candles[left:right]
 
 
 def build_structure_zone_snapshot(
@@ -280,10 +303,12 @@ def evaluate_directional_structure(
             "zones": [_public_zone(zone) for zone in zones],
         }
     classification = classify_directional_structure(
+        timeframe=timeframe,
         direction=direction,
         entry=entry,
         signal_candle=signal_candle,
         prior_candle=prior_candle,
+        closed_candles=closed,
         zones=zones,
         atr=atr,
     )
@@ -394,7 +419,10 @@ def classify_directional_structure(
     prior_candle: ZoneCandle,
     zones: list[dict[str, Any]],
     atr: Decimal,
+    timeframe: str = "1h",
+    closed_candles: list[ZoneCandle] | None = None,
 ) -> dict[str, Any]:
+    closed_candles = closed_candles or [prior_candle, signal_candle]
     nearest_support = max(
         (zone for zone in zones if Decimal(zone["center"]) <= entry),
         key=lambda zone: Decimal(zone["center"]),
@@ -484,6 +512,17 @@ def classify_directional_structure(
         "nearest_support_distance_atr": support_distance,
         "nearest_resistance_distance_atr": resistance_distance,
         "state_zone": _public_zone(state_zone),
+        "breakout_state_diagnostics": breakout_state_diagnostics(
+            timeframe=timeframe,
+            direction=direction,
+            entry=entry,
+            signal_candle=signal_candle,
+            prior_candle=prior_candle,
+            closed_candles=closed_candles,
+            zones=zones,
+            atr=atr,
+            state_zone=state_zone,
+        ),
     }
 
 
@@ -495,6 +534,276 @@ def distance_to_zone(entry: Decimal, zone: dict[str, Any] | None, atr: Decimal) 
     if lower <= entry <= upper:
         return Decimal("0")
     return min(abs(entry - lower), abs(entry - upper)) / atr
+
+
+def breakout_state_diagnostics(
+    *,
+    timeframe: str,
+    direction: str,
+    entry: Decimal,
+    signal_candle: ZoneCandle,
+    prior_candle: ZoneCandle,
+    closed_candles: list[ZoneCandle],
+    zones: list[dict[str, Any]],
+    atr: Decimal,
+    state_zone: dict[str, Any] | None,
+) -> dict[str, Any]:
+    analysis_zone, source = _analysis_zone_for_breakout(
+        direction=direction,
+        entry=entry,
+        signal_candle=signal_candle,
+        prior_candle=prior_candle,
+        zones=zones,
+        state_zone=state_zone,
+        atr=atr,
+    )
+    if analysis_zone is None or atr <= 0:
+        return {
+            "status": "ZONE_DIAGNOSTICS_UNAVAILABLE",
+            "reason": "No pre-entry repeated zone can anchor breakout-state diagnostics.",
+            "zone_source_timeframe": timeframe,
+            "zone_id": None,
+            "zone_lower": None,
+            "zone_upper": None,
+            "zone_center": None,
+            "zone_width_atr": None,
+            "zone_touch_count": None,
+            "zone_age_bars": None,
+            "close_penetration_atr": None,
+            "close_penetration_zone_width": None,
+            "body_above_zone_ratio": None,
+            "close_location_in_candle": _close_location(signal_candle),
+            "upper_wick_to_body_ratio": _upper_wick_to_body(signal_candle),
+            "breakout_candle_range_atr": _safe_div(signal_candle.high - signal_candle.low, atr),
+            "breakout_body_atr": _safe_div(abs(signal_candle.close - signal_candle.open), atr),
+            "bars_since_breakout": None,
+            "entry_distance_from_zone_atr": None,
+            "entry_extension_from_zone_atr": None,
+            "room_to_next_resistance_atr": None,
+            "room_to_next_support_atr": None,
+            "next_resistance_zone": None,
+            "next_support_zone": None,
+            "no_future_data": True,
+        }
+    lower = Decimal(analysis_zone["lower"])
+    upper = Decimal(analysis_zone["upper"])
+    center = Decimal(analysis_zone["center"])
+    width = upper - lower
+    next_resistance = _next_zone(
+        zones,
+        direction="UP",
+        entry=entry,
+        exclude=analysis_zone,
+    )
+    next_support = _next_zone(
+        zones,
+        direction="DOWN",
+        entry=entry,
+        exclude=analysis_zone,
+    )
+    close_penetration = (
+        signal_candle.close - upper
+        if direction == "LONG"
+        else lower - signal_candle.close
+        if direction == "SHORT"
+        else None
+    )
+    entry_extension = (
+        max(entry - upper, Decimal("0"))
+        if direction == "LONG"
+        else max(lower - entry, Decimal("0"))
+        if direction == "SHORT"
+        else None
+    )
+    return {
+        "status": "ZONE_DIAGNOSTICS_AVAILABLE",
+        "reason": f"Diagnostics use a pre-entry {source} zone from closed {timeframe} candles.",
+        "zone_source_timeframe": timeframe,
+        "zone_id": _zone_id(timeframe, analysis_zone),
+        "zone_lower": lower,
+        "zone_upper": upper,
+        "zone_center": center,
+        "zone_width_price": width,
+        "zone_width_atr": _safe_div(width, atr),
+        "zone_touch_count": int(analysis_zone.get("touch_count") or 0),
+        "zone_reaction_count": int(analysis_zone.get("support_touch_count") or 0)
+        + int(analysis_zone.get("resistance_touch_count") or 0),
+        "zone_age_bars": _zone_age_bars(closed_candles, analysis_zone, signal_candle),
+        "zone_created_at": analysis_zone.get("first_touch_time"),
+        "zone_last_touch_at": analysis_zone.get("last_touch_time"),
+        "close_penetration_atr": _safe_div(close_penetration, atr),
+        "close_penetration_zone_width": _safe_div(close_penetration, width),
+        "body_above_zone_ratio": _body_beyond_zone_ratio(signal_candle, analysis_zone, direction),
+        "close_location_in_candle": _close_location(signal_candle),
+        "upper_wick_to_body_ratio": _upper_wick_to_body(signal_candle),
+        "breakout_candle_range_atr": _safe_div(signal_candle.high - signal_candle.low, atr),
+        "breakout_body_atr": _safe_div(abs(signal_candle.close - signal_candle.open), atr),
+        "bars_since_breakout": _bars_since_breakout(
+            direction=direction,
+            candles=closed_candles,
+            zone=analysis_zone,
+        ),
+        "entry_distance_from_zone_atr": distance_to_zone(entry, analysis_zone, atr),
+        "entry_extension_from_zone_atr": _safe_div(entry_extension, atr),
+        "room_to_next_resistance_atr": distance_to_zone(entry, next_resistance, atr),
+        "room_to_next_support_atr": distance_to_zone(entry, next_support, atr),
+        "next_resistance_zone": _public_zone(next_resistance),
+        "next_support_zone": _public_zone(next_support),
+        "no_future_data": True,
+    }
+
+
+def _analysis_zone_for_breakout(
+    *,
+    direction: str,
+    entry: Decimal,
+    signal_candle: ZoneCandle,
+    prior_candle: ZoneCandle,
+    zones: list[dict[str, Any]],
+    state_zone: dict[str, Any] | None,
+    atr: Decimal,
+) -> tuple[dict[str, Any] | None, str]:
+    breakout_candidates: list[dict[str, Any]] = []
+    for zone in zones:
+        lower = Decimal(zone["lower"])
+        upper = Decimal(zone["upper"])
+        if direction == "LONG" and prior_candle.close <= upper and signal_candle.close > upper:
+            breakout_candidates.append(zone)
+        elif direction == "SHORT" and prior_candle.close >= lower and signal_candle.close < lower:
+            breakout_candidates.append(zone)
+    if breakout_candidates:
+        return min(
+            breakout_candidates,
+            key=lambda zone: distance_to_zone(entry, zone, atr) or Decimal("0"),
+        ), "breakout"
+    if state_zone is not None:
+        return state_zone, "state"
+    if direction == "LONG":
+        fallback = max(
+            (zone for zone in zones if Decimal(zone["center"]) <= entry),
+            key=lambda zone: Decimal(zone["center"]),
+            default=None,
+        )
+    elif direction == "SHORT":
+        fallback = min(
+            (zone for zone in zones if Decimal(zone["center"]) >= entry),
+            key=lambda zone: Decimal(zone["center"]),
+            default=None,
+        )
+    else:
+        fallback = None
+    return fallback, "nearest"
+
+
+def _next_zone(
+    zones: list[dict[str, Any]],
+    *,
+    direction: str,
+    entry: Decimal,
+    exclude: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for zone in zones:
+        if _same_zone(zone, exclude):
+            continue
+        lower = Decimal(zone["lower"])
+        upper = Decimal(zone["upper"])
+        center = Decimal(zone["center"])
+        if direction == "UP" and (lower > entry or center > entry):
+            candidates.append(zone)
+        elif direction == "DOWN" and (upper < entry or center < entry):
+            candidates.append(zone)
+    if direction == "UP":
+        return min(candidates, key=lambda zone: Decimal(zone["center"]), default=None)
+    return max(candidates, key=lambda zone: Decimal(zone["center"]), default=None)
+
+
+def _same_zone(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    if left is None or right is None:
+        return False
+    return (
+        Decimal(left["lower"]) == Decimal(right["lower"])
+        and Decimal(left["upper"]) == Decimal(right["upper"])
+        and Decimal(left["center"]) == Decimal(right["center"])
+    )
+
+
+def _safe_div(numerator: Decimal | None, denominator: Decimal | None) -> Decimal | None:
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return numerator / denominator
+
+
+def _body_beyond_zone_ratio(candle: ZoneCandle, zone: dict[str, Any], direction: str) -> Decimal | None:
+    body_low = min(candle.open, candle.close)
+    body_high = max(candle.open, candle.close)
+    body = body_high - body_low
+    if body <= 0:
+        return None
+    lower = Decimal(zone["lower"])
+    upper = Decimal(zone["upper"])
+    if direction == "LONG":
+        beyond = max(body_high - max(body_low, upper), Decimal("0"))
+    elif direction == "SHORT":
+        beyond = max(min(body_high, lower) - body_low, Decimal("0"))
+    else:
+        return None
+    return min(max(beyond / body, Decimal("0")), Decimal("1"))
+
+
+def _close_location(candle: ZoneCandle) -> Decimal | None:
+    candle_range = candle.high - candle.low
+    if candle_range <= 0:
+        return None
+    return (candle.close - candle.low) / candle_range
+
+
+def _upper_wick_to_body(candle: ZoneCandle) -> Decimal | None:
+    body = abs(candle.close - candle.open)
+    if body <= 0:
+        return None
+    upper_wick = candle.high - max(candle.open, candle.close)
+    return upper_wick / body
+
+
+def _bars_since_breakout(
+    *,
+    direction: str,
+    candles: list[ZoneCandle],
+    zone: dict[str, Any],
+) -> int | None:
+    ordered = sorted(candles, key=lambda candle: candle.close_time)
+    if not ordered:
+        return None
+    lower = Decimal(zone["lower"])
+    upper = Decimal(zone["upper"])
+    last_breakout_index = None
+    for index, candle in enumerate(ordered):
+        prior = ordered[index - 1] if index > 0 else None
+        if direction == "LONG":
+            crossed = candle.close > upper and (prior is None or prior.close <= upper)
+        elif direction == "SHORT":
+            crossed = candle.close < lower and (prior is None or prior.close >= lower)
+        else:
+            crossed = False
+        if crossed:
+            last_breakout_index = index
+    if last_breakout_index is None:
+        return None
+    return len(ordered) - 1 - last_breakout_index
+
+
+def _zone_age_bars(candles: list[ZoneCandle], zone: dict[str, Any], signal_candle: ZoneCandle) -> int | None:
+    last_touch = _as_datetime(zone.get("last_touch_time"))
+    if last_touch is None:
+        return None
+    return sum(1 for candle in candles if last_touch < candle.close_time <= signal_candle.close_time)
+
+
+def _zone_id(timeframe: str, zone: dict[str, Any]) -> str:
+    first_touch = zone.get("first_touch_time")
+    center = Decimal(zone["center"]).normalize()
+    return f"{timeframe}:{center}:{first_touch}"
 
 
 def structure_zone_chart_zones(

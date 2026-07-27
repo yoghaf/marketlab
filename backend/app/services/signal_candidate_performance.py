@@ -250,19 +250,12 @@ class SignalCandidatePerformanceService:
         persisted_zone_snapshot = _structure_zone_snapshot(signal)
         zone_snapshot = persisted_zone_snapshot
         zone_snapshot_source = "PERSISTED"
-        if zone_snapshot is None:
-            zone_snapshot = StructureZoneShadowService(self.db).snapshots_for_signals(
-                [
-                    {
-                        "signal_id": signal.signal_id,
-                        "symbol": signal.symbol,
-                        "timeframe": signal.timeframe,
-                        "signal_timestamp": signal.signal_timestamp,
-                        "direction": signal.direction,
-                        "price_at_signal": signal.price_at_signal,
-                    }
-                ]
-            ).get(signal.signal_id)
+        if zone_snapshot is None or (
+            signal.stage == "MID_LONG"
+            and signal.timeframe == "1h"
+            and not _structure_zone_has_breakout_diagnostics(zone_snapshot)
+        ):
+            zone_snapshot = self._structure_zone_snapshot_for_signal(signal)
             zone_snapshot_source = "ON_DEMAND_CAUSAL" if zone_snapshot else "UNAVAILABLE"
         if zone_snapshot:
             item.update(_structure_zone_result_fields(zone_snapshot))
@@ -2519,6 +2512,7 @@ class SignalCandidatePerformanceService:
             candles,
             position_lock=position_lock,
             global_latest_candle_time=global_latest_candle_time or latest_candle_time,
+            structure_zone_snapshots=self._structure_zone_snapshots_for_signals(signals),
         )
         self._apply_universe_context(evaluated, symbols)
         if with_shadow:
@@ -2566,6 +2560,50 @@ class SignalCandidatePerformanceService:
                     },
                 )
             )
+
+    def _structure_zone_snapshot_for_signal(self, signal: SignalForwardReturnLog) -> dict[str, Any] | None:
+        if signal.price_at_signal is None:
+            return _structure_zone_snapshot(signal)
+        snapshot = StructureZoneShadowService(self.db).snapshots_for_signals(
+            [
+                {
+                    "signal_id": signal.signal_id,
+                    "symbol": signal.symbol,
+                    "timeframe": signal.timeframe,
+                    "signal_timestamp": signal.signal_timestamp,
+                    "direction": signal.direction,
+                    "price_at_signal": signal.price_at_signal,
+                }
+            ]
+        ).get(signal.signal_id)
+        return snapshot or _structure_zone_snapshot(signal)
+
+    def _structure_zone_snapshots_for_signals(
+        self,
+        signals: list[SignalForwardReturnLog],
+    ) -> dict[str, dict[str, Any]]:
+        target_signals = [
+            signal
+            for signal in signals
+            if signal.stage == "MID_LONG"
+            and signal.timeframe == "1h"
+            and signal.price_at_signal is not None
+        ]
+        if not target_signals:
+            return {}
+        return StructureZoneShadowService(self.db).snapshots_for_signals(
+            [
+                {
+                    "signal_id": signal.signal_id,
+                    "symbol": signal.symbol,
+                    "timeframe": signal.timeframe,
+                    "signal_timestamp": signal.signal_timestamp,
+                    "direction": signal.direction,
+                    "price_at_signal": signal.price_at_signal,
+                }
+                for signal in target_signals
+            ]
+        )
 
     def _load_signals(
         self,
@@ -2884,6 +2922,7 @@ class SignalCandidatePerformanceService:
         *,
         position_lock: bool,
         global_latest_candle_time: datetime | None,
+        structure_zone_snapshots: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], Counter[str]]:
         items: list[dict[str, Any]] = []
         skipped: Counter[str] = Counter()
@@ -2900,6 +2939,7 @@ class SignalCandidatePerformanceService:
                 candles.get(signal.symbol, []),
                 open_times_by_symbol.get(signal.symbol, []),
                 global_latest_candle_time=global_latest_candle_time,
+                structure_zone_snapshot=(structure_zone_snapshots or {}).get(signal.signal_id),
             )
             items.append(item)
             if position_lock:
@@ -2916,6 +2956,7 @@ class SignalCandidatePerformanceService:
         open_times: list[datetime],
         *,
         global_latest_candle_time: datetime | None = None,
+        structure_zone_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         entry = Decimal(signal.price_at_signal)
         stop = Decimal(signal.sl_ref)
@@ -2935,7 +2976,7 @@ class SignalCandidatePerformanceService:
             stop=stop,
             realistic_fill_quality=str(realistic_assumptions.get("realistic_fill_quality") or ""),
         )
-        structure_zone_shadow = _structure_zone_snapshot(signal)
+        structure_zone_shadow = structure_zone_snapshot or _structure_zone_snapshot(signal)
         base = {
             "signal_id": signal.signal_id,
             "symbol": signal.symbol,
@@ -5149,6 +5190,125 @@ def _structure_zone_snapshot(signal: SignalForwardReturnLog) -> dict[str, Any] |
     return snapshot if isinstance(snapshot, dict) else None
 
 
+BREAKOUT_DIAGNOSTIC_FIELDS = (
+    "status",
+    "reason",
+    "zone_source_timeframe",
+    "zone_id",
+    "zone_lower",
+    "zone_upper",
+    "zone_center",
+    "zone_width_price",
+    "zone_width_atr",
+    "zone_touch_count",
+    "zone_reaction_count",
+    "zone_age_bars",
+    "zone_created_at",
+    "zone_last_touch_at",
+    "close_penetration_atr",
+    "close_penetration_zone_width",
+    "body_above_zone_ratio",
+    "close_location_in_candle",
+    "upper_wick_to_body_ratio",
+    "breakout_candle_range_atr",
+    "breakout_body_atr",
+    "bars_since_breakout",
+    "entry_distance_from_zone_atr",
+    "entry_extension_from_zone_atr",
+    "room_to_next_resistance_atr",
+    "room_to_next_support_atr",
+    "next_resistance_zone",
+    "next_support_zone",
+    "no_future_data",
+)
+
+
+def _structure_zone_has_breakout_diagnostics(snapshot: dict[str, Any] | None) -> bool:
+    primary = snapshot.get("primary") if isinstance(snapshot, dict) else None
+    diagnostics = primary.get("breakout_state_diagnostics") if isinstance(primary, dict) else None
+    return isinstance(diagnostics, dict) and bool(diagnostics)
+
+
+def _empty_breakout_diagnostic_fields() -> dict[str, Any]:
+    fields = {f"breakout_{field}": None for field in BREAKOUT_DIAGNOSTIC_FIELDS}
+    fields.update(
+        {
+            "breakout_state_diagnostics": None,
+            "structure_zone_diagnostics_status": None,
+            "structure_zone_diagnostics_reason": None,
+            "zone_source_timeframe": None,
+            "zone_id": None,
+            "zone_lower": None,
+            "zone_upper": None,
+            "zone_center": None,
+            "zone_width_price": None,
+            "zone_width_atr": None,
+            "zone_touch_count": None,
+            "zone_reaction_count": None,
+            "zone_age_bars": None,
+            "zone_created_at": None,
+            "zone_last_touch_at": None,
+            "close_penetration_atr": None,
+            "close_penetration_zone_width": None,
+            "body_above_zone_ratio": None,
+            "close_location_in_candle": None,
+            "upper_wick_to_body_ratio": None,
+            "breakout_candle_range_atr": None,
+            "breakout_body_atr": None,
+            "bars_since_breakout": None,
+            "entry_distance_from_zone_atr": None,
+            "entry_extension_from_zone_atr": None,
+            "room_to_next_resistance_atr": None,
+            "room_to_next_support_atr": None,
+            "next_resistance_zone": None,
+            "next_support_zone": None,
+            "breakout_no_future_data": None,
+        }
+    )
+    return fields
+
+
+def _breakout_diagnostic_result_fields(diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(diagnostics, dict):
+        return _empty_breakout_diagnostic_fields()
+    fields = {f"breakout_{field}": diagnostics.get(field) for field in BREAKOUT_DIAGNOSTIC_FIELDS}
+    fields.update(
+        {
+            "breakout_state_diagnostics": diagnostics,
+            "structure_zone_diagnostics_status": diagnostics.get("status"),
+            "structure_zone_diagnostics_reason": diagnostics.get("reason"),
+            "zone_source_timeframe": diagnostics.get("zone_source_timeframe"),
+            "zone_id": diagnostics.get("zone_id"),
+            "zone_lower": diagnostics.get("zone_lower"),
+            "zone_upper": diagnostics.get("zone_upper"),
+            "zone_center": diagnostics.get("zone_center"),
+            "zone_width_price": diagnostics.get("zone_width_price"),
+            "zone_width_atr": diagnostics.get("zone_width_atr"),
+            "zone_touch_count": diagnostics.get("zone_touch_count"),
+            "zone_reaction_count": diagnostics.get("zone_reaction_count"),
+            "zone_age_bars": diagnostics.get("zone_age_bars"),
+            "zone_created_at": diagnostics.get("zone_created_at"),
+            "zone_last_touch_at": diagnostics.get("zone_last_touch_at"),
+            "close_penetration_atr": diagnostics.get("close_penetration_atr"),
+            "close_penetration_zone_width": diagnostics.get("close_penetration_zone_width"),
+            "body_above_zone_ratio": diagnostics.get("body_above_zone_ratio"),
+            "close_location_in_candle": diagnostics.get("close_location_in_candle"),
+            "upper_wick_to_body_ratio": diagnostics.get("upper_wick_to_body_ratio"),
+            "breakout_candle_range_atr": diagnostics.get("breakout_candle_range_atr"),
+            "breakout_body_atr": diagnostics.get("breakout_body_atr"),
+            "bars_since_breakout": diagnostics.get("bars_since_breakout"),
+            "entry_distance_from_zone_atr": diagnostics.get("entry_distance_from_zone_atr"),
+            "entry_extension_from_zone_atr": diagnostics.get("entry_extension_from_zone_atr"),
+            "room_to_next_resistance_atr": diagnostics.get("room_to_next_resistance_atr"),
+            "room_to_next_support_atr": diagnostics.get("room_to_next_support_atr"),
+            "next_resistance_zone": diagnostics.get("next_resistance_zone"),
+            "next_support_zone": diagnostics.get("next_support_zone"),
+            "breakout_no_future_data": diagnostics.get("no_future_data"),
+        }
+    )
+    return fields
+
+
 def _structure_zone_result_fields(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     if not snapshot:
         return {
@@ -5164,9 +5324,11 @@ def _structure_zone_result_fields(snapshot: dict[str, Any] | None) -> dict[str, 
             "structure_zone_context_state": None,
             "structure_zone_context_reason": None,
             "structure_zone_snapshot_time": None,
+            **_empty_breakout_diagnostic_fields(),
         }
     primary = snapshot.get("primary") if isinstance(snapshot.get("primary"), dict) else {}
     context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
+    diagnostics = primary.get("breakout_state_diagnostics") if isinstance(primary, dict) else None
     return {
         "structure_zone_shadow": snapshot,
         "structure_zone_status": snapshot.get("status") or "ZONE_UNAVAILABLE",
@@ -5182,6 +5344,7 @@ def _structure_zone_result_fields(snapshot: dict[str, Any] | None) -> dict[str, 
         "structure_zone_context_state": context.get("state"),
         "structure_zone_context_reason": context.get("reason"),
         "structure_zone_snapshot_time": snapshot.get("generated_at_utc"),
+        **_breakout_diagnostic_result_fields(diagnostics),
     }
 
 

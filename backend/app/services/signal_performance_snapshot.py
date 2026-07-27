@@ -1223,16 +1223,24 @@ MID_LONG_BREAKOUT_AUDIT_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("realistic_cost_r_estimate", "Realistic cost R", "top_level"),
     ("futures_spread_pct", "Futures spread pct", "evidence"),
     ("spot_spread_pct", "Spot spread pct", "evidence"),
-    ("close_penetration_atr", "Close penetration ATR", "missing_precise_zone_metric"),
-    ("close_penetration_zone_width", "Close penetration zone width", "missing_precise_zone_metric"),
-    ("body_above_zone_ratio", "Body above zone ratio", "missing_precise_zone_metric"),
-    ("close_location_in_candle", "Close location in candle", "missing_precise_zone_metric"),
-    ("upper_wick_to_body_ratio", "Upper wick/body ratio", "missing_precise_zone_metric"),
-    ("breakout_candle_range_atr", "Breakout candle range ATR", "missing_precise_zone_metric"),
-    ("bars_since_breakout", "Bars since breakout", "missing_precise_zone_metric"),
-    ("zone_touch_count", "Zone touch count", "missing_precise_zone_metric"),
-    ("zone_age_bars", "Zone age bars", "missing_precise_zone_metric"),
-    ("zone_width_atr", "Zone width ATR", "missing_precise_zone_metric"),
+    ("zone_lower", "Zone lower", "precise_zone_metric"),
+    ("zone_upper", "Zone upper", "precise_zone_metric"),
+    ("zone_center", "Zone center", "precise_zone_metric"),
+    ("close_penetration_atr", "Close penetration ATR", "precise_zone_metric"),
+    ("close_penetration_zone_width", "Close penetration zone width", "precise_zone_metric"),
+    ("body_above_zone_ratio", "Body above zone ratio", "precise_zone_metric"),
+    ("close_location_in_candle", "Close location in candle", "precise_zone_metric"),
+    ("upper_wick_to_body_ratio", "Upper wick/body ratio", "precise_zone_metric"),
+    ("breakout_candle_range_atr", "Breakout candle range ATR", "precise_zone_metric"),
+    ("breakout_body_atr", "Breakout body ATR", "precise_zone_metric"),
+    ("bars_since_breakout", "Bars since breakout", "precise_zone_metric"),
+    ("entry_distance_from_zone_atr", "Entry distance from zone ATR", "precise_zone_metric"),
+    ("entry_extension_from_zone_atr", "Entry extension from zone ATR", "precise_zone_metric"),
+    ("room_to_next_resistance_atr", "Room to next resistance ATR", "precise_zone_metric"),
+    ("room_to_next_support_atr", "Room to next support ATR", "precise_zone_metric"),
+    ("zone_touch_count", "Zone touch count", "precise_zone_metric"),
+    ("zone_age_bars", "Zone age bars", "precise_zone_metric"),
+    ("zone_width_atr", "Zone width ATR", "precise_zone_metric"),
 )
 
 
@@ -2607,7 +2615,7 @@ def _mid_long_sub_setup_label(taxonomy: dict[str, Any]) -> str:
     retest = str(taxonomy.get("retest_quality_pre_entry") or "")
     structure = str(taxonomy.get("structure_status") or "")
     if setup == "BREAKOUT_ATTEMPT" and breakout == "CLOSE_ACCEPTED":
-        return "MID_LONG_BREAKOUT_ACCEPTED"
+        return "MID_LONG_BREAKOUT_PROXY_CANDIDATE"
     if setup == "BREAKOUT_ATTEMPT":
         return "MID_LONG_BREAKOUT_WICK_OR_UNCONFIRMED"
     if setup == "RETEST" and retest == "RETEST_HOLD_STRONG":
@@ -2627,7 +2635,8 @@ def _mid_long_sub_setup_label(taxonomy: dict[str, Any]) -> str:
 
 def _mid_long_sub_setup_definition(sub_label: str) -> str:
     definitions = {
-        "MID_LONG_BREAKOUT_ACCEPTED": "Breakout attempt with a pre-entry close-accepted breakout state.",
+        "MID_LONG_BREAKOUT_PROXY_CANDIDATE": "Breakout attempt with a pre-entry close-accepted proxy state; precise zone fields decide whether it deserves more research.",
+        "MID_LONG_BREAKOUT_ACCEPTED": "Legacy name for breakout proxy candidate.",
         "MID_LONG_BREAKOUT_WICK_OR_UNCONFIRMED": "Breakout family, but no clear close-accepted state before entry.",
         "MID_LONG_RETEST_HOLD_STRONG": "Retest family with a strong hold/role-flip read.",
         "MID_LONG_RETEST_HOLD_IN_ZONE": "Retest family still inside the zone, not a clean hold.",
@@ -2757,8 +2766,8 @@ def _mid_long_breakout_accepted_deep_dive(
     breakout_items = _mid_long_breakout_accepted_items(items, taxonomy_by_id=taxonomy_by_id)
     control = _mid_long_perf_row(
         "BA-00",
-        "Breakout accepted control",
-        "sub_setup == MID_LONG_BREAKOUT_ACCEPTED",
+        "Breakout proxy control",
+        "sub_setup == MID_LONG_BREAKOUT_PROXY_CANDIDATE",
         breakout_items,
         baseline=baseline,
         required_fields=(),
@@ -2791,9 +2800,9 @@ def _mid_long_breakout_accepted_deep_dive(
         min_sample=min_sample,
     )
     return {
-        "scope": "MID_LONG_BREAKOUT_ACCEPTED / BREAKOUT_CANDIDATE deep dive",
+        "scope": "MID_LONG_BREAKOUT_PROXY_CANDIDATE deep dive",
         "method": (
-            "Audits whether the breakout label is structurally proven or only proxy-based, then separates "
+            "Audits whether the breakout proxy is structurally proven or still only proxy-based, then separates "
             "false-breakout candidates from accepted-but-failed continuation and pullback winners."
         ),
         "control": control,
@@ -2852,7 +2861,7 @@ def _mid_long_breakout_accepted_deep_dive(
             draft_rows=draft_rows,
         ),
         "guardrails": [
-            "Breakout Accepted is treated as BREAKOUT_CANDIDATE until precise zone-penetration fields exist.",
+            "Breakout proxy is a research label, not a proven continuation rule.",
             "Post-entry path labels explain behavior; they must not become live entry gates.",
             "Room-to-resistance UNKNOWN is not a hard reject.",
             "No Signal Factory rule, scanner decision, TP/SL formula, threshold, or execution behavior is changed.",
@@ -2868,7 +2877,10 @@ def _mid_long_breakout_accepted_items(
     rows: list[dict[str, Any]] = []
     for idx, item in enumerate(items):
         taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
-        if _mid_long_sub_setup_label(taxonomy) == "MID_LONG_BREAKOUT_ACCEPTED":
+        if _mid_long_sub_setup_label(taxonomy) in {
+            "MID_LONG_BREAKOUT_PROXY_CANDIDATE",
+            "MID_LONG_BREAKOUT_ACCEPTED",
+        }:
             rows.append(item)
     return rows
 
@@ -2890,7 +2902,7 @@ def _mid_long_breakout_field_availability_rows(items: list[dict[str, Any]]) -> l
         )
     rows.sort(
         key=lambda row: (
-            row["source"] == "missing_precise_zone_metric",
+            row["source"] in {"precise_zone_metric", "missing_precise_zone_metric"},
             int(row["available_count"] or 0),
             str(row["field"]),
         )
@@ -2917,7 +2929,7 @@ def _mid_long_breakout_field_read(*, source: str, available_count: int, total: i
     if total <= 0:
         return "NO_SAMPLE"
     if available_count <= 0:
-        if source == "missing_precise_zone_metric":
+        if source in {"precise_zone_metric", "missing_precise_zone_metric"}:
             return "MISSING_IN_CURRENT_LOG"
         return "UNAVAILABLE"
     if available_count < total:
@@ -3344,7 +3356,7 @@ def _mid_long_breakout_draft_rows(
 
 
 def _mid_long_breakout_precise_zone_ready(field_rows: list[dict[str, Any]]) -> bool:
-    precise = [row for row in field_rows if row.get("source") == "missing_precise_zone_metric"]
+    precise = [row for row in field_rows if row.get("source") in {"precise_zone_metric", "missing_precise_zone_metric"}]
     return bool(precise) and all(int(row.get("available_count") or 0) > 0 for row in precise)
 
 
@@ -3389,7 +3401,8 @@ def _mid_long_breakout_summary(
     precise_missing = [
         row
         for row in field_rows
-        if row.get("source") == "missing_precise_zone_metric" and int(row.get("available_count") or 0) <= 0
+        if row.get("source") in {"precise_zone_metric", "missing_precise_zone_metric"}
+        and int(row.get("available_count") or 0) <= 0
     ]
     best_filter = max(
         single_filter_rows,

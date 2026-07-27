@@ -147,7 +147,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           {audit.sub_setup_split_lab && (
             <SectionCard
               title="1. Sub-Setup Split Lab"
-              description="MID_LONG 1h dipecah menjadi sub-label: breakout accepted, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
+              description="MID_LONG 1h dipecah menjadi sub-label: breakout proxy, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
             >
               <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
             </SectionCard>
@@ -155,8 +155,8 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.breakout_accepted_deep_dive && (
             <SectionCard
-              title="2. Breakout Accepted Deep Dive"
-              description="Audit khusus sub-setup terbaik sementara. Fokusnya label purity: apakah ini benar breakout valid, false breakout, atau breakout yang sudah diterima tapi gagal lanjut."
+              title="2. Breakout-State Diagnostics"
+              description="Audit khusus BREAKOUT_PROXY_CANDIDATE. Fokusnya pre-entry zone: penetrasi close, body terhadap zona, wick, umur zona, jarak entry, dan ruang ke resistance berikutnya."
             >
               <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
             </SectionCard>
@@ -393,8 +393,8 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
   return (
     <div>
       <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
-        <Info label="Read" value={humanFlag(summary.read)} helper="Apakah breakout sudah siap diuji atau masih proxy." />
-        <Info label="Label purity" value={humanFlag(summary.label_purity_read)} helper={`${summary.precise_zone_fields_missing_count} precise zone field kosong.`} />
+        <Info label="Read" value={humanFlag(summary.read)} helper="Apakah proxy breakout sudah punya angka zona untuk dibedah." />
+        <Info label="Zone coverage" value={humanFlag(summary.label_purity_read)} helper={`${summary.precise_zone_fields_missing_count} precise zone field kosong.`} />
         <Info label="Control sample" value={String(lab.control.closed_count || 0)} helper={`${lab.control.tp_count || 0} TP / ${lab.control.sl_count || 0} SL`} />
         <Info label="Control R" value={`${fmtSigned(lab.control.realistic_total_r_closed)}R`} helper={`${fmtSigned(lab.control.realistic_avg_r_closed)}R avg`} />
         <BreakoutSummaryCard title="Best filter" row={summary.best_filter} />
@@ -404,15 +404,15 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
       <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.9fr_1.1fr]">
         <div className="rounded-md border border-line bg-white">
           <div className="border-b border-line px-4 py-3">
-            <div className="font-bold">Label purity fields</div>
-            <div className="mt-1 text-xs leading-5 text-slate-500">Field yang tersedia vs field presisi yang masih belum ada di log saat ini.</div>
+            <div className="font-bold">Pre-entry zone fields</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Field zona dihitung dari candle yang sudah close sebelum entry, bukan candle masa depan.</div>
           </div>
           <BreakoutFieldAvailabilityTable rows={lab.field_availability_rows} />
         </div>
         <div className="rounded-md border border-line bg-white">
           <div className="border-b border-line px-4 py-3">
             <div className="font-bold">Mechanism split</div>
-            <div className="mt-1 text-xs leading-5 text-slate-500">Loss/win tidak disamaratakan: false breakout, accepted-but-failed, atau pullback winner.</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Loss/win tidak disamaratakan: false breakout candidate, failed continuation, atau pullback winner.</div>
           </div>
           <BreakoutMechanismTable rows={lab.mechanism_rows} />
         </div>
@@ -430,7 +430,7 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
         <div className="rounded-md border border-line bg-white">
           <div className="border-b border-line px-4 py-3">
             <div className="font-bold">Interaction clusters</div>
-            <div className="mt-1 text-xs leading-5 text-slate-500">Cluster risiko yang bisa menjelaskan kenapa breakout accepted tetap gagal.</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Cluster risiko yang bisa menjelaskan kenapa breakout proxy tetap gagal.</div>
           </div>
           <BreakoutInteractionTable rows={lab.interaction_rows} />
         </div>
@@ -513,7 +513,7 @@ function BreakoutFieldAvailabilityTable({ rows }: { rows: MidLongBreakoutFieldAv
 }
 
 function BreakoutMechanismTable({ rows }: { rows: MidLongBreakoutMechanismRow[] }) {
-  if (!rows.length) return <div className="p-4"><EmptyState title="Mechanism kosong" detail="Belum ada breakout accepted sample." /></div>;
+  if (!rows.length) return <div className="p-4"><EmptyState title="Mechanism kosong" detail="Belum ada breakout proxy sample." /></div>;
   return (
     <div className="table-wrap">
       <table className="ops-table">
@@ -678,7 +678,7 @@ function BreakoutCrossPanels({ tables }: { tables: Record<string, MidLongTaxonom
         <div key={key} className="rounded-md border border-line bg-white">
           <div className="border-b border-line px-4 py-3">
             <div className="font-bold">{humanFlag(key)}</div>
-            <div className="mt-1 text-xs text-slate-500">Path cross untuk breakout accepted cohort.</div>
+            <div className="mt-1 text-xs text-slate-500">Path cross untuk breakout proxy cohort.</div>
           </div>
           <TaxonomyCrossTable rows={rows.slice(0, 10)} />
         </div>

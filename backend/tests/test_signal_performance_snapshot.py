@@ -30,6 +30,70 @@ from app.services.signal_performance_snapshot import (
     SignalPerformanceSnapshotRunner,
     SignalPerformanceSnapshotService,
 )
+from app.services.structure_zone_shadow import ZoneCandle, classify_directional_structure
+
+
+def test_breakout_state_diagnostics_are_pre_entry_zone_metrics() -> None:
+    signal_time = datetime(2026, 1, 1, 12, 0)
+    prior = ZoneCandle(
+        open_time=signal_time - timedelta(hours=1),
+        close_time=signal_time - timedelta(minutes=1),
+        open=Decimal("99"),
+        high=Decimal("101"),
+        low=Decimal("98"),
+        close=Decimal("100"),
+    )
+    signal = ZoneCandle(
+        open_time=signal_time,
+        close_time=signal_time + timedelta(hours=1),
+        open=Decimal("100"),
+        high=Decimal("104"),
+        low=Decimal("99"),
+        close=Decimal("103"),
+    )
+    zone = {
+        "center": Decimal("100"),
+        "lower": Decimal("99"),
+        "upper": Decimal("101"),
+        "touch_count": 3,
+        "support_touch_count": 1,
+        "resistance_touch_count": 2,
+        "first_touch_time": signal_time - timedelta(hours=10),
+        "last_touch_time": signal_time - timedelta(hours=2),
+    }
+    next_resistance = {
+        "center": Decimal("110"),
+        "lower": Decimal("109"),
+        "upper": Decimal("111"),
+        "touch_count": 2,
+        "support_touch_count": 0,
+        "resistance_touch_count": 2,
+        "first_touch_time": signal_time - timedelta(hours=8),
+        "last_touch_time": signal_time - timedelta(hours=3),
+    }
+
+    result = classify_directional_structure(
+        timeframe="1h",
+        direction="LONG",
+        entry=Decimal("102"),
+        signal_candle=signal,
+        prior_candle=prior,
+        closed_candles=[prior, signal],
+        zones=[zone, next_resistance],
+        atr=Decimal("10"),
+    )
+
+    diagnostics = result["breakout_state_diagnostics"]
+    assert diagnostics["status"] == "ZONE_DIAGNOSTICS_AVAILABLE"
+    assert diagnostics["zone_upper"] == Decimal("101")
+    assert diagnostics["close_penetration_atr"] == Decimal("0.2")
+    assert diagnostics["close_penetration_zone_width"] == Decimal("1")
+    assert diagnostics["body_above_zone_ratio"] == Decimal("0.6666666666666666666666666667")
+    assert diagnostics["upper_wick_to_body_ratio"] == Decimal("0.3333333333333333333333333333")
+    assert diagnostics["bars_since_breakout"] == 0
+    assert diagnostics["entry_distance_from_zone_atr"] == Decimal("0.1")
+    assert diagnostics["room_to_next_resistance_atr"] == Decimal("0.7")
+    assert diagnostics["no_future_data"] is True
 
 
 def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path) -> None:
@@ -169,6 +233,10 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "breakout_accepted_deep_dive" in baseline["definition_audit"]
     breakout_deep_dive = baseline["definition_audit"]["breakout_accepted_deep_dive"]
     assert "field_availability_rows" in breakout_deep_dive
+    field_sources = {row["field"]: row["source"] for row in breakout_deep_dive["field_availability_rows"]}
+    assert field_sources["close_penetration_atr"] == "precise_zone_metric"
+    assert field_sources["body_above_zone_ratio"] == "precise_zone_metric"
+    assert field_sources["room_to_next_resistance_atr"] == "precise_zone_metric"
     assert "mechanism_rows" in breakout_deep_dive
     assert "single_filter_rows" in breakout_deep_dive
     assert "draft_cohort_rows" in breakout_deep_dive

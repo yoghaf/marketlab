@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-27",
+    version: "LAB-RESET-09",
+    title: "MID_LONG Breakout-State Diagnostics",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan metrik zona pre-entry untuk membedah apakah MID_LONG breakout proxy benar punya struktur breakout yang layak diteliti.",
+    changes: [
+      "Structure-zone shadow sekarang menghasilkan breakout_state_diagnostics: zone upper/lower, close penetration ATR, body above zone, wick/body, bars since breakout, entry distance, room to next resistance/support, touch count, dan zone age.",
+      "Performance snapshot MID_LONG 1h menghitung ulang zona secara causal untuk signal lama, sehingga field baru bisa muncul tanpa mengubah log, Signal Factory, scanner, atau TP/SL.",
+      "Bahasa riset diganti dari Breakout Accepted menjadi Breakout Proxy Candidate agar tidak overclaim sebelum validasi.",
+      "Halaman /mid-long-research-study menampilkan section Breakout-State Diagnostics dengan coverage field zona dan TP/SL comparison.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang bisa membedakan apakah loss berasal dari breakout yang cuma proxy, entry terlalu jauh dari zona, body/wick buruk, zona terlalu muda, atau ruang ke resistance tidak cukup.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Breakout-State Diagnostics" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-27",
     version: "LAB-RESET-08",
     title: "MID_LONG Breakout Accepted Deep Dive",
     status: "LIVE",
