@@ -159,6 +159,13 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "damage_isolation" in baseline["definition_audit"]
     assert len(baseline["definition_audit"]["damage_isolation"]["experiment_rows"]) == 6
     assert "mid_range_interactions" in baseline["definition_audit"]["damage_isolation"]
+    assert "sub_setup_split_lab" in baseline["definition_audit"]
+    assert "rows" in baseline["definition_audit"]["sub_setup_split_lab"]
+    assert baseline["definition_audit"]["sub_setup_split_lab"]["summary"]["read"] in {
+        "SUB_SETUP_CANDIDATE_FOUND",
+        "SUB_SETUP_WATCH_ONLY",
+        "NO_SUB_SETUP_READY",
+    }
     assert len(baseline["items"]) == 1
     assert ("EARLY_LONG", "15m") in v3_filter_map
     assert ("MID_SHORT", "1h") in v3_filter_map

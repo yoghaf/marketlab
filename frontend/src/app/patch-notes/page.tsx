@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-27",
+    version: "LAB-RESET-07",
+    title: "MID_LONG Sub-Setup Split Lab",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Memecah MID_LONG 1h menjadi sub-setup mutually exclusive agar label besar MID_LONG tidak lagi dibaca sebagai satu strategi tunggal.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan sub_setup_split_lab dengan bucket breakout accepted, breakout wick/unconfirmed, retest hold, support bounce, mid-range invalid, unclassified wait, dan other structure.",
+      "Setiap sub-setup menampilkan TP/SL, realistic R, delta vs baseline, dominant path, dominant flow, cost/stop median, dan close-acceptance +0.5R.",
+      "Halaman /mid-long-research-study sekarang punya section Sub-Setup Split Lab sebelum Damage Isolation.",
+      "Status riset dibuat eksplisit: KEEP_RESEARCH, WATCH_WITH_CONSTRAINTS, DRAFT_REJECT, WAIT_OR_REDEFINE, SAMPLE_TOO_SMALL, atau INCONCLUSIVE.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "MID_LONG sekarang bisa diputuskan per keluarga setup: mana yang masih layak diteliti, mana yang perlu ditahan, dan mana yang sebaiknya dianggap invalid untuk continuation research.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Sub-Setup Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-27",
     version: "LAB-RESET-06",
     title: "MID_LONG Damage Isolation + Integrity Audit",
     status: "LIVE",

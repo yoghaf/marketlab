@@ -19,6 +19,8 @@ import {
   MidLongIntegrityAudit,
   MidLongPathDecisionRow,
   MidLongSubsetDimensionRow,
+  MidLongSubSetupSplitLab,
+  MidLongSubSetupRow,
   MidLongTaxonomyDimensionRow,
   MidLongTaxonomyPathCrossRow,
   MidLongTaxonomyPathRow,
@@ -136,9 +138,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.sub_setup_split_lab && (
+            <SectionCard
+              title="1. Sub-Setup Split Lab"
+              description="MID_LONG 1h dipecah menjadi sub-label: breakout accepted, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
+            >
+              <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
+            </SectionCard>
+          )}
+
           {audit.damage_isolation && (
             <SectionCard
-              title="1. Damage Isolation"
+              title="2. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -148,37 +159,37 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           {taxonomy && (
             <>
               <SectionCard
-                title="2. Taxonomy v1"
+                title="3. Taxonomy v1"
                 description="MID_LONG 1h sekarang dibedah sebagai banyak flag sekaligus: setup, breakout/retest, flow, crowding, room, cost, dan path setelah entry. Ini belum mengubah rule."
               >
                 <TaxonomyOverview taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="3. Pre-entry dimensions"
+                title="4. Pre-entry dimensions"
                 description="Bucket ini dibuat dari data sebelum entry. Tujuannya mencari bagian definisi MID_LONG yang paling sering membawa TP atau SL."
               >
                 <TaxonomyDimensionPanels taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="4. Path sequencing +0.5R"
+                title="5. Path sequencing +0.5R"
                 description="Path ini menjawab apakah signal langsung salah arah, cuma wick profit, close diterima lalu gagal, atau continuation bersih. Acceptance canonical sementara: close profit +0.5R."
               >
                 <TaxonomyPathTable rows={taxonomy.path_sequence_rows} />
               </SectionCard>
 
               <div className="grid gap-4 2xl:grid-cols-2">
-                <SectionCard title="5A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
+                <SectionCard title="6A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.setup_family_x_path || []} />
                 </SectionCard>
-                <SectionCard title="5B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
+                <SectionCard title="6B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.flow_x_path || []} />
                 </SectionCard>
               </div>
 
               <SectionCard
-                title="6. Draft V2.1 preview"
+                title="7. Draft V2.1 preview"
                 description="Empat skenario ini hanya preview riset. Retained/discarded dibandingkan untuk tahu apakah hygiene, breakout, retest, atau crowding interaction layak diteliti lanjut."
               >
                 <DraftPreviewTable rows={taxonomy.draft_v21_previews} />
@@ -187,58 +198,58 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           )}
 
           <SectionCard
-            title="7. Layer decomposition"
+            title="8. Layer decomposition"
             description="Pisahkan dulu apakah masalahnya sudah ada di ideal R, atau baru rusak setelah fee/spread/slippage. EXECUTION_VALID cuma strata audit, bukan filter live."
           >
             <LayerTable rows={audit.layer_decomposition} />
           </SectionCard>
 
           <SectionCard
-            title="8. Path anatomy legacy"
+            title="9. Path anatomy legacy"
             description="Ini pemisah utama: instant SL mengarah ke problem definisi entry; sempat +1R lalu SL mengarah ke problem geometry/exit."
           >
             <PathDecisionTable rows={audit.path_decision_summary.rows} read={audit.path_decision_summary.read} />
           </SectionCard>
 
           <SectionCard
-            title="9. 4-axis definition flags legacy"
+            title="10. 4-axis definition flags legacy"
             description="EXT, STR, FLW, dan CRD adalah flag kandidat, bukan gate. Kolom negative R share menunjukkan bucket mana yang menyumbang kerusakan terbesar."
           >
             <AxisAuditTable rows={audit.axis_rows} />
           </SectionCard>
 
           <div className="grid gap-4 2xl:grid-cols-2">
-            <SectionCard title="10A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
+            <SectionCard title="11A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
               <CrossTable rows={audit.cross_tables.EXTxSTR || []} />
             </SectionCard>
-            <SectionCard title="10B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
+            <SectionCard title="11B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
               <CrossTable rows={audit.cross_tables.FLWxCRD || []} />
             </SectionCard>
           </div>
 
           <SectionCard
-            title="11. Geometry diagnostic"
+            title="12. Geometry diagnostic"
             description="Kalau banyak signal pernah +0.5R/+1R tapi gagal TP, problemnya bukan hanya definisi, tapi cara panen target/stop."
           >
             <GeometryTable rows={audit.geometry_diagnostic.mfe_threshold_rows} read={audit.geometry_diagnostic.read} quantiles={audit.geometry_diagnostic} />
           </SectionCard>
 
           <SectionCard
-            title="12. Ablation preview"
+            title="13. Ablation preview"
             description="Simulasi read-only: jika flag tertentu dibuang, survivor membaik atau tidak. Ini belum rule, baru calon hipotesis."
           >
             <AblationTable rows={audit.ablation_preview} />
           </SectionCard>
 
           <SectionCard
-            title="13. TP vs SL evidence"
+            title="14. TP vs SL evidence"
             description="Median dan kuartil angka aktual. Ini menjawab data mana yang beda antara signal yang kena target dan stop."
           >
             <EvidenceTable rows={(payload.evidence_comparison || []).slice(0, 18)} sampleTotal={coverage.mid_long_1h_rows} />
           </SectionCard>
 
           <SectionCard
-            title="14. Recent closed MID_LONG 1h"
+            title="15. Recent closed MID_LONG 1h"
             description="Sample sinyal terbaru untuk dibuka ke detail chart. Gunakan ini untuk validasi visual bucket yang terlihat merusak."
           >
             <BaselineSignalTable rows={payload.items} />
@@ -255,6 +266,109 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function SubSetupSplitPanel({ lab }: { lab: MidLongSubSetupSplitLab }) {
+  const summary = lab.summary || { status_counts: {}, read: "WAITING" };
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-5">
+        <Info label="Read" value={humanFlag(summary.read)} helper="Apakah ada sub-setup yang masih layak diteliti." />
+        <Info label="Sub-setup rows" value={lab.rows.length.toString()} helper="Mutually exclusive buckets." />
+        <Info label="Candidate/watch" value={(lab.candidate_rows?.length || 0).toString()} helper="Belum rule; hanya riset." />
+        <Info label="Reject/wait" value={(lab.reject_rows?.length || 0).toString()} helper="Bucket yang merusak atau butuh data." />
+        <Info label="Status mix" value={Object.keys(summary.status_counts || {}).length.toString()} helper={statusMixSummary(summary.status_counts)} />
+      </div>
+
+      <div className="grid gap-3 border-b border-line p-4 lg:grid-cols-2">
+        <SubSetupSummaryCard title="Best sub-setup sementara" row={summary.best_sub_setup} />
+        <SubSetupSummaryCard title="Worst damage sub-setup" row={summary.worst_sub_setup} />
+      </div>
+
+      <SubSetupTable rows={lab.rows} />
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-3">
+        {lab.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SubSetupSummaryCard({ title, row }: { title: string; row?: MidLongSubSetupSplitLab["summary"]["best_sub_setup"] }) {
+  if (!row) {
+    return <div className="rounded-md border border-line bg-white p-4"><Info label={title} value="-" helper="Belum tersedia" /></div>;
+  }
+  return (
+    <div className="rounded-md border border-line bg-white p-4">
+      <div className="text-xs font-semibold uppercase text-slate-500">{title}</div>
+      <div className="mt-1 text-xl font-black text-ink">{humanFlag(row.sub_setup || "-")}</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <StatusBadge value={humanFlag(row.research_status || "-")} />
+        <StatusBadge value={`${row.closed_count || 0} rows`} />
+      </div>
+      <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+        <div>TP/SL <b>{row.tp_count || 0}/{row.sl_count || 0}</b></div>
+        <div className={toneClass(row.realistic_total_r_closed)}>R <b>{fmtSigned(row.realistic_total_r_closed)}R</b></div>
+        <div className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>Delta <b>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</b></div>
+      </div>
+    </div>
+  );
+}
+
+function SubSetupTable({ rows }: { rows: MidLongSubSetupRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Sub-setup kosong" detail="Belum ada split MID_LONG." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Sub-setup</th>
+            <th>Status</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg delta</th>
+            <th>Path / flow</th>
+            <th>Cost / stop</th>
+            <th>Acceptance</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.sub_setup)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.definition}</div>
+                <div className="mt-1 text-xs text-slate-500">{humanFlag(row.sub_setup_family)}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.research_status)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-96 text-xs leading-5 text-slate-600">
+                <div><b>Path:</b> {humanFlag(row.dominant_path || "-")}</div>
+                <div><b>Flow:</b> {humanFlag(row.dominant_flow || "-")}</div>
+                <div>{pathMixSummary(row.path_mix)}</div>
+              </td>
+              <td>
+                <div>{fmtNumber(row.median_cost_r)}R cost</div>
+                <div className="text-xs text-slate-500">{fmtNumber(row.median_stop_pct)}% stop</div>
+              </td>
+              <td>
+                <div>{row.close_050_count || 0}/{row.touch_050_count || 0}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.close_acceptance_conversion_pct)}</div>
+              </td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.recommended_action}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1109,6 +1223,14 @@ function pathMixSummary(pathMix?: Record<string, number>): string {
     .sort((left, right) => right[1] - left[1])
     .slice(0, 4)
     .map(([label, count]) => `${humanFlag(label)} ${count}`)
+    .join(" | ");
+}
+
+function statusMixSummary(statusCounts?: Record<string, number>): string {
+  if (!statusCounts || !Object.keys(statusCounts).length) return "Belum ada status.";
+  return Object.entries(statusCounts)
+    .sort((left, right) => right[1] - left[1])
+    .map(([status, count]) => `${humanFlag(status)} ${count}`)
     .join(" | ");
 }
 

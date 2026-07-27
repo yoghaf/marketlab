@@ -3820,6 +3820,7 @@ export type MidLongDefinitionAudit = {
   taxonomy_study?: MidLongTaxonomyStudy;
   integrity_audit?: MidLongIntegrityAudit;
   damage_isolation?: MidLongDamageIsolation;
+  sub_setup_split_lab?: MidLongSubSetupSplitLab;
   verdict: {
     primary: string;
     labels: string[];
@@ -3827,6 +3828,54 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongSubSetupSplitLab = {
+  scope: string;
+  method: string;
+  rows: MidLongSubSetupRow[];
+  candidate_rows: MidLongSubSetupRow[];
+  reject_rows: MidLongSubSetupRow[];
+  summary: {
+    status_counts: Record<string, number>;
+    best_sub_setup?: MidLongSubSetupSummaryRow | null;
+    worst_sub_setup?: MidLongSubSetupSummaryRow | null;
+    read: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongSubSetupSummaryRow = {
+  sub_setup?: string | null;
+  closed_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  research_status?: string | null;
+};
+
+export type MidLongSubSetupRow = MidLongEntryCombinationRow & {
+  sub_setup: string;
+  definition: string;
+  sub_setup_family: string;
+  research_status: string;
+  recommended_action: string;
+  path_mix: Record<string, number>;
+  flow_mix: Record<string, number>;
+  crowding_mix: Record<string, number>;
+  room_mix: Record<string, number>;
+  cost_mix: Record<string, number>;
+  dominant_path?: string | null;
+  dominant_flow?: string | null;
+  median_cost_r?: string | number | null;
+  median_stop_pct?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  close_050_count?: number;
+  touch_050_count?: number;
+  close_acceptance_conversion_pct?: string | number | null;
 };
 
 export type MidLongIntegrityAudit = {

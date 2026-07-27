@@ -1256,6 +1256,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    sub_setup = _mid_long_sub_setup_split_lab(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     verdict = _mid_long_definition_verdict(
         baseline=baseline,
         layer_rows=layer_rows,
@@ -1278,6 +1284,7 @@ def _mid_long_definition_audit(
         "taxonomy_study": taxonomy,
         "integrity_audit": integrity,
         "damage_isolation": damage,
+        "sub_setup_split_lab": sub_setup,
         "verdict": verdict,
         "guardrails": [
             "Candidate flags are not live gates.",
@@ -2468,6 +2475,254 @@ def _mid_long_damage_isolation(
         ],
         "read": _mid_long_damage_isolation_read(rows),
     }
+
+
+def _mid_long_sub_setup_split_lab(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        grouped[_mid_long_sub_setup_label(taxonomy)].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for sub_label, sub_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"SUB_SETUP:{sub_label}",
+            sub_label,
+            f"sub_setup == {sub_label}",
+            sub_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "sub_setup": sub_label,
+                "definition": _mid_long_sub_setup_definition(sub_label),
+                "sub_setup_family": _mid_long_sub_setup_family(sub_label),
+                "research_status": _mid_long_sub_setup_status(row, sub_label=sub_label, min_sample=min_sample),
+                "recommended_action": _mid_long_sub_setup_action(row, sub_label=sub_label, min_sample=min_sample),
+                "path_mix": _mid_long_path_mix(sub_items),
+                "flow_mix": _mid_long_taxonomy_mix(sub_items, taxonomy_by_id=taxonomy_by_id, taxonomy_key="flow_state_provisional"),
+                "crowding_mix": _mid_long_taxonomy_mix(sub_items, taxonomy_by_id=taxonomy_by_id, taxonomy_key="crowding_bucket"),
+                "room_mix": _mid_long_taxonomy_mix(sub_items, taxonomy_by_id=taxonomy_by_id, taxonomy_key="room_to_resistance_bucket"),
+                "cost_mix": _mid_long_taxonomy_mix(sub_items, taxonomy_by_id=taxonomy_by_id, taxonomy_key="projected_cost_bucket"),
+                "dominant_path": _mid_long_dominant_counter_key(_mid_long_path_mix(sub_items)),
+                "dominant_flow": _mid_long_dominant_counter_key(
+                    _mid_long_taxonomy_mix(sub_items, taxonomy_by_id=taxonomy_by_id, taxonomy_key="flow_state_provisional")
+                ),
+                "median_cost_r": _median_decimal_snapshot(_mid_long_item_decimal_values(sub_items, "realistic_cost_r_estimate")),
+                "median_stop_pct": _median_decimal_snapshot(_mid_long_stop_pct_values(sub_items)),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(sub_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(sub_items, "mae_r")),
+                "close_050_count": _mid_long_path_event_count(sub_items, "first_close_050_bar"),
+                "touch_050_count": _mid_long_path_event_count(sub_items, "first_touch_050_bar"),
+                "close_acceptance_conversion_pct": _pct_decimal(
+                    _mid_long_path_event_count(sub_items, "first_close_050_bar"),
+                    _mid_long_path_event_count(sub_items, "first_touch_050_bar"),
+                ),
+            }
+        )
+        rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            _mid_long_sub_setup_status_rank(str(row.get("research_status") or "")),
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return {
+        "scope": "MID_LONG 1h sub-setup split lab, read-only",
+        "method": (
+            "Breaks MID_LONG into mutually exclusive sub-setups before optimizing geometry. "
+            "The split uses pre-entry taxonomy, while path mix is post-entry diagnostic."
+        ),
+        "rows": rows,
+        "candidate_rows": [
+            row for row in rows if row.get("research_status") in {"KEEP_RESEARCH", "WATCH_WITH_CONSTRAINTS"}
+        ],
+        "reject_rows": [
+            row for row in rows if row.get("research_status") in {"DRAFT_REJECT", "WAIT_OR_REDEFINE"}
+        ],
+        "summary": _mid_long_sub_setup_summary(rows),
+        "guardrails": [
+            "Sub-setup status is research language, not a production gate.",
+            "MID_RANGE can be marked invalid for continuation research without deleting historical signal rows.",
+            "A sub-setup needs chronological validation before V2.1 shadow promotion.",
+        ],
+    }
+
+
+def _mid_long_sub_setup_label(taxonomy: dict[str, Any]) -> str:
+    setup = str(taxonomy.get("setup_family") or "UNCLASSIFIED")
+    breakout = str(taxonomy.get("breakout_state_pre_entry") or "")
+    retest = str(taxonomy.get("retest_quality_pre_entry") or "")
+    structure = str(taxonomy.get("structure_status") or "")
+    if setup == "BREAKOUT_ATTEMPT" and breakout == "CLOSE_ACCEPTED":
+        return "MID_LONG_BREAKOUT_ACCEPTED"
+    if setup == "BREAKOUT_ATTEMPT":
+        return "MID_LONG_BREAKOUT_WICK_OR_UNCONFIRMED"
+    if setup == "RETEST" and retest == "RETEST_HOLD_STRONG":
+        return "MID_LONG_RETEST_HOLD_STRONG"
+    if setup == "RETEST" and retest == "RETEST_HOLD_IN_ZONE":
+        return "MID_LONG_RETEST_HOLD_IN_ZONE"
+    if setup == "RETEST":
+        return "MID_LONG_RETEST_WEAK_OR_FAILED"
+    if setup == "SUPPORT_BOUNCE":
+        return "MID_LONG_SUPPORT_BOUNCE"
+    if setup == "MID_RANGE":
+        return "MID_LONG_MID_RANGE_INVALID"
+    if structure == "UNAVAILABLE":
+        return "MID_LONG_UNCLASSIFIED_WAIT"
+    return "MID_LONG_OTHER_STRUCTURE"
+
+
+def _mid_long_sub_setup_definition(sub_label: str) -> str:
+    definitions = {
+        "MID_LONG_BREAKOUT_ACCEPTED": "Breakout attempt with a pre-entry close-accepted breakout state.",
+        "MID_LONG_BREAKOUT_WICK_OR_UNCONFIRMED": "Breakout family, but no clear close-accepted state before entry.",
+        "MID_LONG_RETEST_HOLD_STRONG": "Retest family with a strong hold/role-flip read.",
+        "MID_LONG_RETEST_HOLD_IN_ZONE": "Retest family still inside the zone, not a clean hold.",
+        "MID_LONG_RETEST_WEAK_OR_FAILED": "Retest family with weak/failed/unclear retest quality.",
+        "MID_LONG_SUPPORT_BOUNCE": "Entry is associated with a support-zone bounce.",
+        "MID_LONG_MID_RANGE_INVALID": "Entry is inside neutral/mid-range structure; invalid candidate for continuation research unless a hidden anchor is found.",
+        "MID_LONG_UNCLASSIFIED_WAIT": "Structure unavailable or unknown; wait for better zone data before judging as MID_LONG continuation.",
+        "MID_LONG_OTHER_STRUCTURE": "Available structure that does not fit breakout, retest, support bounce, or mid-range buckets.",
+    }
+    return definitions.get(sub_label, "Sub-setup research bucket.")
+
+
+def _mid_long_sub_setup_family(sub_label: str) -> str:
+    if "BREAKOUT" in sub_label:
+        return "BREAKOUT"
+    if "RETEST" in sub_label:
+        return "RETEST"
+    if "SUPPORT" in sub_label:
+        return "SUPPORT"
+    if "MID_RANGE" in sub_label:
+        return "INVALID_RANGE"
+    if "UNCLASSIFIED" in sub_label:
+        return "WAIT_DATA"
+    return "OTHER"
+
+
+def _mid_long_sub_setup_status(row: dict[str, Any], *, sub_label: str, min_sample: int) -> str:
+    closed = int(row.get("closed_count") or 0)
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    sl_share_delta = _decimal_or_none_snapshot(row.get("sl_share_delta_vs_baseline"))
+    if closed < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    if sub_label == "MID_LONG_MID_RANGE_INVALID":
+        return "DRAFT_REJECT"
+    if sub_label == "MID_LONG_UNCLASSIFIED_WAIT":
+        return "WAIT_OR_REDEFINE"
+    if avg_delta > Decimal("0.10") and total > 0 and (sl_share_delta is None or sl_share_delta <= Decimal("0")):
+        return "KEEP_RESEARCH"
+    if avg_delta > Decimal("0"):
+        return "WATCH_WITH_CONSTRAINTS"
+    if total < 0 and avg_delta <= Decimal("0"):
+        return "DRAFT_REJECT"
+    return "INCONCLUSIVE"
+
+
+def _mid_long_sub_setup_action(row: dict[str, Any], *, sub_label: str, min_sample: int) -> str:
+    status = _mid_long_sub_setup_status(row, sub_label=sub_label, min_sample=min_sample)
+    if status == "KEEP_RESEARCH":
+        return "Keep this sub-setup in the research queue and run time-split validation before any V2.1 shadow proposal."
+    if status == "WATCH_WITH_CONSTRAINTS":
+        return "Watch, but require extra constraints from path/cost/flow before promotion."
+    if status == "DRAFT_REJECT":
+        if sub_label == "MID_LONG_MID_RANGE_INVALID":
+            return "Treat as invalid for MID_LONG continuation research until a hidden support/resistance anchor is proven."
+        return "Reject as a standalone MID_LONG sub-setup for now; only revisit through a narrower interaction."
+    if status == "WAIT_OR_REDEFINE":
+        return "Do not judge as long setup yet; improve structure-zone coverage or keep it out of continuation research."
+    if status == "SAMPLE_TOO_SMALL":
+        return "Collect more samples before reading this bucket."
+    return "Keep as diagnostic only."
+
+
+def _mid_long_sub_setup_status_rank(status: str) -> int:
+    return {
+        "KEEP_RESEARCH": 6,
+        "WATCH_WITH_CONSTRAINTS": 5,
+        "INCONCLUSIVE": 4,
+        "SAMPLE_TOO_SMALL": 3,
+        "WAIT_OR_REDEFINE": 2,
+        "DRAFT_REJECT": 1,
+    }.get(status, 0)
+
+
+def _mid_long_sub_setup_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    status_counts = Counter(str(row.get("research_status") or "UNKNOWN") for row in rows)
+    best = max(
+        rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+        default=None,
+    )
+    worst = min(
+        rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        default=None,
+    )
+    return {
+        "status_counts": dict(status_counts),
+        "best_sub_setup": _mid_long_sub_setup_summary_row(best),
+        "worst_sub_setup": _mid_long_sub_setup_summary_row(worst),
+        "read": _mid_long_sub_setup_read(rows),
+    }
+
+
+def _mid_long_sub_setup_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "sub_setup": row.get("sub_setup"),
+        "closed_count": row.get("closed_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": row.get("realistic_avg_r_delta_vs_baseline"),
+        "research_status": row.get("research_status"),
+    }
+
+
+def _mid_long_sub_setup_read(rows: list[dict[str, Any]]) -> str:
+    keep = [row for row in rows if row.get("research_status") == "KEEP_RESEARCH"]
+    watch = [row for row in rows if row.get("research_status") == "WATCH_WITH_CONSTRAINTS"]
+    if keep:
+        return "SUB_SETUP_CANDIDATE_FOUND"
+    if watch:
+        return "SUB_SETUP_WATCH_ONLY"
+    return "NO_SUB_SETUP_READY"
+
+
+def _mid_long_taxonomy_mix(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    taxonomy_key: str,
+) -> dict[str, int]:
+    values: Counter[str] = Counter()
+    for idx, item in enumerate(items):
+        taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+        values[str(taxonomy.get(taxonomy_key) or "UNKNOWN")] += 1
+    return dict(values)
+
+
+def _mid_long_dominant_counter_key(values: dict[str, int]) -> str | None:
+    if not values:
+        return None
+    return max(values.items(), key=lambda item: item[1])[0]
 
 
 def _mid_long_economic_rows_by_path(
