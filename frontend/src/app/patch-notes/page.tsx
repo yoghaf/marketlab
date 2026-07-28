@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-18",
+    title: "MID_LONG First-Hour Exact Candle Replay",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan replay candle futures aktual untuk menguji delayed-entry dan early-exit MID_LONG 1h tanpa mengubah rule live.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan first_hour_exact_replay_lab berisi delayed_entry_rows dan early_exit_rows berbasis candle futures lokal.",
+      "Delayed-entry exact masuk di next-open setelah first-hour decision dan menghitung ulang entry/SL/TP dari entry baru dengan risk/RR lama.",
+      "Early-exit exact hanya keluar di next-open jika first-hour buruk dan logged TP/SL belum tersentuh lebih dulu.",
+      "Halaman /mid-long-research-study menampilkan panel First-Hour Exact Candle Replay setelah Action Simulation agar proxy dan replay aktual bisa dibandingkan.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang punya bukti yang lebih dekat ke candle nyata untuk menentukan apakah cabang delayed-entry atau early-exit layak masuk shadow forward study.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Exact Replay" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-17",
     title: "MID_LONG First-Hour Action Simulation",
     status: "LIVE",

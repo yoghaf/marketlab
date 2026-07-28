@@ -229,6 +229,7 @@ class SignalPerformanceSnapshotRunner:
                 performance_1h,
                 limit=DEFAULT_RESEARCH_LIMIT,
                 items_enricher=service.enrich_mid_long_1h_breakout_diagnostics,
+                exact_replay_builder=service.mid_long_1h_first_hour_exact_replay,
             )
             mid_long_baseline_payload["artifact_status"] = "FRESH"
             mid_long_baseline_payload["calculation_duration_ms"] = int((perf_counter() - mid_long_started) * 1000)
@@ -720,6 +721,7 @@ def _mid_long_1h_baseline_payload(
     *,
     limit: int,
     items_enricher: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    exact_replay_builder: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     aggregate = payload.get("aggregate") or {}
     source_items = list(payload.get("items") or [])
@@ -733,7 +735,10 @@ def _mid_long_1h_baseline_payload(
         evaluated = items_enricher(evaluated)
     baseline_aggregate = aggregate_signal_performance_items(evaluated)
     source_total = int(aggregate.get("signals_evaluated") or len(source_items))
-    baseline_research = _mid_long_baseline_research(evaluated)
+    baseline_research = _mid_long_baseline_research(
+        evaluated,
+        exact_replay_builder=exact_replay_builder,
+    )
     rr_distribution = Counter(_rounded_r_distribution_key(item.get("rr")) for item in evaluated)
     strategy_distribution = Counter(
         str(item.get("strategy_version") or "UNKNOWN") for item in evaluated
@@ -780,7 +785,11 @@ def _mid_long_1h_baseline_payload(
     }
 
 
-def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
+def _mid_long_baseline_research(
+    items: list[dict[str, Any]],
+    *,
+    exact_replay_builder: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     baseline = _mid_long_perf_row(
         "BASELINE",
         "MID_LONG 1h V2 baseline",
@@ -791,7 +800,17 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
         min_sample=20,
     )
     entry_rows = _mid_long_entry_combination_rows(items, baseline=baseline, min_sample=20)
-    definition_audit = _mid_long_definition_audit(items, baseline=baseline, min_sample=20)
+    exact_replay = (
+        exact_replay_builder(items, baseline=baseline, min_sample=20)
+        if exact_replay_builder is not None
+        else None
+    )
+    definition_audit = _mid_long_definition_audit(
+        items,
+        baseline=baseline,
+        min_sample=20,
+        first_hour_exact_replay=exact_replay,
+    )
     reverse_shadow_audit = _mid_long_reverse_shadow_audit(items, min_sample=20)
     return {
         "research_summary": {
@@ -1302,6 +1321,7 @@ def _mid_long_definition_audit(
     *,
     baseline: dict[str, Any],
     min_sample: int,
+    first_hour_exact_replay: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     axis_states = {str(item.get("signal_id") or idx): _mid_long_definition_axis_state(item) for idx, item in enumerate(items)}
     taxonomy_by_id = _mid_long_taxonomy_by_id(items)
@@ -1412,6 +1432,7 @@ def _mid_long_definition_audit(
         "sl_anatomy_v2": sl_anatomy,
         "first_hour_response_audit": first_hour_response,
         "first_hour_action_simulation": first_hour_action,
+        "first_hour_exact_replay_lab": first_hour_exact_replay,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
         "breakout_accepted_deep_dive": breakout_deep_dive,

@@ -3408,6 +3408,42 @@ class SignalCandidatePerformanceService:
             "latest_symbol_candle_time_wib": _wib_string(latest.close_time),
         }
 
+    def mid_long_1h_first_hour_exact_replay(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        baseline: dict[str, Any] | None = None,
+        min_sample: int = 20,
+    ) -> dict[str, Any]:
+        scoped = [
+            item
+            for item in items
+            if item.get("stage") == "MID_LONG"
+            and item.get("timeframe") == "1h"
+            and item.get("direction") == "LONG"
+        ]
+        symbols = {str(item.get("symbol") or "") for item in scoped if item.get("symbol")}
+        signal_times = [
+            parsed
+            for item in scoped
+            if (parsed := _parse_dt(item.get("signal_timestamp"))) is not None
+        ]
+        min_signal_time = min(signal_times, default=None)
+        base_candles = self._load_15m_candles(symbols, start_time=min_signal_time)
+        latest_base_time = max(
+            (candle.close_time for rows in base_candles.values() for candle in rows),
+            default=None,
+        )
+        tail_start = latest_base_time or min_signal_time
+        tail_candles = self._load_1m_candles(symbols, start_time=tail_start)
+        candles_by_symbol = _merge_candle_maps(base_candles, tail_candles)
+        return _mid_long_first_hour_exact_replay_lab(
+            scoped,
+            candles_by_symbol=candles_by_symbol,
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+
     def _aggregate(self, items: list[dict[str, Any]], skipped: Counter[str]) -> dict[str, Any]:
         return aggregate_signal_performance_items(items, skipped)
 
@@ -5312,6 +5348,820 @@ def _merge_candle_maps(
             by_open_time[candle.open_time] = candle
         merged[symbol] = [by_open_time[key] for key in sorted(by_open_time)]
     return merged
+
+
+def _mid_long_first_hour_exact_replay_lab(
+    items: list[dict[str, Any]],
+    *,
+    candles_by_symbol: dict[str, list[PerfCandle]],
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+) -> dict[str, Any]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+            str(item.get("signal_id") or ""),
+        ),
+    )
+    delayed_specs = (
+        {
+            "variant_id": "EXACT_DELAY_CONFIRM_1H_NEXT_OPEN",
+            "label": "Enter only after confirmed 1h close",
+            "expression": "first_hour_state == FIRST_HOUR_CONFIRMED; fill at next futures candle open",
+            "allowed_states": {"FIRST_HOUR_CONFIRMED"},
+        },
+        {
+            "variant_id": "EXACT_DELAY_NON_DAMAGE_1H_NEXT_OPEN",
+            "label": "Skip early damage; enter confirmed/stalled only",
+            "expression": "first_hour_state in FIRST_HOUR_CONFIRMED,FIRST_HOUR_STALLED; fill at next futures candle open",
+            "allowed_states": {"FIRST_HOUR_CONFIRMED", "FIRST_HOUR_STALLED"},
+        },
+    )
+    early_specs = (
+        {
+            "variant_id": "EXACT_EXIT_PRICE_REVERSED_1H_NEXT_OPEN",
+            "label": "Exit after first-hour price reversal",
+            "expression": "first_hour_state == FIRST_HOUR_PRICE_REVERSED; exit at next futures candle open if TP/SL not hit first",
+            "action_states": {"FIRST_HOUR_PRICE_REVERSED"},
+        },
+        {
+            "variant_id": "EXACT_EXIT_EARLY_DAMAGE_1H_NEXT_OPEN",
+            "label": "Exit after early damage",
+            "expression": "first_hour_state in PRICE_REVERSED,STRUCTURE_FAILED; exit at next futures candle open if TP/SL not hit first",
+            "action_states": {"FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"},
+        },
+        {
+            "variant_id": "EXACT_EXIT_NON_CONFIRMED_1H_NEXT_OPEN",
+            "label": "Exit if first hour is not confirmed",
+            "expression": "first_hour_state != FIRST_HOUR_CONFIRMED; exit at next futures candle open if TP/SL not hit first",
+            "action_states": {
+                "FIRST_HOUR_STALLED",
+                "FIRST_HOUR_PRICE_REVERSED",
+                "FIRST_HOUR_STRUCTURE_FAILED",
+            },
+        },
+    )
+    delayed_rows = [
+        _mid_long_exact_delayed_entry_row(
+            ordered,
+            candles_by_symbol=candles_by_symbol,
+            baseline=baseline,
+            min_sample=min_sample,
+            **spec,
+        )
+        for spec in delayed_specs
+    ]
+    early_exit_rows = [
+        _mid_long_exact_early_exit_row(
+            ordered,
+            candles_by_symbol=candles_by_symbol,
+            baseline=baseline,
+            min_sample=min_sample,
+            **spec,
+        )
+        for spec in early_specs
+    ]
+    summary = _mid_long_exact_replay_summary(
+        baseline=baseline,
+        delayed_rows=delayed_rows,
+        early_exit_rows=early_exit_rows,
+    )
+    return {
+        "scope": "MID_LONG 1h First-Hour Exact Candle Replay",
+        "method": (
+            "Replay uses local closed futures 15m candles plus the latest 1m tail. "
+            "Delayed entry reprices entry/SL/TP at the next candle open after the first-hour decision. "
+            "Early exit only acts if logged TP/SL was not touched before that decision."
+        ),
+        "model": "EXACT_CANDLE_REPLAY_READ_ONLY_V1",
+        "source_state_model": "first closed futures candle at or after signal_time + 1h",
+        "min_sample": min_sample,
+        "source_count": len(ordered),
+        "baseline_realistic_total_r_closed": (baseline or {}).get("realistic_total_r_closed"),
+        "baseline_realistic_avg_r_closed": (baseline or {}).get("realistic_avg_r_closed"),
+        "baseline_max_realistic_drawdown_r": (baseline or {}).get("max_realistic_drawdown_r"),
+        "delayed_entry_rows": delayed_rows,
+        "early_exit_rows": early_exit_rows,
+        "summary": summary,
+        "guardrails": [
+            "Exact replay is still research-only and does not change Signal Factory, scanner, TP/SL, or live execution.",
+            "All fills use the next available local futures candle open; no intrabar discretionary exit is assumed.",
+            "If TP/SL is touched before a first-hour early-exit decision, the original terminal result remains in force.",
+            "Delayed-entry rows are sample-reducing cohorts; compare both total R and retained sample count.",
+        ],
+    }
+
+
+def _mid_long_exact_delayed_entry_row(
+    items: list[dict[str, Any]],
+    *,
+    candles_by_symbol: dict[str, list[PerfCandle]],
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+    variant_id: str,
+    label: str,
+    expression: str,
+    allowed_states: set[str],
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    state_counts: Counter[str] = Counter()
+    skipped_state_counts: Counter[str] = Counter()
+    missing_decision_count = 0
+    missing_fill_count = 0
+    invalid_geometry_count = 0
+    for item in items:
+        replay = _mid_long_exact_replay_context(item, candles_by_symbol)
+        if replay is None:
+            missing_decision_count += 1
+            continue
+        state_counts[replay["first_hour_state"]] += 1
+        if replay["first_hour_state"] not in allowed_states:
+            skipped_state_counts[replay["first_hour_state"]] += 1
+            continue
+        fill = _mid_long_next_fill_candle(replay["candles"], decision_close=replay["decision_candle"].close_time)
+        if fill is None:
+            missing_fill_count += 1
+            continue
+        rr = replay["target_rr"]
+        risk = replay["risk"]
+        entry = fill.open
+        if rr is None or risk <= 0:
+            invalid_geometry_count += 1
+            continue
+        stop = entry - risk
+        target = entry + (risk * rr)
+        if stop <= 0 or target <= entry:
+            invalid_geometry_count += 1
+            continue
+        future = [
+            candle
+            for candle in replay["candles"]
+            if candle.open_time >= fill.open_time
+        ]
+        result = _mid_long_replay_long_path(
+            item,
+            entry=entry,
+            stop=stop,
+            target=target,
+            risk=risk,
+            future=future,
+            replay_status_prefix="DELAYED_ENTRY",
+        )
+        result.update(
+            {
+                "simulation_family": "DELAYED_ENTRY_EXACT",
+                "variant_id": variant_id,
+                "first_hour_state": replay["first_hour_state"],
+                "decision_time_utc": replay["decision_candle"].close_time,
+                "fill_time_utc": fill.open_time,
+                "fill_price": fill.open,
+                "original_entry": replay["entry"],
+                "original_stop_loss": replay["stop"],
+                "original_take_profit": replay["target"],
+                "delayed_entry_repriced": True,
+            }
+        )
+        results.append(result)
+    row = _mid_long_exact_replay_perf_row(
+        results,
+        baseline=baseline,
+        min_sample=min_sample,
+        source_count=len(items),
+        variant_id=variant_id,
+        label=label,
+        expression=expression,
+        simulation_family="DELAYED_ENTRY_EXACT",
+        action_count=len(results),
+        unchanged_count=0,
+        missing_decision_count=missing_decision_count,
+        missing_fill_count=missing_fill_count,
+        invalid_geometry_count=invalid_geometry_count,
+        state_mix=state_counts,
+        action_state_mix=Counter(str(result.get("first_hour_state") or "UNKNOWN") for result in results),
+    )
+    row.update(
+        {
+            "retained_count": len(results),
+            "skipped_count": max(0, len(items) - len(results)),
+            "skipped_state_mix": dict(skipped_state_counts),
+        }
+    )
+    return row
+
+
+def _mid_long_exact_early_exit_row(
+    items: list[dict[str, Any]],
+    *,
+    candles_by_symbol: dict[str, list[PerfCandle]],
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+    variant_id: str,
+    label: str,
+    expression: str,
+    action_states: set[str],
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    state_counts: Counter[str] = Counter()
+    action_state_counts: Counter[str] = Counter()
+    missing_decision_count = 0
+    missing_fill_count = 0
+    terminal_before_action_count = 0
+    sl_reduced_count = 0
+    tp_cut_count = 0
+    r_saved = Decimal("0")
+    r_sacrificed = Decimal("0")
+    for item in items:
+        replay = _mid_long_exact_replay_context(item, candles_by_symbol)
+        if replay is None:
+            missing_decision_count += 1
+            control = _mid_long_control_result(item)
+            if control is not None:
+                results.append(control)
+            continue
+        state = replay["first_hour_state"]
+        state_counts[state] += 1
+        if state not in action_states:
+            control = _mid_long_control_result(item)
+            if control is not None:
+                control["first_hour_state"] = state
+                results.append(control)
+            continue
+        before_decision = [
+            candle
+            for candle in replay["future"]
+            if candle.close_time <= replay["decision_candle"].close_time
+        ]
+        pre_terminal = _mid_long_replay_long_path(
+            item,
+            entry=replay["entry"],
+            stop=replay["stop"],
+            target=replay["target"],
+            risk=replay["risk"],
+            future=before_decision,
+            replay_status_prefix="PRE_DECISION",
+        )
+        if pre_terminal.get("result_status") in COMPLETED_OUTCOMES:
+            terminal_before_action_count += 1
+            pre_terminal.update(
+                {
+                    "simulation_family": "EARLY_EXIT_EXACT",
+                    "variant_id": variant_id,
+                    "first_hour_state": state,
+                    "dynamic_action_taken": False,
+                    "terminal_before_action": True,
+                }
+            )
+            results.append(pre_terminal)
+            continue
+        fill = _mid_long_next_fill_candle(replay["candles"], decision_close=replay["decision_candle"].close_time)
+        if fill is None:
+            missing_fill_count += 1
+            control = _mid_long_control_result(item)
+            if control is not None:
+                control["first_hour_state"] = state
+                results.append(control)
+            continue
+        ideal_r = (fill.open - replay["entry"]) / replay["risk"]
+        realistic = _realistic_result_fields(
+            item,
+            entry=replay["entry"],
+            exit_reference=fill.open,
+            risk=replay["risk"],
+            direction="LONG",
+            ideal_status=variant_id,
+            ideal_r=ideal_r,
+        )
+        result = {
+            **_mid_long_base_result_fields(item),
+            "result_status": variant_id,
+            "realistic_result_status": variant_id,
+            "result_time_utc": fill.open_time,
+            "result_time_wib": _wib_string(fill.open_time),
+            "exit_price": fill.open,
+            "realized_r": ideal_r,
+            "unrealized_r": None,
+            **realistic,
+            "mfe_r": pre_terminal.get("mfe_r"),
+            "mae_r": pre_terminal.get("mae_r"),
+            "candles_seen": pre_terminal.get("candles_seen"),
+            "simulation_family": "EARLY_EXIT_EXACT",
+            "variant_id": variant_id,
+            "first_hour_state": state,
+            "decision_time_utc": replay["decision_candle"].close_time,
+            "fill_time_utc": fill.open_time,
+            "fill_price": fill.open,
+            "dynamic_action_taken": True,
+            "terminal_before_action": False,
+        }
+        action_state_counts[state] += 1
+        control = _mid_long_control_result(item)
+        control_r = _decimal_or_none_any((control or {}).get("realistic_realized_r"))
+        replay_r = _decimal_or_none_any(result.get("realistic_realized_r"))
+        control_status = str((control or {}).get("result_status") or "")
+        if control_r is not None and replay_r is not None:
+            if control_status in {"SL_HIT", "BOTH_HIT_SAME_CANDLE"} and replay_r > control_r:
+                sl_reduced_count += 1
+                r_saved += replay_r - control_r
+            if control_status == "TP_HIT" and replay_r < control_r:
+                tp_cut_count += 1
+                r_sacrificed += control_r - replay_r
+        results.append(result)
+    row = _mid_long_exact_replay_perf_row(
+        results,
+        baseline=baseline,
+        min_sample=min_sample,
+        source_count=len(items),
+        variant_id=variant_id,
+        label=label,
+        expression=expression,
+        simulation_family="EARLY_EXIT_EXACT",
+        action_count=sum(1 for result in results if result.get("dynamic_action_taken")),
+        unchanged_count=sum(1 for result in results if not result.get("dynamic_action_taken")),
+        missing_decision_count=missing_decision_count,
+        missing_fill_count=missing_fill_count,
+        terminal_before_action_count=terminal_before_action_count,
+        sl_reduced_count=sl_reduced_count,
+        tp_cut_count=tp_cut_count,
+        r_saved_from_control_losses=r_saved,
+        r_sacrificed_from_control_tps=r_sacrificed,
+        state_mix=state_counts,
+        action_state_mix=action_state_counts,
+    )
+    row["net_saved_r"] = r_saved - r_sacrificed
+    return row
+
+
+def _mid_long_exact_replay_context(
+    item: dict[str, Any],
+    candles_by_symbol: dict[str, list[PerfCandle]],
+) -> dict[str, Any] | None:
+    signal_time = _parse_dt(item.get("signal_timestamp"))
+    symbol = str(item.get("symbol") or "")
+    entry = _decimal_or_none_any(item.get("entry"))
+    stop = _decimal_or_none_any(item.get("stop_loss"))
+    target = _decimal_or_none_any(item.get("take_profit"))
+    risk = _decimal_or_none_any(item.get("risk"))
+    if signal_time is None or entry is None or stop is None or target is None:
+        return None
+    if risk is None:
+        risk = abs(entry - stop)
+    if risk <= 0 or target <= entry or stop >= entry:
+        return None
+    candles = sorted(candles_by_symbol.get(symbol, []), key=lambda candle: candle.open_time)
+    if not candles:
+        return None
+    open_times = [candle.open_time for candle in candles]
+    future = candles[bisect_left(open_times, signal_time):]
+    if not future:
+        return None
+    target_decision_close = signal_time + timedelta(hours=1)
+    decision_candle = next(
+        (candle for candle in future if candle.close_time >= target_decision_close),
+        None,
+    )
+    if decision_candle is None:
+        return None
+    close_r = _candle_profit_close_r(entry=entry, risk=risk, direction="LONG", candle=decision_candle)
+    return {
+        "symbol": symbol,
+        "signal_time": signal_time,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "risk": risk,
+        "target_rr": abs(target - entry) / risk if risk > 0 else None,
+        "candles": candles,
+        "future": future,
+        "decision_candle": decision_candle,
+        "first_hour_close_r": close_r,
+        "first_hour_state": _mid_long_first_hour_exact_state(close_r),
+    }
+
+
+def _mid_long_first_hour_exact_state(close_r: Decimal) -> str:
+    if close_r <= Decimal("-0.50"):
+        return "FIRST_HOUR_STRUCTURE_FAILED"
+    if close_r < Decimal("-0.10"):
+        return "FIRST_HOUR_PRICE_REVERSED"
+    if close_r >= Decimal("0.25"):
+        return "FIRST_HOUR_CONFIRMED"
+    return "FIRST_HOUR_STALLED"
+
+
+def _mid_long_next_fill_candle(candles: list[PerfCandle], *, decision_close: datetime) -> PerfCandle | None:
+    return next(
+        (candle for candle in candles if candle.open_time >= decision_close),
+        None,
+    )
+
+
+def _mid_long_replay_long_path(
+    item: dict[str, Any],
+    *,
+    entry: Decimal,
+    stop: Decimal,
+    target: Decimal,
+    risk: Decimal,
+    future: list[PerfCandle],
+    replay_status_prefix: str,
+) -> dict[str, Any]:
+    base = _mid_long_base_result_fields(item)
+    if risk <= 0 or not future:
+        return {
+            **base,
+            "result_status": "WAITING_DATA",
+            "realistic_result_status": "WAITING_DATA",
+            "entry": entry,
+            "stop_loss": stop,
+            "take_profit": target,
+            "risk": risk,
+            "realized_r": None,
+            "unrealized_r": None,
+            "realistic_realized_r": None,
+            "realistic_unrealized_r": None,
+            "candles_seen": 0,
+        }
+    mfe = Decimal("0")
+    mae = Decimal("0")
+    for index, candle in enumerate(future, start=1):
+        tp_hit = candle.high >= target
+        sl_hit = candle.low <= stop
+        mfe = max(mfe, (candle.high - entry) / risk)
+        mae = min(mae, (candle.low - entry) / risk)
+        if tp_hit and sl_hit:
+            realistic = _realistic_result_fields(
+                item,
+                entry=entry,
+                exit_reference=stop,
+                risk=risk,
+                direction="LONG",
+                ideal_status="BOTH_HIT_SAME_CANDLE",
+                ideal_r=Decimal("0"),
+                conservative_status="SL_HIT_CONSERVATIVE",
+            )
+            return {
+                **base,
+                "result_status": "BOTH_HIT_SAME_CANDLE",
+                "result_time_utc": candle.close_time,
+                "result_time_wib": _wib_string(candle.close_time),
+                "exit_price": candle.close,
+                "entry": entry,
+                "stop_loss": stop,
+                "take_profit": target,
+                "risk": risk,
+                "realized_r": Decimal("0"),
+                "unrealized_r": None,
+                **realistic,
+                "mfe_r": mfe,
+                "mae_r": mae,
+                "candles_seen": index,
+            }
+        if tp_hit:
+            ideal_r = (target - entry) / risk
+            realistic = _realistic_result_fields(
+                item,
+                entry=entry,
+                exit_reference=target,
+                risk=risk,
+                direction="LONG",
+                ideal_status="TP_HIT",
+                ideal_r=ideal_r,
+            )
+            return {
+                **base,
+                "result_status": "TP_HIT",
+                "result_time_utc": candle.close_time,
+                "result_time_wib": _wib_string(candle.close_time),
+                "exit_price": target,
+                "entry": entry,
+                "stop_loss": stop,
+                "take_profit": target,
+                "risk": risk,
+                "realized_r": ideal_r,
+                "unrealized_r": None,
+                **realistic,
+                "mfe_r": mfe,
+                "mae_r": mae,
+                "candles_seen": index,
+            }
+        if sl_hit:
+            realistic = _realistic_result_fields(
+                item,
+                entry=entry,
+                exit_reference=stop,
+                risk=risk,
+                direction="LONG",
+                ideal_status="SL_HIT",
+                ideal_r=Decimal("-1"),
+            )
+            return {
+                **base,
+                "result_status": "SL_HIT",
+                "result_time_utc": candle.close_time,
+                "result_time_wib": _wib_string(candle.close_time),
+                "exit_price": stop,
+                "entry": entry,
+                "stop_loss": stop,
+                "take_profit": target,
+                "risk": risk,
+                "realized_r": Decimal("-1"),
+                "unrealized_r": None,
+                **realistic,
+                "mfe_r": mfe,
+                "mae_r": mae,
+                "candles_seen": index,
+            }
+    latest = future[-1]
+    unrealized = (latest.close - entry) / risk
+    realistic = _realistic_result_fields(
+        item,
+        entry=entry,
+        exit_reference=latest.close,
+        risk=risk,
+        direction="LONG",
+        ideal_status=f"{replay_status_prefix}_OPEN",
+        ideal_r=unrealized,
+        realized=False,
+    )
+    return {
+        **base,
+        "result_status": "OPEN",
+        "realistic_result_status": f"{replay_status_prefix}_OPEN",
+        "result_time_utc": latest.close_time,
+        "result_time_wib": _wib_string(latest.close_time),
+        "exit_price": latest.close,
+        "entry": entry,
+        "stop_loss": stop,
+        "take_profit": target,
+        "risk": risk,
+        "realized_r": None,
+        "unrealized_r": unrealized,
+        **realistic,
+        "mfe_r": mfe,
+        "mae_r": mae,
+        "candles_seen": len(future),
+    }
+
+
+def _mid_long_base_result_fields(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "signal_id": item.get("signal_id"),
+        "symbol": item.get("symbol"),
+        "timeframe": item.get("timeframe"),
+        "signal_timestamp": item.get("signal_timestamp"),
+        "signal_time_wib": item.get("signal_time_wib"),
+        "stage": item.get("stage"),
+        "direction": item.get("direction"),
+        "candidate_status": item.get("candidate_status"),
+        "confidence_tier": item.get("confidence_tier"),
+        "execution_flag": item.get("execution_flag"),
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+    }
+
+
+def _mid_long_control_result(item: dict[str, Any]) -> dict[str, Any] | None:
+    status = str(item.get("result_status") or "")
+    if not status:
+        return None
+    return {
+        **_mid_long_base_result_fields(item),
+        "result_status": status,
+        "realistic_result_status": item.get("realistic_result_status"),
+        "result_time_utc": item.get("result_time_utc"),
+        "result_time_wib": item.get("result_time_wib"),
+        "exit_price": item.get("exit_price"),
+        "entry": item.get("entry"),
+        "stop_loss": item.get("stop_loss"),
+        "take_profit": item.get("take_profit"),
+        "risk": item.get("risk"),
+        "realized_r": item.get("realized_r"),
+        "unrealized_r": item.get("unrealized_r"),
+        "realistic_realized_r": item.get("realistic_realized_r"),
+        "realistic_unrealized_r": item.get("realistic_unrealized_r"),
+        "mfe_r": item.get("mfe_r"),
+        "mae_r": item.get("mae_r"),
+        "candles_seen": item.get("candles_seen"),
+        "simulation_family": "CONTROL_LOGGED",
+        "dynamic_action_taken": False,
+    }
+
+
+def _mid_long_exact_replay_perf_row(
+    results: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+    source_count: int,
+    variant_id: str,
+    label: str,
+    expression: str,
+    simulation_family: str,
+    action_count: int,
+    unchanged_count: int,
+    missing_decision_count: int = 0,
+    missing_fill_count: int = 0,
+    invalid_geometry_count: int = 0,
+    terminal_before_action_count: int = 0,
+    sl_reduced_count: int = 0,
+    tp_cut_count: int = 0,
+    r_saved_from_control_losses: Decimal | None = None,
+    r_sacrificed_from_control_tps: Decimal | None = None,
+    state_mix: Counter[str] | None = None,
+    action_state_mix: Counter[str] | None = None,
+) -> dict[str, Any]:
+    perf = _mid_long_exact_replay_performance(results)
+    row = {
+        "variant_id": variant_id,
+        "filter_id": variant_id,
+        "label": label,
+        "expression": expression,
+        "method": "closed futures candle replay; fill at next candle open",
+        "simulation_family": simulation_family,
+        "source_count": source_count,
+        "sample_count": len(results),
+        "evaluated_count": len(results),
+        "closed_count": perf["closed_count"],
+        "tp_count": perf["tp_count"],
+        "sl_count": perf["sl_count"],
+        "both_hit_count": perf["both_hit_count"],
+        "open_count": perf["open_count"],
+        "waiting_count": perf["waiting_count"],
+        "early_exit_count": perf["early_exit_count"],
+        "action_count": action_count,
+        "unchanged_count": unchanged_count,
+        "missing_decision_count": missing_decision_count,
+        "missing_fill_count": missing_fill_count,
+        "invalid_geometry_count": invalid_geometry_count,
+        "terminal_before_action_count": terminal_before_action_count,
+        "sl_reduced_count": sl_reduced_count,
+        "tp_cut_count": tp_cut_count,
+        "realistic_total_r_closed": perf["realistic_total_r_closed"],
+        "realistic_open_unrealized_r": perf["realistic_open_unrealized_r"],
+        "realistic_total_r_with_open": perf["realistic_total_r_with_open"],
+        "realistic_avg_r_closed": perf["realistic_avg_r_closed"],
+        "median_realistic_r_closed": perf["median_realistic_r_closed"],
+        "max_realistic_drawdown_r": perf["max_realistic_drawdown_r"],
+        "winrate_pct": perf["winrate_pct"],
+        "status_counts": perf["status_counts"],
+        "state_mix": dict(state_mix or Counter()),
+        "action_state_mix": dict(action_state_mix or Counter()),
+        "top_symbol": perf["top_symbol"],
+        "top_symbol_count": perf["top_symbol_count"],
+        "top_symbol_share_pct": perf["top_symbol_share_pct"],
+        "r_saved_from_control_losses": r_saved_from_control_losses,
+        "r_sacrificed_from_control_tps": r_sacrificed_from_control_tps,
+    }
+    if baseline:
+        row.update(
+            {
+                "realistic_total_r_delta_vs_baseline": _decimal_delta(
+                    row.get("realistic_total_r_closed"),
+                    baseline.get("realistic_total_r_closed"),
+                ),
+                "realistic_avg_r_delta_vs_baseline": _decimal_delta(
+                    row.get("realistic_avg_r_closed"),
+                    baseline.get("realistic_avg_r_closed"),
+                ),
+                "realistic_with_open_delta_vs_baseline": _decimal_delta(
+                    row.get("realistic_total_r_with_open"),
+                    baseline.get("realistic_total_r_closed"),
+                ),
+                "max_drawdown_delta_vs_baseline": _decimal_delta(
+                    row.get("max_realistic_drawdown_r"),
+                    baseline.get("max_realistic_drawdown_r"),
+                ),
+            }
+        )
+    row["read"] = _mid_long_exact_replay_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_exact_replay_performance(results: list[dict[str, Any]]) -> dict[str, Any]:
+    statuses = Counter(str(result.get("result_status") or "UNKNOWN") for result in results)
+    closed_statuses = COMPLETED_OUTCOMES | {
+        status for status in statuses if status.startswith("EXACT_EXIT_")
+    }
+    closed = [result for result in results if str(result.get("result_status") or "") in closed_statuses]
+    realistic_values = [
+        Decimal(value)
+        for result in closed
+        if (value := result.get("realistic_realized_r")) is not None
+    ]
+    open_values = [
+        Decimal(value)
+        for result in results
+        if str(result.get("result_status") or "") == "OPEN"
+        and (value := result.get("realistic_unrealized_r")) is not None
+    ]
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for value in realistic_values:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    symbol_counts = Counter(str(result.get("symbol") or "") for result in results if result.get("symbol"))
+    top_symbol, top_count = symbol_counts.most_common(1)[0] if symbol_counts else (None, 0)
+    completed_for_winrate = statuses["TP_HIT"] + statuses["SL_HIT"]
+    closed_total = sum(realistic_values, Decimal("0"))
+    open_total = sum(open_values, Decimal("0"))
+    return {
+        "closed_count": len(closed),
+        "tp_count": statuses["TP_HIT"],
+        "sl_count": statuses["SL_HIT"],
+        "both_hit_count": statuses["BOTH_HIT_SAME_CANDLE"],
+        "open_count": statuses["OPEN"],
+        "waiting_count": statuses["WAITING_DATA"],
+        "early_exit_count": sum(count for status, count in statuses.items() if status.startswith("EXACT_EXIT_")),
+        "realistic_total_r_closed": closed_total,
+        "realistic_open_unrealized_r": open_total,
+        "realistic_total_r_with_open": closed_total + open_total,
+        "realistic_avg_r_closed": _avg_decimal(realistic_values),
+        "median_realistic_r_closed": _percentile_decimal(realistic_values, Decimal("0.50")),
+        "max_realistic_drawdown_r": max_drawdown,
+        "winrate_pct": (Decimal(statuses["TP_HIT"]) / Decimal(completed_for_winrate) * Decimal("100")) if completed_for_winrate else None,
+        "status_counts": dict(statuses),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_count,
+        "top_symbol_share_pct": Decimal(top_count) / Decimal(len(results)) * Decimal("100") if results else None,
+    }
+
+
+def _mid_long_exact_replay_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("evaluated_count") or 0) < min_sample:
+        return "EXACT_REPLAY_SAMPLE_SMALL"
+    delta = _decimal_or_none_any(row.get("realistic_total_r_delta_vs_baseline"))
+    total = _decimal_or_none_any(row.get("realistic_total_r_closed"))
+    if delta is not None and delta > 0 and total is not None and total > 0:
+        return "EXACT_REPLAY_PROMISING"
+    if delta is not None and delta > 0:
+        return "EXACT_REPLAY_REDUCES_DAMAGE"
+    if total is not None and total > 0:
+        return "EXACT_REPLAY_POSITIVE_BUT_NOT_BETTER"
+    return "EXACT_REPLAY_NOT_SUPPORTED"
+
+
+def _mid_long_exact_replay_summary(
+    *,
+    baseline: dict[str, Any] | None,
+    delayed_rows: list[dict[str, Any]],
+    early_exit_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    def best(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not rows:
+            return None
+        return max(
+            rows,
+            key=lambda row: (
+                _decimal_or_none_any(row.get("realistic_total_r_delta_vs_baseline")) or Decimal("-999999"),
+                _decimal_or_none_any(row.get("realistic_total_r_closed")) or Decimal("-999999"),
+                int(row.get("evaluated_count") or 0),
+            ),
+        )
+
+    best_delayed = best(delayed_rows)
+    best_early = best(early_exit_rows)
+    delayed_delta = _decimal_or_none_any((best_delayed or {}).get("realistic_total_r_delta_vs_baseline"))
+    early_delta = _decimal_or_none_any((best_early or {}).get("realistic_total_r_delta_vs_baseline"))
+    if early_delta is not None and (delayed_delta is None or early_delta > delayed_delta) and early_delta > 0:
+        read = "EXACT_EARLY_EXIT_LEADS"
+        next_action = "Prioritize early-exit replay variants for forward shadow monitoring; do not change live rules yet."
+    elif delayed_delta is not None and delayed_delta > 0:
+        read = "EXACT_DELAYED_ENTRY_LEADS"
+        next_action = "Prioritize delayed-entry replay variants for forward shadow monitoring; do not change live rules yet."
+    else:
+        read = "NO_EXACT_ACTION_READY"
+        next_action = "Keep researching MID_LONG definition; exact first-hour actions have not improved the baseline."
+    return {
+        "read": read,
+        "baseline_realistic_total_r_closed": (baseline or {}).get("realistic_total_r_closed"),
+        "best_delayed_entry": _mid_long_exact_summary_row(best_delayed),
+        "best_early_exit": _mid_long_exact_summary_row(best_early),
+        "best_delayed_delta_r": delayed_delta,
+        "best_early_exit_delta_r": early_delta,
+        "next_action": next_action,
+    }
+
+
+def _mid_long_exact_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "variant_id": row.get("variant_id"),
+        "filter_id": row.get("filter_id"),
+        "label": row.get("label"),
+        "read": row.get("read"),
+        "sample_count": row.get("sample_count"),
+        "action_count": row.get("action_count"),
+        "retained_count": row.get("retained_count"),
+        "delta_r": row.get("realistic_total_r_delta_vs_baseline"),
+        "total_r": row.get("realistic_total_r_closed"),
+        "with_open_r": row.get("realistic_total_r_with_open"),
+        "avg_r": row.get("realistic_avg_r_closed"),
+    }
 
 
 def _signal_chart_payload(

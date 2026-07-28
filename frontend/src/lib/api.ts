@@ -3884,6 +3884,7 @@ export type MidLongDefinitionAudit = {
   sl_anatomy_v2?: MidLongSlAnatomyV2;
   first_hour_response_audit?: MidLongFirstHourResponseAudit;
   first_hour_action_simulation?: MidLongFirstHourActionSimulation;
+  first_hour_exact_replay_lab?: MidLongFirstHourExactReplayLab | null;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
   breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
@@ -4109,6 +4110,81 @@ export type MidLongFirstHourActionSummaryRow = {
   delta_r?: string | number | null;
   total_r?: string | number | null;
   avg_r?: string | number | null;
+};
+
+export type MidLongFirstHourExactReplayLab = {
+  scope: string;
+  method: string;
+  model: string;
+  source_state_model: string;
+  min_sample: number;
+  source_count: number;
+  baseline_realistic_total_r_closed?: string | number | null;
+  baseline_realistic_avg_r_closed?: string | number | null;
+  baseline_max_realistic_drawdown_r?: string | number | null;
+  delayed_entry_rows: MidLongFirstHourExactReplayRow[];
+  early_exit_rows: MidLongFirstHourExactReplayRow[];
+  summary: {
+    read: string;
+    baseline_realistic_total_r_closed?: string | number | null;
+    best_delayed_entry?: MidLongFirstHourActionSummaryRow | null;
+    best_early_exit?: MidLongFirstHourActionSummaryRow | null;
+    best_delayed_delta_r?: string | number | null;
+    best_early_exit_delta_r?: string | number | null;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongFirstHourExactReplayRow = {
+  variant_id: string;
+  filter_id: string;
+  label: string;
+  expression: string;
+  method: string;
+  simulation_family: string;
+  source_count: number;
+  sample_count: number;
+  evaluated_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  open_count: number;
+  waiting_count: number;
+  early_exit_count: number;
+  action_count: number;
+  unchanged_count: number;
+  retained_count?: number;
+  skipped_count?: number;
+  missing_decision_count?: number;
+  missing_fill_count?: number;
+  invalid_geometry_count?: number;
+  terminal_before_action_count?: number;
+  sl_reduced_count?: number;
+  tp_cut_count?: number;
+  realistic_total_r_closed?: string | number | null;
+  realistic_open_unrealized_r?: string | number | null;
+  realistic_total_r_with_open?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  median_realistic_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  winrate_pct?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_with_open_delta_vs_baseline?: string | number | null;
+  max_drawdown_delta_vs_baseline?: string | number | null;
+  r_saved_from_control_losses?: string | number | null;
+  r_sacrificed_from_control_tps?: string | number | null;
+  net_saved_r?: string | number | null;
+  status_counts: Record<string, number>;
+  state_mix: Record<string, number>;
+  action_state_mix: Record<string, number>;
+  skipped_state_mix?: Record<string, number>;
+  top_symbol?: string | null;
+  top_symbol_count?: number;
+  top_symbol_share_pct?: string | number | null;
+  read: string;
 };
 
 export type MidLongFirstHourDelayedEntryRow = MidLongEntryCombinationRow & {

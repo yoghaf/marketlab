@@ -282,6 +282,16 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "ACTION_PROXY_MIXED",
         "NO_ACTION_PROXY_READY",
     }
+    assert "first_hour_exact_replay_lab" in baseline["definition_audit"]
+    first_hour_exact = baseline["definition_audit"]["first_hour_exact_replay_lab"]
+    assert first_hour_exact["scope"] == "MID_LONG 1h First-Hour Exact Candle Replay"
+    assert {row["simulation_family"] for row in first_hour_exact["delayed_entry_rows"]} == {"DELAYED_ENTRY_EXACT"}
+    assert {row["simulation_family"] for row in first_hour_exact["early_exit_rows"]} == {"EARLY_EXIT_EXACT"}
+    assert first_hour_exact["summary"]["read"] in {
+        "EXACT_EARLY_EXIT_LEADS",
+        "EXACT_DELAYED_ENTRY_LEADS",
+        "NO_EXACT_ACTION_READY",
+    }
     assert "definition_reset_lab" in baseline["definition_audit"]
     reset_lab = baseline["definition_audit"]["definition_reset_lab"]
     assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V2"
