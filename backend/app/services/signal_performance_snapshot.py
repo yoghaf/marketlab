@@ -2639,6 +2639,12 @@ def _mid_long_definition_reset_lab(
         baseline=baseline,
         min_sample=min_sample,
     )
+    cohort_rows = _mid_long_reset_cohort_comparison_rows(
+        items,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     coverage = _mid_long_reset_coverage(items, reset_by_id=reset_by_id)
     return {
         "scope": "MID_LONG 1h Definition Reset Lab, read-only",
@@ -2646,7 +2652,20 @@ def _mid_long_definition_reset_lab(
             "Primary family is mutually exclusive; modifiers are overlapping pre-entry risk tags; "
             "derived decision combines both for research triage only."
         ),
-        "taxonomy_version": "MID_LONG_DEFINITION_RESET_V1",
+        "taxonomy_version": "MID_LONG_DEFINITION_RESET_V2",
+        "legacy_definition": {
+            "label": "MID_LONG_V2_LEGACY",
+            "read": "Logged Signal Factory V2 MID_LONG 1h. Kept as control and historical evidence; never deleted.",
+            "entry_basis": "price impulse plus OI expansion style trigger from the live V2 signal log.",
+        },
+        "structure_first_draft": {
+            "label": "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "read": (
+                "Read-only taxonomy layer over legacy rows: classify structure family first, then attach risk modifiers. "
+                "It does not replace Signal Factory output."
+            ),
+            "promotion_state": "SHADOW_RESEARCH_ONLY",
+        },
         "primary_family_order": [
             "SUPPORT_RETEST_LONG",
             "BREAKOUT_CONTINUATION_LONG",
@@ -2661,14 +2680,21 @@ def _mid_long_definition_reset_lab(
         "primary_family_rows": primary_rows,
         "modifier_rows": modifier_rows,
         "derived_decision_rows": decision_rows,
+        "cohort_comparison_rows": cohort_rows,
         "family_modifier_rows": family_modifier_rows,
         "summary": _mid_long_reset_summary(
             primary_rows=primary_rows,
             modifier_rows=modifier_rows,
             decision_rows=decision_rows,
+            cohort_rows=cohort_rows,
             coverage=coverage,
             min_sample=min_sample,
         ),
+        "data_retention_policy": [
+            "Do not delete legacy MID_LONG rows; they are the control group that proves whether the new definition improves.",
+            "Structure-first draft labels are computed from the same historical rows and can be regenerated.",
+            "Live scanner, Signal Factory rules, TP/SL, threshold, and execution behavior remain unchanged.",
+        ],
         "guardrails": [
             "Primary family labels are pre-entry taxonomy, not live Signal Factory rules.",
             "Modifiers can overlap and must not be read as standalone rejection gates.",
@@ -2943,6 +2969,95 @@ def _mid_long_reset_family_modifier_rows(
     return rows
 
 
+def _mid_long_reset_cohort_comparison_rows(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    cohorts: list[tuple[str, str, str, list[dict[str, Any]]]] = [
+        (
+            "LEGACY_V2_ALL",
+            "MID_LONG_V2_LEGACY",
+            "All logged MID_LONG 1h V2 rows. This is the frozen control, not deleted data.",
+            items,
+        ),
+        (
+            "STRUCTURE_FIRST_CLASSIFIED",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows where a primary structure family can be assigned.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] != "UNCLASSIFIED_MID_LONG"
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_ELIGIBLE_DRAFT",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows passing the draft eligible bucket after structure family plus modifiers.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if str(reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"]).startswith("ELIGIBLE")
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_REJECT_DRAFT",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows rejected by draft structure-first risk triage.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if str(reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"]).startswith("REJECT")
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_WAIT_UNCLASSIFIED",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows that remain unclassified or structurally insufficient.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"] == "WAIT_UNCLASSIFIED"
+            ],
+        ),
+    ]
+    rows: list[dict[str, Any]] = []
+    for cohort_id, definition_version, description, cohort_items in cohorts:
+        row = _mid_long_perf_row(
+            f"RESET_COHORT:{cohort_id}",
+            cohort_id,
+            description,
+            cohort_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "cohort_id": cohort_id,
+                "definition_version": definition_version,
+                "description": description,
+                "primary_family_mix": _mid_long_reset_mix(
+                    cohort_items,
+                    reset_by_id=reset_by_id,
+                    field="primary_family",
+                ),
+                "decision_mix": _mid_long_reset_mix(
+                    cohort_items,
+                    reset_by_id=reset_by_id,
+                    field="derived_decision",
+                ),
+                "modifier_mix": _mid_long_reset_modifier_mix(cohort_items, reset_by_id=reset_by_id),
+                "read": _mid_long_reset_cohort_read(row, cohort_id=cohort_id, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
 def _mid_long_reset_coverage(
     items: list[dict[str, Any]],
     *,
@@ -3045,11 +3160,33 @@ def _mid_long_reset_decision_read(row: dict[str, Any], *, decision: str, min_sam
     return "No clear improvement yet."
 
 
+def _mid_long_reset_cohort_read(row: dict[str, Any], *, cohort_id: str, min_sample: int) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    if closed < min_sample:
+        return "Sample too small for cohort comparison."
+    if cohort_id == "LEGACY_V2_ALL":
+        return "Control group. Keep this historical data to measure improvement."
+    if cohort_id == "STRUCTURE_FIRST_WAIT_UNCLASSIFIED":
+        return "This should shrink before MID_LONG can become trustworthy."
+    if cohort_id == "STRUCTURE_FIRST_ELIGIBLE_DRAFT" and total_r > 0 and avg_delta > Decimal("0.05"):
+        return "Candidate cohort for chronological validation only."
+    if cohort_id == "STRUCTURE_FIRST_ELIGIBLE_DRAFT":
+        return "Eligible draft is not positive enough yet."
+    if cohort_id == "STRUCTURE_FIRST_REJECT_DRAFT" and total_r < 0:
+        return "Reject bucket contains damage; validate lost TP before using as a gate."
+    if avg_delta > 0:
+        return "Less bad than V2, but still needs validation."
+    return "No clear improvement over legacy control."
+
+
 def _mid_long_reset_summary(
     *,
     primary_rows: list[dict[str, Any]],
     modifier_rows: list[dict[str, Any]],
     decision_rows: list[dict[str, Any]],
+    cohort_rows: list[dict[str, Any]],
     coverage: dict[str, Any],
     min_sample: int,
 ) -> dict[str, Any]:
@@ -3081,9 +3218,16 @@ def _mid_long_reset_summary(
         if _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")) > 0
         and _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")) > 0
     )
+    eligible_cohort = next(
+        (row for row in cohort_rows if row.get("cohort_id") == "STRUCTURE_FIRST_ELIGIBLE_DRAFT"),
+        None,
+    )
+    legacy_cohort = next((row for row in cohort_rows if row.get("cohort_id") == "LEGACY_V2_ALL"), None)
     return {
         "best_candidate_family": _mid_long_reset_summary_row(best_family, key="primary_family"),
         "worst_reject_decision": _mid_long_reset_summary_row(worst_reject, key="decision"),
+        "legacy_v2_control": _mid_long_reset_summary_row(legacy_cohort, key="cohort_id"),
+        "structure_first_eligible": _mid_long_reset_summary_row(eligible_cohort, key="cohort_id"),
         "positive_candidate_family_count": positive_family_count,
         "read": _mid_long_reset_read(
             positive_family_count=positive_family_count,

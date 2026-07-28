@@ -229,11 +229,22 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "mid_range_interactions" in baseline["definition_audit"]["damage_isolation"]
     assert "definition_reset_lab" in baseline["definition_audit"]
     reset_lab = baseline["definition_audit"]["definition_reset_lab"]
-    assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V1"
+    assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V2"
+    assert reset_lab["legacy_definition"]["label"] == "MID_LONG_V2_LEGACY"
+    assert reset_lab["structure_first_draft"]["label"] == "MID_LONG_STRUCTURE_FIRST_DRAFT"
     assert "primary_family_rows" in reset_lab
     assert "modifier_rows" in reset_lab
     assert "derived_decision_rows" in reset_lab
+    assert "cohort_comparison_rows" in reset_lab
     assert "family_modifier_rows" in reset_lab
+    assert {row["cohort_id"] for row in reset_lab["cohort_comparison_rows"]} >= {
+        "LEGACY_V2_ALL",
+        "STRUCTURE_FIRST_CLASSIFIED",
+        "STRUCTURE_FIRST_ELIGIBLE_DRAFT",
+        "STRUCTURE_FIRST_REJECT_DRAFT",
+        "STRUCTURE_FIRST_WAIT_UNCLASSIFIED",
+    }
+    assert reset_lab["data_retention_policy"]
     assert reset_lab["coverage"]["total_rows"] == 1
     assert "sub_setup_split_lab" in baseline["definition_audit"]
     assert "rows" in baseline["definition_audit"]["sub_setup_split_lab"]

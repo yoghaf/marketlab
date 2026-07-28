@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-13",
+    title: "MID_LONG Structure-First Draft Layer",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Memperjelas bahwa MID_LONG lama tidak dihapus: Legacy V2 tetap control, sementara Structure-first Draft berjalan sebagai shadow taxonomy read-only.",
+    changes: [
+      "Definition Reset Lab naik ke MID_LONG_DEFINITION_RESET_V2 dengan metadata MID_LONG_V2_LEGACY dan MID_LONG_STRUCTURE_FIRST_DRAFT.",
+      "Endpoint MID_LONG 1h menambahkan cohort_comparison_rows: LEGACY_V2_ALL, STRUCTURE_FIRST_CLASSIFIED, STRUCTURE_FIRST_ELIGIBLE_DRAFT, STRUCTURE_FIRST_REJECT_DRAFT, dan STRUCTURE_FIRST_WAIT_UNCLASSIFIED.",
+      "Halaman /mid-long-research-study sekarang menampilkan panel Legacy retained vs Shadow definition agar data lama tidak dibaca sebagai rule baru.",
+      "Halaman menambahkan tabel Legacy V2 vs Structure-first draft untuk membandingkan R, TP/SL, family mix, decision mix, dan read per cohort.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang bisa bergerak lebih ilmiah: data lama menjadi pembanding tetap, sedangkan definisi structure-first dapat diuji tanpa menghapus histori atau memaksa live rule berubah.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Structure-first Draft" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-12",
     title: "MID_LONG Definition Reset v1",
     status: "LIVE",

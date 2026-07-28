@@ -30,6 +30,7 @@ import {
   MidLongGeometryThresholdRow,
   MidLongIntegrityAudit,
   MidLongPathDecisionRow,
+  MidLongResetCohortRow,
   MidLongResetDecisionRow,
   MidLongResetFamilyModifierRow,
   MidLongResetModifierRow,
@@ -307,6 +308,21 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 function DefinitionResetPanel({ lab }: { lab: MidLongDefinitionResetLab }) {
   return (
     <div>
+      <div className="grid gap-3 border-b border-line p-4 lg:grid-cols-2">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
+          <div className="text-xs font-semibold uppercase text-blue-700">Legacy retained</div>
+          <div className="mt-1 text-xl font-black text-ink">{lab.legacy_definition?.label || "MID_LONG_V2_LEGACY"}</div>
+          <div className="mt-2 text-sm leading-6 text-slate-700">{lab.legacy_definition?.read || "Legacy rows stay as control."}</div>
+          <div className="mt-2 text-xs leading-5 text-slate-500">{lab.legacy_definition?.entry_basis}</div>
+        </div>
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4">
+          <div className="text-xs font-semibold uppercase text-emerald-700">Shadow definition</div>
+          <div className="mt-1 text-xl font-black text-ink">{lab.structure_first_draft?.label || "MID_LONG_STRUCTURE_FIRST_DRAFT"}</div>
+          <div className="mt-2 text-sm leading-6 text-slate-700">{lab.structure_first_draft?.read || "Structure-first draft is read-only."}</div>
+          <div className="mt-2"><StatusBadge value={humanFlag(lab.structure_first_draft?.promotion_state || "SHADOW_RESEARCH_ONLY")} /></div>
+        </div>
+      </div>
+
       <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
         <Info label="Taxonomy" value={lab.taxonomy_version} helper="Read-only, belum rule live." />
         <Info label="Coverage" value={formatPct(lab.coverage.classification_coverage_pct)} helper={`${lab.coverage.classified_rows}/${lab.coverage.total_rows} classified`} />
@@ -320,6 +336,18 @@ function DefinitionResetPanel({ lab }: { lab: MidLongDefinitionResetLab }) {
         <ResetSummaryCard title="Best candidate family" row={lab.summary.best_candidate_family} />
         <ResetSummaryCard title="Worst reject decision" row={lab.summary.worst_reject_decision} />
       </div>
+
+      {(lab.cohort_comparison_rows || []).length > 0 && (
+        <div className="border-b border-line">
+          <div className="border-b border-line p-4">
+            <div className="text-sm font-bold text-ink">Legacy V2 vs Structure-first draft</div>
+            <div className="mt-1 text-sm leading-6 text-slate-600">
+              Tabel ini menjawab apakah data lama dihapus atau diganti: tidak. Legacy V2 tetap control; draft baru hanya memberi label struktur di atas baris yang sama.
+            </div>
+          </div>
+          <ResetCohortTable rows={lab.cohort_comparison_rows || []} />
+        </div>
+      )}
 
       <div className="border-b border-line p-4">
         <div className="text-sm font-bold text-ink">Primary family, modifier, decision</div>
@@ -356,7 +384,7 @@ function DefinitionResetPanel({ lab }: { lab: MidLongDefinitionResetLab }) {
       </div>
 
       <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
-        {lab.guardrails.map((guardrail) => (
+        {(lab.data_retention_policy || []).concat(lab.guardrails).map((guardrail) => (
           <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
         ))}
       </div>
@@ -414,6 +442,47 @@ function ResetPrimaryTable({ rows }: { rows: MidLongResetPrimaryRow[] }) {
               <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
               <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
               <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.modifier_mix)}</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.decision_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ResetCohortTable({ rows }: { rows: MidLongResetCohortRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Cohort comparison kosong" detail="Snapshot belum memuat Definition Reset v2." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cohort</th>
+            <th>Version</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg delta</th>
+            <th>Family mix</th>
+            <th>Decision mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.cohort_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.cohort_id)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.description}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.definition_version)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.primary_family_mix)}</td>
               <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.decision_mix)}</td>
               <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
             </tr>

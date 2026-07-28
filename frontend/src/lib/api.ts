@@ -3836,6 +3836,16 @@ export type MidLongDefinitionResetLab = {
   scope: string;
   method: string;
   taxonomy_version: string;
+  legacy_definition?: {
+    label: string;
+    read: string;
+    entry_basis: string;
+  };
+  structure_first_draft?: {
+    label: string;
+    read: string;
+    promotion_state: string;
+  };
   primary_family_order: string[];
   modifier_order: string[];
   primary_definitions: Record<string, string>;
@@ -3853,14 +3863,18 @@ export type MidLongDefinitionResetLab = {
   primary_family_rows: MidLongResetPrimaryRow[];
   modifier_rows: MidLongResetModifierRow[];
   derived_decision_rows: MidLongResetDecisionRow[];
+  cohort_comparison_rows?: MidLongResetCohortRow[];
   family_modifier_rows: MidLongResetFamilyModifierRow[];
   summary: {
     best_candidate_family?: MidLongResetSummaryRow | null;
     worst_reject_decision?: MidLongResetSummaryRow | null;
+    legacy_v2_control?: MidLongResetSummaryRow | null;
+    structure_first_eligible?: MidLongResetSummaryRow | null;
     positive_candidate_family_count: number;
     read: string;
     next_action: string;
   };
+  data_retention_policy?: string[];
   guardrails: string[];
 };
 
@@ -3900,6 +3914,16 @@ export type MidLongResetDecisionRow = MidLongEntryCombinationRow & {
   primary_family_mix: Record<string, number>;
   modifier_mix: Record<string, number>;
   path_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongResetCohortRow = MidLongEntryCombinationRow & {
+  cohort_id: string;
+  definition_version: string;
+  description: string;
+  primary_family_mix: Record<string, number>;
+  decision_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
   read: string;
 };
 
