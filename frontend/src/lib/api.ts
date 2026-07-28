@@ -3881,6 +3881,7 @@ export type MidLongDefinitionAudit = {
   taxonomy_study?: MidLongTaxonomyStudy;
   integrity_audit?: MidLongIntegrityAudit;
   damage_isolation?: MidLongDamageIsolation;
+  sl_anatomy_v2?: MidLongSlAnatomyV2;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
   breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
@@ -3891,6 +3892,106 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongSlAnatomyV2 = {
+  scope: string;
+  method: string;
+  min_sample: number;
+  total_signal_count: number;
+  tp_count: number;
+  sl_count: number;
+  sl_share_pct?: string | number | null;
+  path_rows: MidLongSlPathRow[];
+  cause_rows: MidLongSlCauseRow[];
+  path_cause_matrix: MidLongSlPathCauseRow[];
+  summary: {
+    read: string;
+    largest_sl_path?: MidLongSlSummaryRow | null;
+    best_damage_tag?: MidLongSlSummaryRow | null;
+    instant_sl_count: number;
+    instant_sl_share_pct?: string | number | null;
+    deep_fail_count: number;
+    deep_fail_share_pct?: string | number | null;
+    tp_count: number;
+    sl_count: number;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongSlSummaryRow = {
+  id?: string | null;
+  label?: string | null;
+  sample_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  retained_realistic_total_r_delta_vs_baseline?: string | number | null;
+  read?: string | null;
+};
+
+export type MidLongSlPathRow = MidLongEntryCombinationRow & {
+  path_bucket: string;
+  sl_count: number;
+  sl_share_of_all_sl_pct?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_cost_r?: string | number | null;
+  median_wick_decay_r?: string | number | null;
+  median_followthrough_1h_r?: string | number | null;
+  primary_family_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
+  setup_family_mix: Record<string, number>;
+  flow_mix: Record<string, number>;
+  crowding_mix: Record<string, number>;
+  extension_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongSlCauseRow = {
+  cause_id: string;
+  label: string;
+  expression: string;
+  definition: string;
+  required_fields: string[];
+  matched_count: number;
+  matched_share_pct?: string | number | null;
+  matched_tp_count: number;
+  matched_sl_count: number;
+  matched_sl_capture_pct?: string | number | null;
+  matched_tp_sacrifice_pct?: string | number | null;
+  sl_to_tp_capture_ratio?: string | number | null;
+  matched_realistic_total_r_closed?: string | number | null;
+  matched_realistic_avg_r_closed?: string | number | null;
+  matched_path_mix: Record<string, number>;
+  matched_sl_path_mix: Record<string, number>;
+  matched_primary_family_mix: Record<string, number>;
+  matched_modifier_mix: Record<string, number>;
+  matched_flow_mix: Record<string, number>;
+  retained_count: number;
+  retained_tp_count?: number | string | null;
+  retained_sl_count?: number | string | null;
+  retained_winrate_pct?: string | number | null;
+  retained_realistic_total_r_closed?: string | number | null;
+  retained_realistic_avg_r_closed?: string | number | null;
+  retained_realistic_total_r_delta_vs_baseline?: string | number | null;
+  retained_realistic_avg_r_delta_vs_baseline?: string | number | null;
+  retained_max_realistic_drawdown_r?: string | number | null;
+  retained_path_mix: Record<string, number>;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongSlPathCauseRow = {
+  path_bucket: string;
+  path_label: string;
+  cause_id: string;
+  cause_label: string;
+  count: number;
+  path_count: number;
+  path_share_pct?: string | number | null;
 };
 
 export type MidLongDefinitionResetLab = {

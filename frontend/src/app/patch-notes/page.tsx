@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-15",
+    title: "MID_LONG SL Anatomy v2",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan peta penyebab SL untuk MID_LONG 1h agar riset tidak lagi berhenti di total TP/SL saja.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan sl_anatomy_v2 dengan SL path bucket: no follow-through, weak follow-through, partial profit then fail, dan strong profit then fail.",
+      "Cause map baru membaca no-structure, late/extended chase, resistance conflict, weak/mixed flow, crowded long, high cost, first-hour reversal, no-acceptance MFE, dan deep-fail exit problem.",
+      "Setiap cause menampilkan matched TP/SL, SL capture, TP sacrificed, retained R, retained delta versus baseline, path mix, family mix, dan read.",
+      "Halaman /mid-long-research-study sekarang punya panel SL Anatomy v2 untuk membedah penyebab loss sebelum membuat filter atau dynamic exit.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang punya alat bedah SL yang lebih langsung: kita bisa melihat apakah loss lebih banyak berasal dari entry definition, flow/structure buruk, cost, atau trade yang sempat profit tapi tidak dipanen.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open SL Anatomy v2" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-14",
     title: "MID_LONG Reverse Shadow Audit",
     status: "LIVE",

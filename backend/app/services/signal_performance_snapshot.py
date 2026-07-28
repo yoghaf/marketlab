@@ -1351,6 +1351,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    sl_anatomy = _mid_long_sl_anatomy_v2(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     definition_reset = _mid_long_definition_reset_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1391,6 +1397,7 @@ def _mid_long_definition_audit(
         "taxonomy_study": taxonomy,
         "integrity_audit": integrity,
         "damage_isolation": damage,
+        "sl_anatomy_v2": sl_anatomy,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
         "breakout_accepted_deep_dive": breakout_deep_dive,
@@ -2584,6 +2591,540 @@ def _mid_long_damage_isolation(
         ],
         "read": _mid_long_damage_isolation_read(rows),
     }
+
+
+def _mid_long_sl_anatomy_v2(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    tp_items = [item for item in items if item.get("result_status") == "TP_HIT"]
+    path_rows = _mid_long_sl_path_rows(
+        sl_items,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        total_sl_count=len(sl_items),
+        min_sample=min_sample,
+    )
+    cause_rows = _mid_long_sl_cause_rows(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        total_sl_count=len(sl_items),
+        total_tp_count=len(tp_items),
+        min_sample=min_sample,
+    )
+    matrix_rows = _mid_long_sl_path_cause_matrix(
+        sl_items,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+    )
+    summary = _mid_long_sl_anatomy_summary(
+        path_rows=path_rows,
+        cause_rows=cause_rows,
+        total_sl_count=len(sl_items),
+        total_tp_count=len(tp_items),
+    )
+    return {
+        "scope": "MID_LONG 1h SL Anatomy v2",
+        "method": (
+            "SL-only anatomy plus matched-vs-retained cause map. "
+            "Cause rows are diagnostic flags; they do not become Signal Factory gates."
+        ),
+        "min_sample": min_sample,
+        "total_signal_count": len(items),
+        "tp_count": len(tp_items),
+        "sl_count": len(sl_items),
+        "sl_share_pct": _pct_decimal(len(sl_items), len(tp_items) + len(sl_items)),
+        "path_rows": path_rows,
+        "cause_rows": cause_rows,
+        "path_cause_matrix": matrix_rows,
+        "summary": summary,
+        "guardrails": [
+            "SL cause flags are research-only and may overlap.",
+            "Retained rows are hypothetical diagnostics, not live reject rules.",
+            "Post-entry path fields may explain failure but must not be used as pre-entry gates.",
+            "A candidate damage tag must be validated chronologically before any shadow rule.",
+        ],
+    }
+
+
+def _mid_long_sl_path_rows(
+    sl_items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    total_sl_count: int,
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in sl_items:
+        grouped[_mid_long_path_bucket(item)].append(item)
+    path_order = (
+        "SL_NO_FOLLOW_THROUGH",
+        "SL_WEAK_FOLLOW_THROUGH",
+        "SL_AFTER_PARTIAL_PROFIT",
+        "SL_AFTER_STRONG_PROFIT",
+    )
+    rows: list[dict[str, Any]] = []
+    for path_bucket in path_order:
+        path_items = grouped.get(path_bucket, [])
+        row = _mid_long_perf_row(
+            f"SL_PATH:{path_bucket}",
+            _mid_long_path_label(path_bucket),
+            _mid_long_path_expression(path_bucket),
+            path_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "path_bucket": path_bucket,
+                "sl_count": len(path_items),
+                "sl_share_of_all_sl_pct": _pct_decimal(len(path_items), total_sl_count),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(path_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(path_items, "mae_r")),
+                "median_cost_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(path_items, "realistic_cost_r_estimate")
+                ),
+                "median_wick_decay_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(path_items, "wick_to_close_decay_r")
+                ),
+                "median_followthrough_1h_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(path_items, "close_followthrough_1h_r")
+                ),
+                "primary_family_mix": _mid_long_reset_mix(path_items, reset_by_id=reset_by_id, field="primary_family"),
+                "modifier_mix": _mid_long_reset_modifier_mix(path_items, reset_by_id=reset_by_id),
+                "setup_family_mix": _mid_long_taxonomy_mix(
+                    path_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="setup_family",
+                ),
+                "flow_mix": _mid_long_taxonomy_mix(
+                    path_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="flow_state_provisional",
+                ),
+                "crowding_mix": _mid_long_taxonomy_mix(
+                    path_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="crowding_bucket",
+                ),
+                "extension_mix": _mid_long_taxonomy_mix(
+                    path_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="extension_bucket",
+                ),
+                "read": _mid_long_sl_path_read(path_bucket, path_items, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_sl_cause_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    total_sl_count: int,
+    total_tp_count: int,
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for spec in _mid_long_sl_cause_specs():
+        matched: list[dict[str, Any]] = []
+        retained: list[dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            key = str(item.get("signal_id") or idx)
+            taxonomy = taxonomy_by_id[key]
+            reset = reset_by_id[key]
+            path_bucket = _mid_long_path_bucket(item)
+            (matched if spec["predicate"](item, taxonomy, reset, path_bucket) else retained).append(item)
+        row = _mid_long_sl_cause_row(
+            spec,
+            matched,
+            retained,
+            reset_by_id=reset_by_id,
+            taxonomy_by_id=taxonomy_by_id,
+            baseline=baseline,
+            total_sl_count=total_sl_count,
+            total_tp_count=total_tp_count,
+            min_sample=min_sample,
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_sl_cause_priority(str(row.get("read") or "")),
+            _decimal_or_zero_snapshot(row.get("retained_realistic_total_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("matched_sl_capture_pct")),
+            int(row.get("matched_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_sl_cause_row(
+    spec: dict[str, Any],
+    matched: list[dict[str, Any]],
+    retained: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    total_sl_count: int,
+    total_tp_count: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    matched_perf = aggregate_signal_performance_items(matched)
+    retained_perf = _mid_long_perf_row(
+        f"SL_CAUSE_RETAINED:{spec['cause_id']}",
+        f"Retain without {spec['label']}",
+        f"NOT({spec['expression']})",
+        retained,
+        baseline=baseline,
+        required_fields=tuple(spec.get("required_fields") or ()),
+        min_sample=min_sample,
+    )
+    matched_sl = int(matched_perf.get("sl_count") or 0)
+    matched_tp = int(matched_perf.get("tp_count") or 0)
+    sl_capture = _pct_decimal(matched_sl, total_sl_count)
+    tp_sacrifice = _pct_decimal(matched_tp, total_tp_count)
+    row = {
+        "cause_id": spec["cause_id"],
+        "label": spec["label"],
+        "expression": spec["expression"],
+        "definition": spec["definition"],
+        "required_fields": list(spec.get("required_fields") or ()),
+        "matched_count": len(matched),
+        "matched_share_pct": _pct_decimal(len(matched), len(matched) + len(retained)),
+        "matched_tp_count": matched_tp,
+        "matched_sl_count": matched_sl,
+        "matched_sl_capture_pct": sl_capture,
+        "matched_tp_sacrifice_pct": tp_sacrifice,
+        "sl_to_tp_capture_ratio": _mid_long_decimal_ratio(sl_capture, tp_sacrifice),
+        "matched_realistic_total_r_closed": matched_perf.get("realistic_total_r_closed"),
+        "matched_realistic_avg_r_closed": matched_perf.get("realistic_avg_r_closed"),
+        "matched_path_mix": _mid_long_path_mix(matched),
+        "matched_sl_path_mix": dict(Counter(_mid_long_path_bucket(item) for item in matched if item.get("result_status") == "SL_HIT")),
+        "matched_primary_family_mix": _mid_long_reset_mix(matched, reset_by_id=reset_by_id, field="primary_family"),
+        "matched_modifier_mix": _mid_long_reset_modifier_mix(matched, reset_by_id=reset_by_id),
+        "matched_flow_mix": _mid_long_taxonomy_mix(
+            matched,
+            taxonomy_by_id=taxonomy_by_id,
+            taxonomy_key="flow_state_provisional",
+        ),
+        "retained_count": len(retained),
+        "retained_tp_count": retained_perf.get("tp_count"),
+        "retained_sl_count": retained_perf.get("sl_count"),
+        "retained_winrate_pct": retained_perf.get("winrate_pct"),
+        "retained_realistic_total_r_closed": retained_perf.get("realistic_total_r_closed"),
+        "retained_realistic_avg_r_closed": retained_perf.get("realistic_avg_r_closed"),
+        "retained_realistic_total_r_delta_vs_baseline": retained_perf.get("realistic_total_r_delta_vs_baseline"),
+        "retained_realistic_avg_r_delta_vs_baseline": retained_perf.get("realistic_avg_r_delta_vs_baseline"),
+        "retained_max_realistic_drawdown_r": retained_perf.get("max_realistic_drawdown_r"),
+        "retained_path_mix": _mid_long_path_mix(retained),
+        "top_symbol": retained_perf.get("top_symbol"),
+        "top_symbol_share_pct": retained_perf.get("top_symbol_share_pct"),
+    }
+    row["read"] = _mid_long_sl_cause_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_sl_cause_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "cause_id": "NO_STRUCTURE_OR_UNCLASSIFIED",
+            "label": "No structure / unclassified",
+            "expression": "primary_family == UNCLASSIFIED_MID_LONG OR structure unavailable",
+            "definition": "Signal lacks a clean breakout/retest/pullback family before entry.",
+            "required_fields": (),
+            "predicate": lambda _item, taxonomy, reset, _path: reset.get("primary_family") == "UNCLASSIFIED_MID_LONG"
+            or taxonomy.get("structure_status") == "UNAVAILABLE",
+        },
+        {
+            "cause_id": "LATE_OR_EXTENDED_CHASE",
+            "label": "Late or extended chase",
+            "expression": "LATE_CHASE/HIGH_EXTENSION modifier OR high/extreme extension bucket",
+            "definition": "Entry may be too far into the impulse instead of early continuation.",
+            "required_fields": ("atr_extension_normalized", "price_atr_multiple"),
+            "predicate": lambda _item, taxonomy, reset, _path: "LATE_CHASE" in (reset.get("modifiers") or [])
+            or "HIGH_EXTENSION" in (reset.get("modifiers") or [])
+            or taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"},
+        },
+        {
+            "cause_id": "LOW_ROOM_OR_RESISTANCE_CONFLICT",
+            "label": "Low room / resistance conflict",
+            "expression": "LOW_REMAINING_ROOM or STRUCTURE_CONFLICT",
+            "definition": "Target path may be blocked by nearby resistance or conflicting structure.",
+            "required_fields": ("structure_zone_nearest_resistance_distance_atr",),
+            "predicate": lambda _item, taxonomy, reset, _path: "LOW_REMAINING_ROOM" in (reset.get("modifiers") or [])
+            or "STRUCTURE_CONFLICT" in (reset.get("modifiers") or [])
+            or taxonomy.get("room_to_resistance_bucket") == "LOW_ROOM",
+        },
+        {
+            "cause_id": "WEAK_OR_MIXED_FLOW",
+            "label": "Weak or mixed initiative flow",
+            "expression": "flow_state_provisional != CONFIRMED",
+            "definition": "Volume, taker buy, and OI are not all confirming long initiative.",
+            "required_fields": ("volume_ratio_vs_lookback", "kline_taker_buy_ratio", "oi_change_pct"),
+            "predicate": lambda _item, taxonomy, _reset, _path: taxonomy.get("flow_state_provisional") != "CONFIRMED",
+        },
+        {
+            "cause_id": "CROWDED_LONG",
+            "label": "Crowded long risk",
+            "expression": "HIGH_CROWDING modifier OR high/extreme crowding bucket",
+            "definition": "Funding, OI, or positioning are elevated enough to mark crowded-long risk.",
+            "required_fields": (
+                "funding_percentile_30d",
+                "oi_zscore",
+                "global_long_short_ratio",
+                "top_trader_position_ratio",
+            ),
+            "predicate": lambda _item, taxonomy, reset, _path: "HIGH_CROWDING" in (reset.get("modifiers") or [])
+            or taxonomy.get("crowding_bucket") in {"HIGH_CROWDING", "EXTREME_CROWDING"},
+        },
+        {
+            "cause_id": "HIGH_COST_FILL",
+            "label": "High projected cost / fill drag",
+            "expression": "realistic_cost_r_estimate > 0.20 OR FILL_BAD",
+            "definition": "Fee, spread, and slippage consume too much of the expected R.",
+            "required_fields": ("realistic_cost_r_estimate", "realistic_fill_quality"),
+            "predicate": lambda item, _taxonomy, reset, _path: "HIGH_PROJECTED_COST" in (reset.get("modifiers") or [])
+            or str(item.get("realistic_fill_quality") or "") == "FILL_BAD"
+            or _decimal_or_zero_snapshot(item.get("realistic_cost_r_estimate")) > Decimal("0.20"),
+        },
+        {
+            "cause_id": "FIRST_HOUR_REVERSED",
+            "label": "First hour reversed",
+            "expression": "close_followthrough_1h_r < 0",
+            "definition": "The first closed hour after entry fails to confirm the long path.",
+            "required_fields": ("close_followthrough_1h_r",),
+            "predicate": lambda item, _taxonomy, _reset, _path: (
+                value := _decimal_or_none_snapshot(item.get("close_followthrough_1h_r"))
+            )
+            is not None
+            and value < 0,
+        },
+        {
+            "cause_id": "NO_ACCEPTANCE_MFE",
+            "label": "No acceptance / tiny MFE",
+            "expression": "SL path with MFE < +0.25R",
+            "definition": "The signal never produced enough favorable movement to validate the entry.",
+            "required_fields": ("mfe_r",),
+            "predicate": lambda item, _taxonomy, _reset, path: item.get("result_status") == "SL_HIT"
+            and path == "SL_NO_FOLLOW_THROUGH",
+        },
+        {
+            "cause_id": "DEEP_FAIL_EXIT_PROBLEM",
+            "label": "Deep fail / exit problem",
+            "expression": "SL path after MFE >= +0.75R",
+            "definition": "The trade moved meaningfully in favor but was not harvested before failing.",
+            "required_fields": ("mfe_r",),
+            "predicate": lambda item, _taxonomy, _reset, path: item.get("result_status") == "SL_HIT"
+            and path in {"SL_AFTER_PARTIAL_PROFIT", "SL_AFTER_STRONG_PROFIT"},
+        },
+    )
+
+
+def _mid_long_sl_path_cause_matrix(
+    sl_items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    specs = _mid_long_sl_cause_specs()
+    for path_bucket in (
+        "SL_NO_FOLLOW_THROUGH",
+        "SL_WEAK_FOLLOW_THROUGH",
+        "SL_AFTER_PARTIAL_PROFIT",
+        "SL_AFTER_STRONG_PROFIT",
+    ):
+        path_items = [item for item in sl_items if _mid_long_path_bucket(item) == path_bucket]
+        for spec in specs:
+            count = 0
+            for idx, item in enumerate(path_items):
+                key = str(item.get("signal_id") or idx)
+                taxonomy = taxonomy_by_id[key]
+                reset = reset_by_id[key]
+                if spec["predicate"](item, taxonomy, reset, path_bucket):
+                    count += 1
+            rows.append(
+                {
+                    "path_bucket": path_bucket,
+                    "path_label": _mid_long_path_label(path_bucket),
+                    "cause_id": spec["cause_id"],
+                    "cause_label": spec["label"],
+                    "count": count,
+                    "path_count": len(path_items),
+                    "path_share_pct": _pct_decimal(count, len(path_items)),
+                }
+            )
+    rows.sort(
+        key=lambda row: (
+            _mid_long_path_priority(str(row.get("path_bucket") or "")),
+            int(row.get("count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_sl_anatomy_summary(
+    *,
+    path_rows: list[dict[str, Any]],
+    cause_rows: list[dict[str, Any]],
+    total_sl_count: int,
+    total_tp_count: int,
+) -> dict[str, Any]:
+    largest_path = max(path_rows, key=lambda row: int(row.get("sl_count") or 0), default=None)
+    readable_causes = [row for row in cause_rows if int(row.get("matched_count") or 0) > 0]
+    best_damage = max(
+        readable_causes,
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("retained_realistic_total_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("matched_sl_capture_pct")),
+        ),
+        default=None,
+    )
+    instant_count = sum(int(row.get("sl_count") or 0) for row in path_rows if row.get("path_bucket") == "SL_NO_FOLLOW_THROUGH")
+    deep_count = sum(
+        int(row.get("sl_count") or 0)
+        for row in path_rows
+        if row.get("path_bucket") in {"SL_AFTER_PARTIAL_PROFIT", "SL_AFTER_STRONG_PROFIT"}
+    )
+    return {
+        "read": _mid_long_sl_anatomy_read(best_damage=best_damage, instant_count=instant_count, deep_count=deep_count, total_sl_count=total_sl_count),
+        "largest_sl_path": _mid_long_sl_summary_row(largest_path),
+        "best_damage_tag": _mid_long_sl_summary_row(best_damage),
+        "instant_sl_count": instant_count,
+        "instant_sl_share_pct": _pct_decimal(instant_count, total_sl_count),
+        "deep_fail_count": deep_count,
+        "deep_fail_share_pct": _pct_decimal(deep_count, total_sl_count),
+        "tp_count": total_tp_count,
+        "sl_count": total_sl_count,
+        "next_action": _mid_long_sl_next_action(best_damage=best_damage, instant_count=instant_count, deep_count=deep_count, total_sl_count=total_sl_count),
+    }
+
+
+def _mid_long_sl_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "id": row.get("cause_id") or row.get("path_bucket") or row.get("filter_id"),
+        "label": row.get("label") or row.get("path_label"),
+        "sample_count": row.get("sample_count") or row.get("matched_count"),
+        "sl_count": row.get("sl_count") or row.get("matched_sl_count"),
+        "tp_count": row.get("tp_count") or row.get("matched_tp_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed") or row.get("retained_realistic_total_r_closed"),
+        "retained_realistic_total_r_delta_vs_baseline": row.get("retained_realistic_total_r_delta_vs_baseline"),
+        "read": row.get("read"),
+    }
+
+
+def _mid_long_sl_path_read(path_bucket: str, path_items: list[dict[str, Any]], *, min_sample: int) -> str:
+    if len(path_items) < min_sample:
+        return "SAMPLE_SMALL"
+    if path_bucket == "SL_NO_FOLLOW_THROUGH":
+        return "ENTRY_OR_DIRECTION_DAMAGE"
+    if path_bucket == "SL_WEAK_FOLLOW_THROUGH":
+        return "WEAK_ACCEPTANCE_DAMAGE"
+    if path_bucket in {"SL_AFTER_PARTIAL_PROFIT", "SL_AFTER_STRONG_PROFIT"}:
+        return "EXIT_OR_HARVEST_DAMAGE"
+    return "SL_PATH_DIAGNOSTIC"
+
+
+def _mid_long_sl_cause_read(row: dict[str, Any], *, min_sample: int) -> str:
+    matched = int(row.get("matched_count") or 0)
+    if matched < min_sample:
+        return "SAMPLE_SMALL"
+    sl_capture = _decimal_or_zero_snapshot(row.get("matched_sl_capture_pct"))
+    tp_sacrifice = _decimal_or_zero_snapshot(row.get("matched_tp_sacrifice_pct"))
+    total_delta = _decimal_or_zero_snapshot(row.get("retained_realistic_total_r_delta_vs_baseline"))
+    if sl_capture >= tp_sacrifice + Decimal("10") and total_delta > Decimal("5"):
+        return "DAMAGE_TAG_CANDIDATE"
+    if tp_sacrifice >= sl_capture:
+        return "CUTS_TOO_MUCH_TP"
+    if total_delta > 0:
+        return "REDUCES_DAMAGE_BUT_WEAK"
+    return "NO_CLEAR_FILTER"
+
+
+def _mid_long_sl_cause_priority(read: str) -> int:
+    return {
+        "DAMAGE_TAG_CANDIDATE": 5,
+        "REDUCES_DAMAGE_BUT_WEAK": 4,
+        "NO_CLEAR_FILTER": 3,
+        "CUTS_TOO_MUCH_TP": 2,
+        "SAMPLE_SMALL": 1,
+    }.get(read, 0)
+
+
+def _mid_long_sl_anatomy_read(
+    *,
+    best_damage: dict[str, Any] | None,
+    instant_count: int,
+    deep_count: int,
+    total_sl_count: int,
+) -> str:
+    if total_sl_count <= 0:
+        return "NO_SL_SAMPLE"
+    if best_damage and best_damage.get("read") == "DAMAGE_TAG_CANDIDATE":
+        return "HAS_DAMAGE_TAG_CANDIDATE"
+    instant_share = Decimal(instant_count) / Decimal(total_sl_count)
+    deep_share = Decimal(deep_count) / Decimal(total_sl_count)
+    if instant_share >= Decimal("0.35"):
+        return "ENTRY_DEFINITION_DAMAGE_DOMINANT"
+    if deep_share >= Decimal("0.25"):
+        return "EXIT_RESEARCH_REQUIRED"
+    return "SL_CAUSES_MIXED"
+
+
+def _mid_long_sl_next_action(
+    *,
+    best_damage: dict[str, Any] | None,
+    instant_count: int,
+    deep_count: int,
+    total_sl_count: int,
+) -> str:
+    read = _mid_long_sl_anatomy_read(
+        best_damage=best_damage,
+        instant_count=instant_count,
+        deep_count=deep_count,
+        total_sl_count=total_sl_count,
+    )
+    if read == "HAS_DAMAGE_TAG_CANDIDATE" and best_damage:
+        return f"Validate {best_damage.get('cause_id')} chronologically before any shadow rule."
+    if read == "ENTRY_DEFINITION_DAMAGE_DOMINANT":
+        return "Focus on pre-entry definition: structure, flow, crowding, and room filters before dynamic exit."
+    if read == "EXIT_RESEARCH_REQUIRED":
+        return "Study harvest/protection logic only for rows that first moved meaningfully in favor."
+    return "Compare cause overlap and wait for a cleaner candidate before changing MID_LONG."
+
+
+def _mid_long_decimal_ratio(numerator: Any, denominator: Any) -> Decimal | None:
+    parsed_num = _decimal_or_none_snapshot(numerator)
+    parsed_den = _decimal_or_none_snapshot(denominator)
+    if parsed_num is None or parsed_den is None or parsed_den == 0:
+        return None
+    return parsed_num / parsed_den
 
 
 MID_LONG_RESET_PRIMARY_DEFINITIONS: dict[str, str] = {

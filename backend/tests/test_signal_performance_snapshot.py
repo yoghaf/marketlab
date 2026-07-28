@@ -227,6 +227,33 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "damage_isolation" in baseline["definition_audit"]
     assert len(baseline["definition_audit"]["damage_isolation"]["experiment_rows"]) == 6
     assert "mid_range_interactions" in baseline["definition_audit"]["damage_isolation"]
+    assert "sl_anatomy_v2" in baseline["definition_audit"]
+    sl_anatomy = baseline["definition_audit"]["sl_anatomy_v2"]
+    assert sl_anatomy["scope"] == "MID_LONG 1h SL Anatomy v2"
+    assert {row["path_bucket"] for row in sl_anatomy["path_rows"]} == {
+        "SL_NO_FOLLOW_THROUGH",
+        "SL_WEAK_FOLLOW_THROUGH",
+        "SL_AFTER_PARTIAL_PROFIT",
+        "SL_AFTER_STRONG_PROFIT",
+    }
+    assert {row["cause_id"] for row in sl_anatomy["cause_rows"]} >= {
+        "NO_STRUCTURE_OR_UNCLASSIFIED",
+        "LATE_OR_EXTENDED_CHASE",
+        "LOW_ROOM_OR_RESISTANCE_CONFLICT",
+        "WEAK_OR_MIXED_FLOW",
+        "CROWDED_LONG",
+        "HIGH_COST_FILL",
+        "FIRST_HOUR_REVERSED",
+        "NO_ACCEPTANCE_MFE",
+        "DEEP_FAIL_EXIT_PROBLEM",
+    }
+    assert sl_anatomy["summary"]["read"] in {
+        "NO_SL_SAMPLE",
+        "HAS_DAMAGE_TAG_CANDIDATE",
+        "ENTRY_DEFINITION_DAMAGE_DOMINANT",
+        "EXIT_RESEARCH_REQUIRED",
+        "SL_CAUSES_MIXED",
+    }
     assert "definition_reset_lab" in baseline["definition_audit"]
     reset_lab = baseline["definition_audit"]["definition_reset_lab"]
     assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V2"

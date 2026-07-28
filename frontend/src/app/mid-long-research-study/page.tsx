@@ -37,6 +37,10 @@ import {
   MidLongResetFamilyModifierRow,
   MidLongResetModifierRow,
   MidLongResetPrimaryRow,
+  MidLongSlAnatomyV2,
+  MidLongSlCauseRow,
+  MidLongSlPathCauseRow,
+  MidLongSlPathRow,
   MidLongSubsetDimensionRow,
   MidLongSubSetupSplitLab,
   MidLongSubSetupRow,
@@ -175,9 +179,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.sl_anatomy_v2 && (
+            <SectionCard
+              title="3. SL Anatomy v2"
+              description="Peta penyebab SL: bucket jalur gagal, cause pre-entry yang menempel, dan simulasi retained cohort kalau cause itu dihindari. Semua masih diagnostic-only."
+            >
+              <SlAnatomyPanel anatomy={audit.sl_anatomy_v2} />
+            </SectionCard>
+          )}
+
           {audit.sub_setup_split_lab && (
             <SectionCard
-              title="3. Legacy Sub-Setup Split Lab"
+              title="4. Legacy Sub-Setup Split Lab"
               description="MID_LONG 1h dipecah menjadi sub-label: breakout proxy, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
             >
               <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
@@ -186,7 +199,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.breakout_accepted_deep_dive && (
             <SectionCard
-              title="4. Breakout-State Diagnostics"
+              title="5. Breakout-State Diagnostics"
               description="Audit khusus BREAKOUT_PROXY_CANDIDATE. Fokusnya pre-entry zone: penetrasi close, body terhadap zona, wick, umur zona, jarak entry, dan ruang ke resistance berikutnya."
             >
               <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
@@ -195,7 +208,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.damage_isolation && (
             <SectionCard
-              title="5. Damage Isolation"
+              title="6. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -500,6 +513,195 @@ function ReverseShadowTable({ rows }: { rows: MidLongReverseShadowRow[] }) {
               </td>
               <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
               <td className="max-w-80"><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SlAnatomyPanel({ anatomy }: { anatomy: MidLongSlAnatomyV2 }) {
+  const summary = anatomy.summary;
+  const largest = summary.largest_sl_path;
+  const best = summary.best_damage_tag;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(summary.read)} helper={summary.next_action} />
+        <Info label="SL sample" value={`${anatomy.sl_count}`} helper={`TP ${anatomy.tp_count} | SL share ${formatPct(anatomy.sl_share_pct)}`} />
+        <Info label="Largest SL path" value={humanFlag(largest?.id || "-")} helper={`${largest?.sl_count || 0} SL`} />
+        <Info label="Best damage tag" value={humanFlag(best?.id || "-")} helper={`${fmtSigned(best?.retained_realistic_total_r_delta_vs_baseline)}R retained delta`} />
+        <Info label="Instant SL" value={`${summary.instant_sl_count}`} helper={formatPct(summary.instant_sl_share_pct)} />
+        <Info label="Deep fail" value={`${summary.deep_fail_count}`} helper={formatPct(summary.deep_fail_share_pct)} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">SL path buckets</div>
+            <div className="text-sm leading-6 text-slate-600">Jalur SL: langsung gagal, follow-through lemah, sempat profit lalu gagal, atau deep fail.</div>
+          </div>
+          <SlPathTable rows={anatomy.path_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Path x cause overlap</div>
+            <div className="text-sm leading-6 text-slate-600">Peta cause mana yang paling banyak muncul di tiap bucket SL.</div>
+          </div>
+          <SlPathCauseMatrix rows={anatomy.path_cause_matrix} />
+        </div>
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+          Cause row bersifat overlap. Kolom “retained R” adalah simulasi diagnostik: hasil jika row dengan cause itu dibuang dari pembacaan, bukan rule live.
+        </div>
+      </div>
+
+      <SlCauseTable rows={anatomy.cause_rows} />
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {anatomy.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SlPathTable({ rows }: { rows: MidLongSlPathRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="SL path kosong" detail="Belum ada SL path untuk audit ini." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>SL</th>
+            <th>Realistic R</th>
+            <th>MFE / MAE</th>
+            <th>Cost / decay</th>
+            <th>Family / flow</th>
+            <th>Modifiers</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.path_bucket}>
+              <td className="min-w-72">
+                <div className="font-bold">{humanFlag(row.path_bucket)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.sl_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.sl_share_of_all_sl_pct)} of SL</div>
+              </td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>
+                <div>MFE {fmtSigned(row.median_mfe_r)}R</div>
+                <div className="text-xs text-slate-500">MAE {fmtSigned(row.median_mae_r)}R</div>
+              </td>
+              <td>
+                <div>Cost {fmtNumber(row.median_cost_r)}R</div>
+                <div className="text-xs text-slate-500">Decay {fmtSigned(row.median_wick_decay_r)}R | 1h {fmtSigned(row.median_followthrough_1h_r)}R</div>
+              </td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">
+                <div>{pathMixSummary(row.primary_family_mix)}</div>
+                <div className="mt-1">{pathMixSummary(row.flow_mix)}</div>
+              </td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.modifier_mix)}</td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SlCauseTable({ rows }: { rows: MidLongSlCauseRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="SL cause kosong" detail="Belum ada cause map untuk audit ini." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cause</th>
+            <th>Matched</th>
+            <th>Matched TP / SL</th>
+            <th>SL capture / TP sacrificed</th>
+            <th>Matched R</th>
+            <th>Retained TP / SL</th>
+            <th>Retained R / delta</th>
+            <th>Top symbol</th>
+            <th>Path / family mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.cause_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.cause_id)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.definition}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.matched_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.matched_share_pct)} sample</div>
+              </td>
+              <td>{row.matched_tp_count} / {row.matched_sl_count}</td>
+              <td>
+                <div>SL {formatPct(row.matched_sl_capture_pct)}</div>
+                <div className="text-xs text-slate-500">TP {formatPct(row.matched_tp_sacrifice_pct)} | ratio {fmtNumber(row.sl_to_tp_capture_ratio)}</div>
+              </td>
+              <td className={toneClass(row.matched_realistic_total_r_closed)}>
+                <div>{fmtSigned(row.matched_realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.matched_realistic_avg_r_closed)}R avg</div>
+              </td>
+              <td>{row.retained_tp_count || 0} / {row.retained_sl_count || 0}</td>
+              <td>
+                <div className={toneClass(row.retained_realistic_total_r_closed)}>{fmtSigned(row.retained_realistic_total_r_closed)}R</div>
+                <div className={`text-xs ${toneClass(row.retained_realistic_total_r_delta_vs_baseline)}`}>{fmtSigned(row.retained_realistic_total_r_delta_vs_baseline)}R delta</div>
+              </td>
+              <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
+              <td className="max-w-96 text-xs leading-5 text-slate-600">
+                <div>{pathMixSummary(row.matched_sl_path_mix)}</div>
+                <div className="mt-1">{pathMixSummary(row.matched_primary_family_mix)}</div>
+                <div className="mt-1">{pathMixSummary(row.matched_flow_mix)}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SlPathCauseMatrix({ rows }: { rows: MidLongSlPathCauseRow[] }) {
+  const visible = rows.filter((row) => Number(row.count || 0) > 0).slice(0, 24);
+  if (!visible.length) return <div className="p-4"><EmptyState title="Overlap kosong" detail="Belum ada cause overlap yang terdeteksi." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>SL path</th>
+            <th>Cause</th>
+            <th>Count</th>
+            <th>Share in path</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((row) => (
+            <tr key={`${row.path_bucket}-${row.cause_id}`}>
+              <td><StatusBadge value={humanFlag(row.path_bucket)} /></td>
+              <td className="max-w-80 text-sm leading-5 text-slate-700">{humanFlag(row.cause_id)}</td>
+              <td className="font-bold">{row.count} / {row.path_count}</td>
+              <td>{formatPct(row.path_share_pct)}</td>
             </tr>
           ))}
         </tbody>
