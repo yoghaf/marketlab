@@ -22,6 +22,7 @@ import {
   MidLongBreakoutObservablePathRow,
   MidLongBreakoutShadowArmRow,
   MidLongDefinitionLayerRow,
+  MidLongDefinitionResetLab,
   MidLongDraftPreviewRow,
   MidLongDamageExperimentRow,
   MidLongEconomicRow,
@@ -29,6 +30,10 @@ import {
   MidLongGeometryThresholdRow,
   MidLongIntegrityAudit,
   MidLongPathDecisionRow,
+  MidLongResetDecisionRow,
+  MidLongResetFamilyModifierRow,
+  MidLongResetModifierRow,
+  MidLongResetPrimaryRow,
   MidLongSubsetDimensionRow,
   MidLongSubSetupSplitLab,
   MidLongSubSetupRow,
@@ -149,9 +154,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.definition_reset_lab && (
+            <SectionCard
+              title="1. Definition Reset v1"
+              description="Taxonomy baru: primary family mutually exclusive, modifier boleh overlap, dan derived decision hanya untuk riset. Ini menjawab apakah MID_LONG V2 terlalu campur."
+            >
+              <DefinitionResetPanel lab={audit.definition_reset_lab} />
+            </SectionCard>
+          )}
+
           {audit.sub_setup_split_lab && (
             <SectionCard
-              title="1. Sub-Setup Split Lab"
+              title="2. Legacy Sub-Setup Split Lab"
               description="MID_LONG 1h dipecah menjadi sub-label: breakout proxy, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
             >
               <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
@@ -160,7 +174,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.breakout_accepted_deep_dive && (
             <SectionCard
-              title="2. Breakout-State Diagnostics"
+              title="3. Breakout-State Diagnostics"
               description="Audit khusus BREAKOUT_PROXY_CANDIDATE. Fokusnya pre-entry zone: penetrasi close, body terhadap zona, wick, umur zona, jarak entry, dan ruang ke resistance berikutnya."
             >
               <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
@@ -169,7 +183,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.damage_isolation && (
             <SectionCard
-              title="3. Damage Isolation"
+              title="4. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -286,6 +300,230 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function DefinitionResetPanel({ lab }: { lab: MidLongDefinitionResetLab }) {
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Taxonomy" value={lab.taxonomy_version} helper="Read-only, belum rule live." />
+        <Info label="Coverage" value={formatPct(lab.coverage.classification_coverage_pct)} helper={`${lab.coverage.classified_rows}/${lab.coverage.total_rows} classified`} />
+        <Info label="Unclassified" value={`${lab.coverage.unclassified_rows}`} helper={formatPct(lab.coverage.unclassified_pct)} />
+        <Info label="Multi modifier" value={`${lab.coverage.multi_modifier_rows}`} helper={formatPct(lab.coverage.multi_modifier_pct)} />
+        <Info label="Positive family" value={`${lab.summary.positive_candidate_family_count}`} helper="Primary candidate family with positive read." />
+        <Info label="Read" value={humanFlag(lab.summary.read)} helper={lab.summary.next_action} />
+      </div>
+
+      <div className="grid gap-3 border-b border-line p-4 lg:grid-cols-2">
+        <ResetSummaryCard title="Best candidate family" row={lab.summary.best_candidate_family} />
+        <ResetSummaryCard title="Worst reject decision" row={lab.summary.worst_reject_decision} />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="text-sm font-bold text-ink">Primary family, modifier, decision</div>
+        <div className="mt-1 text-sm leading-6 text-slate-600">
+          Primary family harus satu saja per signal. Modifier boleh overlap. Derived decision cuma triage riset, bukan gate Signal Factory.
+        </div>
+      </div>
+
+      <ResetPrimaryTable rows={lab.primary_family_rows} />
+
+      <div className="grid gap-4 border-t border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Derived decision rows</div>
+            <div className="text-sm text-slate-600">ELIGIBLE/REJECT/WAIT draft. Semua masih read-only.</div>
+          </div>
+          <ResetDecisionTable rows={lab.derived_decision_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Modifier rows</div>
+            <div className="text-sm text-slate-600">Modifier adalah tag risiko overlap, bukan subtype utama.</div>
+          </div>
+          <ResetModifierTable rows={lab.modifier_rows} />
+        </div>
+      </div>
+
+      <div className="border-t border-line">
+        <div className="border-b border-line p-4">
+          <div className="font-bold">Family x modifier damage map</div>
+          <div className="text-sm leading-6 text-slate-600">Sel ini menjawab modifier mana yang merusak family tertentu. Prioritaskan readable row dan sample cukup.</div>
+        </div>
+        <ResetFamilyModifierTable rows={lab.family_modifier_rows} />
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {lab.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResetSummaryCard({ title, row }: { title: string; row?: Record<string, string | number | null | undefined> | null }) {
+  if (!row) {
+    return <div className="rounded-md border border-line bg-white p-4"><Info label={title} value="-" helper="Belum tersedia" /></div>;
+  }
+  const label = row.primary_family || row.decision || "-";
+  return (
+    <div className="rounded-md border border-line bg-white p-4">
+      <div className="text-xs font-semibold uppercase text-slate-500">{title}</div>
+      <div className="mt-1 text-xl font-black text-ink">{humanFlag(String(label))}</div>
+      <div className="mt-2 grid gap-2 text-sm sm:grid-cols-4">
+        <div>N <b>{row.closed_count || 0}</b></div>
+        <div>TP/SL <b>{row.tp_count || 0}/{row.sl_count || 0}</b></div>
+        <div className={toneClass(row.realistic_total_r_closed)}>R <b>{fmtSigned(row.realistic_total_r_closed)}R</b></div>
+        <div>Top <b>{row.top_symbol || "-"}</b></div>
+      </div>
+    </div>
+  );
+}
+
+function ResetPrimaryTable({ rows }: { rows: MidLongResetPrimaryRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Primary family kosong" detail="Definition Reset belum tersedia." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Primary family</th>
+            <th>Role</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg delta</th>
+            <th>Modifiers</th>
+            <th>Decisions</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.primary_family)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.definition}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.family_role)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.modifier_mix)}</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.decision_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ResetDecisionTable({ rows }: { rows: MidLongResetDecisionRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Decision</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Family mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72 font-bold">{humanFlag(row.decision)}</td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.primary_family_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ResetModifierTable({ rows }: { rows: MidLongResetModifierRow[] }) {
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Modifier</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Family mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72">
+                <div className="font-bold">{humanFlag(row.modifier)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.definition}</div>
+              </td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.primary_family_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ResetFamilyModifierTable({ rows }: { rows: MidLongResetFamilyModifierRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Family x modifier kosong" detail="Belum ada overlap modifier." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Family x modifier</th>
+            <th>Readable</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg R</th>
+            <th>Path mix</th>
+            <th>Top symbol</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 24).map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.primary_family)}</div>
+                <div className="text-xs text-slate-500">{humanFlag(row.modifier)}</div>
+              </td>
+              <td><StatusBadge value={row.is_readable ? "Readable" : "Small sample"} /></td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.realistic_avg_r_closed)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
+              <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

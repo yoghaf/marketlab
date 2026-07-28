@@ -227,6 +227,14 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "damage_isolation" in baseline["definition_audit"]
     assert len(baseline["definition_audit"]["damage_isolation"]["experiment_rows"]) == 6
     assert "mid_range_interactions" in baseline["definition_audit"]["damage_isolation"]
+    assert "definition_reset_lab" in baseline["definition_audit"]
+    reset_lab = baseline["definition_audit"]["definition_reset_lab"]
+    assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V1"
+    assert "primary_family_rows" in reset_lab
+    assert "modifier_rows" in reset_lab
+    assert "derived_decision_rows" in reset_lab
+    assert "family_modifier_rows" in reset_lab
+    assert reset_lab["coverage"]["total_rows"] == 1
     assert "sub_setup_split_lab" in baseline["definition_audit"]
     assert "rows" in baseline["definition_audit"]["sub_setup_split_lab"]
     assert baseline["definition_audit"]["sub_setup_split_lab"]["summary"]["read"] in {

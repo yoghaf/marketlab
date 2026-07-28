@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-12",
+    title: "MID_LONG Definition Reset v1",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan Definition Reset Lab agar MID_LONG 1h tidak lagi dibaca sebagai satu label besar yang campur breakout, retest, pullback, chase, dan crowded risk.",
+    changes: [
+      "Endpoint MID_LONG 1h sekarang menampilkan definition_reset_lab dengan primary family yang mutually exclusive: BREAKOUT_CONTINUATION_LONG, SUPPORT_RETEST_LONG, PULLBACK_LONG, OTHER_STRUCTURED_LONG, dan UNCLASSIFIED_MID_LONG.",
+      "Modifier dibuat overlap dan tidak dipaksa menjadi subtype: LATE_CHASE, HIGH_EXTENSION, LOW_REMAINING_ROOM, WEAK_INITIATIVE_FLOW, HIGH_CROWDING, HIGH_PROJECTED_COST, dan STRUCTURE_CONFLICT.",
+      "Derived decision dibuat sebagai triage riset: ELIGIBLE_BREAKOUT_DRAFT, ELIGIBLE_RETEST_DRAFT, ELIGIBLE_PULLBACK_DRAFT, REJECT_CHASE_DRAFT, REJECT_CROWDED_CONFLICT_DRAFT, REJECT_COST_DRAFT, dan WAIT_UNCLASSIFIED.",
+      "Halaman /mid-long-research-study sekarang menampilkan coverage taxonomy, best family, worst reject decision, primary family rows, modifier rows, derived decision rows, dan family x modifier damage map.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang punya cara baca yang lebih bersih: keluarga setup dipisah dari modifier risiko, sehingga kita bisa membuktikan apakah ada subtype long yang masih hidup atau seluruh MID_LONG 1h perlu dibekukan.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Definition Reset Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-11",
     title: "MID_LONG V2.1 Shadow Arm Preview",
     status: "LIVE",

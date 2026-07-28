@@ -3820,6 +3820,7 @@ export type MidLongDefinitionAudit = {
   taxonomy_study?: MidLongTaxonomyStudy;
   integrity_audit?: MidLongIntegrityAudit;
   damage_isolation?: MidLongDamageIsolation;
+  definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
   breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
   verdict: {
@@ -3829,6 +3830,84 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongDefinitionResetLab = {
+  scope: string;
+  method: string;
+  taxonomy_version: string;
+  primary_family_order: string[];
+  modifier_order: string[];
+  primary_definitions: Record<string, string>;
+  modifier_definitions: Record<string, string>;
+  coverage: {
+    total_rows: number;
+    classified_rows: number;
+    classification_coverage_pct?: string | number | null;
+    unclassified_rows: number;
+    unclassified_pct?: string | number | null;
+    multi_modifier_rows: number;
+    multi_modifier_pct?: string | number | null;
+    modifier_count_distribution: Record<string, number>;
+  };
+  primary_family_rows: MidLongResetPrimaryRow[];
+  modifier_rows: MidLongResetModifierRow[];
+  derived_decision_rows: MidLongResetDecisionRow[];
+  family_modifier_rows: MidLongResetFamilyModifierRow[];
+  summary: {
+    best_candidate_family?: MidLongResetSummaryRow | null;
+    worst_reject_decision?: MidLongResetSummaryRow | null;
+    positive_candidate_family_count: number;
+    read: string;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongResetSummaryRow = {
+  primary_family?: string | null;
+  decision?: string | null;
+  closed_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidLongResetPrimaryRow = MidLongEntryCombinationRow & {
+  primary_family: string;
+  definition: string;
+  decision_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
+  path_mix: Record<string, number>;
+  family_role: string;
+  read: string;
+};
+
+export type MidLongResetModifierRow = MidLongEntryCombinationRow & {
+  modifier: string;
+  definition: string;
+  primary_family_mix: Record<string, number>;
+  path_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongResetDecisionRow = MidLongEntryCombinationRow & {
+  decision: string;
+  primary_family_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
+  path_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongResetFamilyModifierRow = MidLongEntryCombinationRow & {
+  primary_family: string;
+  modifier: string;
+  path_mix: Record<string, number>;
+  is_readable: boolean;
 };
 
 export type MidLongSubSetupSplitLab = {

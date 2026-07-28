@@ -1349,6 +1349,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    definition_reset = _mid_long_definition_reset_lab(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     sub_setup = _mid_long_sub_setup_split_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1383,6 +1389,7 @@ def _mid_long_definition_audit(
         "taxonomy_study": taxonomy,
         "integrity_audit": integrity,
         "damage_isolation": damage,
+        "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
         "breakout_accepted_deep_dive": breakout_deep_dive,
         "verdict": verdict,
@@ -2575,6 +2582,546 @@ def _mid_long_damage_isolation(
         ],
         "read": _mid_long_damage_isolation_read(rows),
     }
+
+
+MID_LONG_RESET_PRIMARY_DEFINITIONS: dict[str, str] = {
+    "BREAKOUT_CONTINUATION_LONG": "Close-accepted breakout family. Entry is tied to a prior resistance break, not just a wick above resistance.",
+    "SUPPORT_RETEST_LONG": "Role-reversal or retest family. Entry follows a support/retest hold instead of the original breakout bar.",
+    "PULLBACK_LONG": "Pullback/support-bounce family. Entry is anchored to a pullback/support hold without requiring a fresh role-reversal zone.",
+    "OTHER_STRUCTURED_LONG": "Structure exists, but it does not cleanly match breakout, retest, or pullback definitions.",
+    "UNCLASSIFIED_MID_LONG": "Structure is unavailable, mid-range, ambiguous, or missing required family evidence.",
+}
+
+
+MID_LONG_RESET_MODIFIER_DEFINITIONS: dict[str, str] = {
+    "LATE_CHASE": "Entry timing appears late relative to ATR-extension or breakout freshness.",
+    "HIGH_EXTENSION": "Entry is in the high/extreme ATR-extension bucket.",
+    "LOW_REMAINING_ROOM": "Room to next resistance is low, so the target may be pushed into nearby overhead supply.",
+    "WEAK_INITIATIVE_FLOW": "Volume, taker buy, and OI do not confirm long initiative strongly.",
+    "HIGH_CROWDING": "Funding/OI/positioning are elevated enough to treat the long as crowded risk.",
+    "HIGH_PROJECTED_COST": "Realistic cost/fill drag is high enough to matter.",
+    "STRUCTURE_CONFLICT": "Structure state conflicts with a clean long continuation read.",
+}
+
+
+def _mid_long_definition_reset_lab(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(item, taxonomy_by_id[str(item.get("signal_id") or idx)])
+        for idx, item in enumerate(items)
+    }
+    primary_rows = _mid_long_reset_primary_rows(
+        items,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    modifier_rows = _mid_long_reset_modifier_rows(
+        items,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    decision_rows = _mid_long_reset_decision_rows(
+        items,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    family_modifier_rows = _mid_long_reset_family_modifier_rows(
+        items,
+        reset_by_id=reset_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    coverage = _mid_long_reset_coverage(items, reset_by_id=reset_by_id)
+    return {
+        "scope": "MID_LONG 1h Definition Reset Lab, read-only",
+        "method": (
+            "Primary family is mutually exclusive; modifiers are overlapping pre-entry risk tags; "
+            "derived decision combines both for research triage only."
+        ),
+        "taxonomy_version": "MID_LONG_DEFINITION_RESET_V1",
+        "primary_family_order": [
+            "SUPPORT_RETEST_LONG",
+            "BREAKOUT_CONTINUATION_LONG",
+            "PULLBACK_LONG",
+            "OTHER_STRUCTURED_LONG",
+            "UNCLASSIFIED_MID_LONG",
+        ],
+        "modifier_order": list(MID_LONG_RESET_MODIFIER_DEFINITIONS),
+        "primary_definitions": MID_LONG_RESET_PRIMARY_DEFINITIONS,
+        "modifier_definitions": MID_LONG_RESET_MODIFIER_DEFINITIONS,
+        "coverage": coverage,
+        "primary_family_rows": primary_rows,
+        "modifier_rows": modifier_rows,
+        "derived_decision_rows": decision_rows,
+        "family_modifier_rows": family_modifier_rows,
+        "summary": _mid_long_reset_summary(
+            primary_rows=primary_rows,
+            modifier_rows=modifier_rows,
+            decision_rows=decision_rows,
+            coverage=coverage,
+            min_sample=min_sample,
+        ),
+        "guardrails": [
+            "Primary family labels are pre-entry taxonomy, not live Signal Factory rules.",
+            "Modifiers can overlap and must not be read as standalone rejection gates.",
+            "Derived decisions are research triage only; they do not change scanner or TP/SL behavior.",
+            "If every family remains negative on validation, MID_LONG 1h should stay research-only instead of adding more filters.",
+        ],
+    }
+
+
+def _mid_long_reset_state(item: dict[str, Any], taxonomy: dict[str, Any]) -> dict[str, Any]:
+    primary = _mid_long_reset_primary_family(item, taxonomy)
+    modifiers = _mid_long_reset_modifiers(item, taxonomy)
+    return {
+        "primary_family": primary,
+        "modifiers": modifiers,
+        "derived_decision": _mid_long_reset_derived_decision(primary, modifiers),
+    }
+
+
+def _mid_long_reset_primary_family(item: dict[str, Any], taxonomy: dict[str, Any]) -> str:
+    setup = str(taxonomy.get("setup_family") or "UNCLASSIFIED")
+    breakout = str(taxonomy.get("breakout_state_pre_entry") or "")
+    retest = str(taxonomy.get("retest_quality_pre_entry") or "")
+    structure = str(taxonomy.get("structure_status") or "")
+    if structure == "UNAVAILABLE" or setup in {"UNCLASSIFIED", "MID_RANGE"}:
+        return "UNCLASSIFIED_MID_LONG"
+    if setup == "RETEST" and retest in {"RETEST_HOLD_STRONG", "RETEST_HOLD_IN_ZONE"}:
+        return "SUPPORT_RETEST_LONG"
+    if setup == "BREAKOUT_ATTEMPT" and breakout == "CLOSE_ACCEPTED":
+        return "BREAKOUT_CONTINUATION_LONG"
+    if setup == "SUPPORT_BOUNCE":
+        return "PULLBACK_LONG"
+    if structure in {"AVAILABLE", "PARTIAL"}:
+        return "OTHER_STRUCTURED_LONG"
+    return "UNCLASSIFIED_MID_LONG"
+
+
+def _mid_long_reset_modifiers(item: dict[str, Any], taxonomy: dict[str, Any]) -> list[str]:
+    modifiers: list[str] = []
+    extension_bucket = str(taxonomy.get("extension_bucket") or "")
+    timing = str(taxonomy.get("entry_timing_bucket") or "")
+    room = str(taxonomy.get("room_to_resistance_bucket") or "")
+    flow = str(taxonomy.get("flow_state_provisional") or "")
+    flow_regime = str(taxonomy.get("flow_regime") or "")
+    crowding = str(taxonomy.get("crowding_bucket") or "")
+    cost = str(taxonomy.get("projected_cost_bucket") or "")
+    status = str(item.get("structure_zone_status") or "").upper()
+    context = str(item.get("structure_zone_context_status") or "").upper()
+    primary = str(item.get("structure_zone_primary_state") or "").upper()
+
+    if timing == "LATE_CHASE":
+        modifiers.append("LATE_CHASE")
+    if extension_bucket in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}:
+        modifiers.append("HIGH_EXTENSION")
+    if room == "LOW_ROOM":
+        modifiers.append("LOW_REMAINING_ROOM")
+    if flow == "WEAK" or flow_regime in {"PRICE_UP_OI_UP_WEAK_BUY", "PRICE_NOT_UP_OI_UP_CROWDING_RISK"}:
+        modifiers.append("WEAK_INITIATIVE_FLOW")
+    if crowding in {"HIGH_CROWDING", "EXTREME_CROWDING"}:
+        modifiers.append("HIGH_CROWDING")
+    if cost in {"HIGH_COST", "EXTREME_COST"}:
+        modifiers.append("HIGH_PROJECTED_COST")
+    if "CONFLICT" in status or "CONFLICT" in context or ("RESISTANCE" in primary and "BREAK" not in primary):
+        modifiers.append("STRUCTURE_CONFLICT")
+    return modifiers
+
+
+def _mid_long_reset_derived_decision(primary: str, modifiers: list[str]) -> str:
+    modifier_set = set(modifiers)
+    if primary == "UNCLASSIFIED_MID_LONG":
+        return "WAIT_UNCLASSIFIED"
+    if "HIGH_PROJECTED_COST" in modifier_set:
+        return "REJECT_COST_DRAFT"
+    if "LATE_CHASE" in modifier_set and (
+        "LOW_REMAINING_ROOM" in modifier_set or "HIGH_EXTENSION" in modifier_set
+    ):
+        return "REJECT_CHASE_DRAFT"
+    if "HIGH_CROWDING" in modifier_set and modifier_set.intersection(
+        {"HIGH_EXTENSION", "LOW_REMAINING_ROOM", "WEAK_INITIATIVE_FLOW", "STRUCTURE_CONFLICT"}
+    ):
+        return "REJECT_CROWDED_CONFLICT_DRAFT"
+    if primary == "BREAKOUT_CONTINUATION_LONG":
+        return "ELIGIBLE_BREAKOUT_DRAFT"
+    if primary == "SUPPORT_RETEST_LONG":
+        return "ELIGIBLE_RETEST_DRAFT"
+    if primary == "PULLBACK_LONG":
+        return "ELIGIBLE_PULLBACK_DRAFT"
+    return "WAIT_UNCLASSIFIED"
+
+
+def _mid_long_reset_primary_rows(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        state = reset_by_id[str(item.get("signal_id") or idx)]
+        grouped[str(state["primary_family"])].append(item)
+    rows: list[dict[str, Any]] = []
+    for family in MID_LONG_RESET_PRIMARY_DEFINITIONS:
+        family_items = grouped.get(family, [])
+        row = _mid_long_perf_row(
+            f"RESET_PRIMARY:{family}",
+            family,
+            f"primary_family == {family}",
+            family_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "primary_family": family,
+                "definition": MID_LONG_RESET_PRIMARY_DEFINITIONS[family],
+                "decision_mix": _mid_long_reset_mix(
+                    family_items,
+                    reset_by_id=reset_by_id,
+                    field="derived_decision",
+                ),
+                "modifier_mix": _mid_long_reset_modifier_mix(family_items, reset_by_id=reset_by_id),
+                "path_mix": _mid_long_path_mix(family_items),
+                "family_role": _mid_long_reset_family_role(family),
+                "read": _mid_long_reset_primary_read(row, family=family, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_reset_modifier_rows(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for modifier, definition in MID_LONG_RESET_MODIFIER_DEFINITIONS.items():
+        modifier_items = [
+            item
+            for idx, item in enumerate(items)
+            if modifier in reset_by_id[str(item.get("signal_id") or idx)]["modifiers"]
+        ]
+        row = _mid_long_perf_row(
+            f"RESET_MODIFIER:{modifier}",
+            modifier,
+            f"{modifier} in modifiers",
+            modifier_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "modifier": modifier,
+                "definition": definition,
+                "primary_family_mix": _mid_long_reset_mix(
+                    modifier_items,
+                    reset_by_id=reset_by_id,
+                    field="primary_family",
+                ),
+                "path_mix": _mid_long_path_mix(modifier_items),
+                "read": _mid_long_reset_modifier_read(row, modifier=modifier, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        )
+    )
+    return rows
+
+
+def _mid_long_reset_decision_rows(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        state = reset_by_id[str(item.get("signal_id") or idx)]
+        grouped[str(state["derived_decision"])].append(item)
+    decision_order = (
+        "ELIGIBLE_BREAKOUT_DRAFT",
+        "ELIGIBLE_RETEST_DRAFT",
+        "ELIGIBLE_PULLBACK_DRAFT",
+        "REJECT_CHASE_DRAFT",
+        "REJECT_CROWDED_CONFLICT_DRAFT",
+        "REJECT_COST_DRAFT",
+        "WAIT_UNCLASSIFIED",
+    )
+    rows: list[dict[str, Any]] = []
+    for decision in decision_order:
+        decision_items = grouped.get(decision, [])
+        row = _mid_long_perf_row(
+            f"RESET_DECISION:{decision}",
+            decision,
+            f"derived_decision == {decision}",
+            decision_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "decision": decision,
+                "primary_family_mix": _mid_long_reset_mix(
+                    decision_items,
+                    reset_by_id=reset_by_id,
+                    field="primary_family",
+                ),
+                "modifier_mix": _mid_long_reset_modifier_mix(decision_items, reset_by_id=reset_by_id),
+                "path_mix": _mid_long_path_mix(decision_items),
+                "read": _mid_long_reset_decision_read(row, decision=decision, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_reset_family_modifier_rows(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for family in MID_LONG_RESET_PRIMARY_DEFINITIONS:
+        for modifier in MID_LONG_RESET_MODIFIER_DEFINITIONS:
+            cell_items = [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] == family
+                and modifier in reset_by_id[str(item.get("signal_id") or idx)]["modifiers"]
+            ]
+            if not cell_items:
+                continue
+            row = _mid_long_perf_row(
+                f"RESET_FAMILY_MODIFIER:{family}:{modifier}",
+                f"{family} x {modifier}",
+                f"primary_family == {family} AND modifier == {modifier}",
+                cell_items,
+                baseline=baseline,
+                required_fields=(),
+                min_sample=min_sample,
+            )
+            row.update(
+                {
+                    "primary_family": family,
+                    "modifier": modifier,
+                    "path_mix": _mid_long_path_mix(cell_items),
+                    "is_readable": int(row.get("closed_count") or 0) >= min_sample,
+                }
+            )
+            rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            bool(row.get("is_readable")),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_reset_coverage(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    total = len(items)
+    unclassified = sum(
+        1
+        for state in reset_by_id.values()
+        if state.get("primary_family") == "UNCLASSIFIED_MID_LONG"
+    )
+    modifier_counts = Counter(len(state.get("modifiers") or []) for state in reset_by_id.values())
+    multi_modifier = sum(1 for state in reset_by_id.values() if len(state.get("modifiers") or []) >= 2)
+    return {
+        "total_rows": total,
+        "classified_rows": total - unclassified,
+        "classification_coverage_pct": _pct_decimal(total - unclassified, total),
+        "unclassified_rows": unclassified,
+        "unclassified_pct": _pct_decimal(unclassified, total),
+        "multi_modifier_rows": multi_modifier,
+        "multi_modifier_pct": _pct_decimal(multi_modifier, total),
+        "modifier_count_distribution": {str(key): value for key, value in sorted(modifier_counts.items())},
+    }
+
+
+def _mid_long_reset_mix(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+    field: str,
+) -> dict[str, int]:
+    return dict(
+        Counter(
+            str(reset_by_id[str(item.get("signal_id") or idx)].get(field) or "UNKNOWN")
+            for idx, item in enumerate(items)
+        )
+    )
+
+
+def _mid_long_reset_modifier_mix(
+    items: list[dict[str, Any]],
+    *,
+    reset_by_id: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    counter: Counter[str] = Counter()
+    for idx, item in enumerate(items):
+        modifiers = reset_by_id[str(item.get("signal_id") or idx)].get("modifiers") or []
+        if not modifiers:
+            counter["NO_MODIFIER"] += 1
+        for modifier in modifiers:
+            counter[str(modifier)] += 1
+    return dict(counter)
+
+
+def _mid_long_reset_family_role(family: str) -> str:
+    if family in {"BREAKOUT_CONTINUATION_LONG", "SUPPORT_RETEST_LONG", "PULLBACK_LONG"}:
+        return "CANDIDATE_FAMILY"
+    if family == "OTHER_STRUCTURED_LONG":
+        return "HOLDING_FAMILY"
+    return "WAIT_DATA"
+
+
+def _mid_long_reset_primary_read(row: dict[str, Any], *, family: str, min_sample: int) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    if closed < min_sample:
+        return "Sample kecil; jangan baca sebagai edge."
+    if family == "UNCLASSIFIED_MID_LONG":
+        return "Unclassified harus turun sebelum MID_LONG bisa dipercaya."
+    if total_r > 0 and avg_delta > Decimal("0.05"):
+        return "Candidate family worth chronological validation."
+    if avg_delta > 0:
+        return "Less bad than V2 control, but not clean enough for promotion."
+    return "No positive separation versus V2 control."
+
+
+def _mid_long_reset_modifier_read(row: dict[str, Any], *, modifier: str, min_sample: int) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    if closed < min_sample:
+        return "Too small for standalone read."
+    if total_r < 0:
+        return "Modifier contains damage, but overlap must be checked before using it as reject."
+    return "Modifier is not a clean damage tag yet."
+
+
+def _mid_long_reset_decision_read(row: dict[str, Any], *, decision: str, min_sample: int) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    if closed < min_sample:
+        return "Insufficient sample for this draft decision."
+    if decision.startswith("ELIGIBLE") and total_r > 0 and avg_delta > Decimal("0.05"):
+        return "Potential candidate for time-split validation, not live rule."
+    if decision.startswith("REJECT") and total_r < 0:
+        return "Potential reject state; compare removed TP/SL before using."
+    if decision == "WAIT_UNCLASSIFIED":
+        return "Needs better structure data or separate holding cohort."
+    return "No clear improvement yet."
+
+
+def _mid_long_reset_summary(
+    *,
+    primary_rows: list[dict[str, Any]],
+    modifier_rows: list[dict[str, Any]],
+    decision_rows: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    candidate_rows = [
+        row
+        for row in primary_rows
+        if row.get("primary_family") in {"BREAKOUT_CONTINUATION_LONG", "SUPPORT_RETEST_LONG", "PULLBACK_LONG"}
+        and int(row.get("closed_count") or 0) >= min_sample
+    ]
+    best_family = max(
+        candidate_rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+        default=None,
+    )
+    reject_rows = [
+        row
+        for row in decision_rows
+        if str(row.get("decision") or "").startswith("REJECT")
+        and int(row.get("closed_count") or 0) >= min_sample
+    ]
+    worst_reject = min(
+        reject_rows,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        default=None,
+    )
+    positive_family_count = sum(
+        1
+        for row in candidate_rows
+        if _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")) > 0
+        and _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")) > 0
+    )
+    return {
+        "best_candidate_family": _mid_long_reset_summary_row(best_family, key="primary_family"),
+        "worst_reject_decision": _mid_long_reset_summary_row(worst_reject, key="decision"),
+        "positive_candidate_family_count": positive_family_count,
+        "read": _mid_long_reset_read(
+            positive_family_count=positive_family_count,
+            coverage=coverage,
+        ),
+        "next_action": _mid_long_reset_next_action(positive_family_count=positive_family_count),
+    }
+
+
+def _mid_long_reset_summary_row(row: dict[str, Any] | None, *, key: str) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        key: row.get(key),
+        "closed_count": row.get("closed_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": row.get("realistic_avg_r_delta_vs_baseline"),
+        "top_symbol": row.get("top_symbol"),
+        "top_symbol_share_pct": row.get("top_symbol_share_pct"),
+    }
+
+
+def _mid_long_reset_read(*, positive_family_count: int, coverage: dict[str, Any]) -> str:
+    unclassified_pct = _decimal_or_zero_snapshot(coverage.get("unclassified_pct"))
+    if positive_family_count > 0:
+        return "HAS_CANDIDATE_FAMILY_FOR_VALIDATION"
+    if unclassified_pct >= Decimal("40"):
+        return "STRUCTURE_COVERAGE_TOO_WEAK"
+    return "NO_PRIMARY_FAMILY_READY"
+
+
+def _mid_long_reset_next_action(*, positive_family_count: int) -> str:
+    if positive_family_count > 0:
+        return "Run chronological validation only on the positive primary family; keep V2 control unchanged."
+    return "Do not promote MID_LONG 1h. Inspect primary family x modifier damage before trying more filters."
 
 
 def _mid_long_sub_setup_split_lab(
