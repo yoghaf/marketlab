@@ -3761,6 +3761,7 @@ export type MidLongBaselineResponse = {
     read: string;
   };
   definition_audit?: MidLongDefinitionAudit;
+  reverse_shadow_audit?: MidLongReverseShadowAudit;
   evidence_comparison?: MidLongEvidenceComparisonRow[];
   entry_anatomy_summary?: {
     question: string;
@@ -3790,6 +3791,66 @@ export type MidLongBaselineResponse = {
     generated_at_utc?: string | null;
   } | null;
   guardrails: string[];
+};
+
+export type MidLongReverseShadowAudit = {
+  scope: string;
+  method: string;
+  reverse_direction: string;
+  rr_values: string[];
+  rows: MidLongReverseShadowRow[];
+  summary: {
+    read: string;
+    min_sample: number;
+    readable_row_count: number;
+    promising_row_count: number;
+    ambiguous_row_count: number;
+    best_row?: MidLongReverseShadowSummaryRow | null;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongReverseShadowSummaryRow = {
+  cohort_id?: string | null;
+  rr?: string | number | null;
+  sample_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  both_hit_count?: number | string | null;
+  neither_count?: number | string | null;
+  realistic_total_r?: string | number | null;
+  realistic_avg_r?: string | number | null;
+  read?: string | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidLongReverseShadowRow = {
+  cohort_id: string;
+  definition_version: string;
+  description: string;
+  rr: string | number;
+  sample_count: number;
+  tp_count: number;
+  sl_count: number;
+  both_hit_count: number;
+  neither_count: number;
+  terminal_count: number;
+  tp_share_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  both_share_pct?: string | number | null;
+  gross_total_r?: string | number | null;
+  gross_avg_r?: string | number | null;
+  realistic_total_r?: string | number | null;
+  realistic_avg_r?: string | number | null;
+  median_realistic_r?: string | number | null;
+  median_reverse_mfe_r?: string | number | null;
+  median_reverse_mae_r?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count?: number;
+  top_symbol_share_pct?: string | number | null;
+  read: string;
 };
 
 export type MidLongDefinitionAudit = {

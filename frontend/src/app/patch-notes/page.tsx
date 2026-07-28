@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-14",
+    title: "MID_LONG Reverse Shadow Audit",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan audit read-only untuk menguji rasa penasaran: apakah MID_LONG 1h lama terlihat lebih baik jika dibaca sebagai short proxy.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan reverse_shadow_audit dengan RR 1.0, 1.25, 1.5, dan 2.0.",
+      "Audit membandingkan LEGACY_V2_ALL, STRUCTURE_FIRST_CLASSIFIED, STRUCTURE_FIRST_ELIGIBLE_DRAFT, STRUCTURE_FIRST_REJECT_DRAFT, WAIT_UNCLASSIFIED, BREAKOUT, SUPPORT_RETEST, dan UNCLASSIFIED.",
+      "Perhitungan memakai inverse MFE/MAE dari log paper-live sebagai geometry proxy, bukan replay candle final.",
+      "Halaman /mid-long-research-study menampilkan ringkasan best reverse proxy, TP/SL/BOTH/NEITHER, R realistis, median reverse MFE/MAE, dan guardrail path ambiguity.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, threshold, outcome logic, atau execution."
+    ],
+    impact: "Kita bisa cek cepat apakah ide reverse MID_LONG punya dasar numerik. Kalau positif, langkah berikutnya wajib candle-order replay; kalau tidak, ide reverse turun prioritas tanpa mengotak-atik rule live.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Reverse Audit" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-13",
     title: "MID_LONG Structure-First Draft Layer",
     status: "LIVE",

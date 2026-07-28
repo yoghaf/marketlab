@@ -792,6 +792,7 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
     )
     entry_rows = _mid_long_entry_combination_rows(items, baseline=baseline, min_sample=20)
     definition_audit = _mid_long_definition_audit(items, baseline=baseline, min_sample=20)
+    reverse_shadow_audit = _mid_long_reverse_shadow_audit(items, min_sample=20)
     return {
         "research_summary": {
             "scope": "MID_LONG 1h closed V2 signals",
@@ -808,6 +809,7 @@ def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
             "read": _mid_long_baseline_read(baseline),
         },
         "definition_audit": definition_audit,
+        "reverse_shadow_audit": reverse_shadow_audit,
         "evidence_comparison": _mid_long_evidence_comparison(items, min_sample=20),
         "entry_anatomy_summary": _mid_long_entry_anatomy_summary(items, baseline=baseline),
         "outcome_entry_profiles": _mid_long_outcome_entry_profiles(items),
@@ -2701,6 +2703,281 @@ def _mid_long_definition_reset_lab(
             "Derived decisions are research triage only; they do not change scanner or TP/SL behavior.",
             "If every family remains negative on validation, MID_LONG 1h should stay research-only instead of adding more filters.",
         ],
+    }
+
+
+def _mid_long_reverse_shadow_audit(items: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any]:
+    taxonomy_by_id = _mid_long_taxonomy_by_id(items)
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(item, taxonomy_by_id[str(item.get("signal_id") or idx)])
+        for idx, item in enumerate(items)
+    }
+    rr_values = (Decimal("1.00"), Decimal("1.25"), Decimal("1.50"), Decimal("2.00"))
+    cohorts: list[tuple[str, str, str, list[dict[str, Any]]]] = [
+        (
+            "LEGACY_V2_ALL",
+            "MID_LONG_V2_LEGACY",
+            "All logged MID_LONG 1h rows, interpreted as reverse short geometry.",
+            items,
+        ),
+        (
+            "STRUCTURE_FIRST_CLASSIFIED",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows where the structure-first draft can assign a primary family.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] != "UNCLASSIFIED_MID_LONG"
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_ELIGIBLE_DRAFT",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows passing the draft eligible structure-first bucket.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if str(reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"]).startswith("ELIGIBLE")
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_REJECT_DRAFT",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows rejected by the draft structure-first triage.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if str(reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"]).startswith("REJECT")
+            ],
+        ),
+        (
+            "STRUCTURE_FIRST_WAIT_UNCLASSIFIED",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Rows still unclassified or structurally insufficient.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["derived_decision"] == "WAIT_UNCLASSIFIED"
+            ],
+        ),
+        (
+            "BREAKOUT_CONTINUATION_LONG",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Primary family == BREAKOUT_CONTINUATION_LONG.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] == "BREAKOUT_CONTINUATION_LONG"
+            ],
+        ),
+        (
+            "SUPPORT_RETEST_LONG",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Primary family == SUPPORT_RETEST_LONG.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] == "SUPPORT_RETEST_LONG"
+            ],
+        ),
+        (
+            "UNCLASSIFIED_MID_LONG",
+            "MID_LONG_STRUCTURE_FIRST_DRAFT",
+            "Primary family == UNCLASSIFIED_MID_LONG.",
+            [
+                item
+                for idx, item in enumerate(items)
+                if reset_by_id[str(item.get("signal_id") or idx)]["primary_family"] == "UNCLASSIFIED_MID_LONG"
+            ],
+        ),
+    ]
+    rows: list[dict[str, Any]] = []
+    for cohort_id, definition_version, description, cohort_items in cohorts:
+        for rr in rr_values:
+            rows.append(
+                _mid_long_reverse_shadow_row(
+                    cohort_id=cohort_id,
+                    definition_version=definition_version,
+                    description=description,
+                    items=cohort_items,
+                    rr=rr,
+                    min_sample=min_sample,
+                )
+            )
+    return {
+        "scope": "MID_LONG 1h reverse shadow audit",
+        "method": (
+            "Diagnostic proxy only: logged MID_LONG path MFE/MAE is inverted to ask whether the same entry area "
+            "would look better as a short. This does not replay candle order and does not change live rules."
+        ),
+        "reverse_direction": "SHORT_PROXY_FROM_MID_LONG",
+        "rr_values": [str(value.normalize()) for value in rr_values],
+        "rows": rows,
+        "summary": _mid_long_reverse_shadow_summary(rows, min_sample=min_sample),
+        "guardrails": [
+            "Reverse rows are a geometry proxy from logged MFE/MAE, not a live signal and not a final backtest.",
+            "BOTH_HIT_PATH_UNKNOWN is scored at 0R before cost because candle path order is not known from aggregate MFE/MAE.",
+            "If reverse proxy is positive, the next step is closed-candle replay before any rule discussion.",
+            "Signal Factory, scanner behavior, TP/SL formula, thresholds, and execution remain unchanged.",
+        ],
+    }
+
+
+def _mid_long_reverse_shadow_row(
+    *,
+    cohort_id: str,
+    definition_version: str,
+    description: str,
+    items: list[dict[str, Any]],
+    rr: Decimal,
+    min_sample: int,
+) -> dict[str, Any]:
+    tp_count = 0
+    sl_count = 0
+    both_count = 0
+    neither_count = 0
+    gross_values: list[Decimal] = []
+    realistic_values: list[Decimal] = []
+    reverse_mfe_values: list[Decimal] = []
+    reverse_mae_values: list[Decimal] = []
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    for item in items:
+        result = _mid_long_reverse_shadow_result(item, rr=rr)
+        reverse_mfe_values.append(result["reverse_mfe_r"])
+        reverse_mae_values.append(result["reverse_mae_r"])
+        status = result["result_status"]
+        if status == "TP_HIT":
+            tp_count += 1
+        elif status == "SL_HIT":
+            sl_count += 1
+        elif status == "BOTH_HIT_PATH_UNKNOWN":
+            both_count += 1
+        else:
+            neither_count += 1
+        gross_values.append(result["gross_r"])
+        realistic_values.append(result["realistic_r"])
+    sample_count = len(items)
+    terminal_count = tp_count + sl_count + both_count
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    gross_total = sum(gross_values, Decimal("0"))
+    realistic_total = sum(realistic_values, Decimal("0"))
+    row: dict[str, Any] = {
+        "cohort_id": cohort_id,
+        "definition_version": definition_version,
+        "description": description,
+        "rr": rr,
+        "sample_count": sample_count,
+        "tp_count": tp_count,
+        "sl_count": sl_count,
+        "both_hit_count": both_count,
+        "neither_count": neither_count,
+        "terminal_count": terminal_count,
+        "tp_share_pct": _pct_decimal(tp_count, terminal_count),
+        "sl_share_pct": _pct_decimal(sl_count, terminal_count),
+        "both_share_pct": _pct_decimal(both_count, terminal_count),
+        "gross_total_r": gross_total,
+        "gross_avg_r": gross_total / Decimal(sample_count) if sample_count else None,
+        "realistic_total_r": realistic_total,
+        "realistic_avg_r": realistic_total / Decimal(sample_count) if sample_count else None,
+        "median_realistic_r": _median_decimal_snapshot(realistic_values),
+        "median_reverse_mfe_r": _median_decimal_snapshot(reverse_mfe_values),
+        "median_reverse_mae_r": _median_decimal_snapshot(reverse_mae_values),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_symbol_count,
+        "top_symbol_share_pct": _pct_decimal(top_symbol_count, sample_count),
+    }
+    row["read"] = _mid_long_reverse_shadow_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_reverse_shadow_result(item: dict[str, Any], *, rr: Decimal) -> dict[str, Any]:
+    original_mfe = _decimal_or_zero_snapshot(item.get("mfe_r"))
+    original_mae = _decimal_or_zero_snapshot(item.get("mae_r"))
+    reverse_mfe = abs(original_mae)
+    reverse_mae = -abs(original_mfe)
+    tp_hit = reverse_mfe >= rr
+    sl_hit = abs(reverse_mae) >= Decimal("1")
+    if tp_hit and sl_hit:
+        status = "BOTH_HIT_PATH_UNKNOWN"
+        gross_r = Decimal("0")
+    elif tp_hit:
+        status = "TP_HIT"
+        gross_r = rr
+    elif sl_hit:
+        status = "SL_HIT"
+        gross_r = Decimal("-1")
+    else:
+        status = "NEITHER"
+        gross_r = Decimal("0")
+    cost_r = max(_decimal_or_zero_snapshot(item.get("realistic_cost_r_estimate")), Decimal("0"))
+    return {
+        "result_status": status,
+        "reverse_mfe_r": reverse_mfe,
+        "reverse_mae_r": reverse_mae,
+        "gross_r": gross_r,
+        "realistic_r": gross_r - cost_r,
+    }
+
+
+def _mid_long_reverse_shadow_read(row: dict[str, Any], *, min_sample: int) -> str:
+    sample = int(row.get("sample_count") or 0)
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r"))
+    avg = _decimal_or_zero_snapshot(row.get("realistic_avg_r"))
+    both_share = _decimal_or_zero_snapshot(row.get("both_share_pct"))
+    if sample < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    if both_share >= Decimal("20"):
+        return "PATH_AMBIGUOUS_NEEDS_REPLAY"
+    if total > 0 and avg >= Decimal("0.05"):
+        return "REVERSE_PROMISING_PROXY"
+    if total > 0:
+        return "REVERSE_POSITIVE_BUT_THIN"
+    return "REVERSE_NOT_SUPPORTED"
+
+
+def _mid_long_reverse_shadow_summary(rows: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any]:
+    readable = [row for row in rows if int(row.get("sample_count") or 0) >= min_sample]
+    best = max(readable, key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_total_r")), default=None)
+    promising = [
+        row for row in readable if str(row.get("read") or "") in {"REVERSE_PROMISING_PROXY", "REVERSE_POSITIVE_BUT_THIN"}
+    ]
+    ambiguous = [row for row in readable if row.get("read") == "PATH_AMBIGUOUS_NEEDS_REPLAY"]
+    if promising:
+        read = "REVERSE_PROXY_FOUND"
+        next_action = "Replay candle order for the best reverse proxy cohorts before discussing rule changes."
+    elif ambiguous:
+        read = "REVERSE_PROXY_AMBIGUOUS"
+        next_action = "Run candle-order replay on ambiguous cohorts; MFE/MAE alone is not enough."
+    else:
+        read = "REVERSE_PROXY_NOT_SUPPORTED"
+        next_action = "Do not reverse MID_LONG yet; continue definition research from structure/path evidence."
+    return {
+        "read": read,
+        "min_sample": min_sample,
+        "readable_row_count": len(readable),
+        "promising_row_count": len(promising),
+        "ambiguous_row_count": len(ambiguous),
+        "best_row": _mid_long_reverse_summary_row(best),
+        "next_action": next_action,
+    }
+
+
+def _mid_long_reverse_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "cohort_id": row.get("cohort_id"),
+        "rr": row.get("rr"),
+        "sample_count": row.get("sample_count"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "both_hit_count": row.get("both_hit_count"),
+        "neither_count": row.get("neither_count"),
+        "realistic_total_r": row.get("realistic_total_r"),
+        "realistic_avg_r": row.get("realistic_avg_r"),
+        "read": row.get("read"),
+        "top_symbol": row.get("top_symbol"),
+        "top_symbol_share_pct": row.get("top_symbol_share_pct"),
     }
 
 

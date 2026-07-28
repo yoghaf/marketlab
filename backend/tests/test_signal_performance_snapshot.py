@@ -246,6 +246,22 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     }
     assert reset_lab["data_retention_policy"]
     assert reset_lab["coverage"]["total_rows"] == 1
+    assert "reverse_shadow_audit" in baseline
+    reverse_audit = baseline["reverse_shadow_audit"]
+    assert reverse_audit["reverse_direction"] == "SHORT_PROXY_FROM_MID_LONG"
+    assert reverse_audit["rr_values"] == ["1", "1.25", "1.5", "2"]
+    assert reverse_audit["rows"]
+    assert {row["cohort_id"] for row in reverse_audit["rows"]} >= {
+        "LEGACY_V2_ALL",
+        "STRUCTURE_FIRST_ELIGIBLE_DRAFT",
+        "UNCLASSIFIED_MID_LONG",
+    }
+    assert reverse_audit["summary"]["read"] in {
+        "REVERSE_PROXY_FOUND",
+        "REVERSE_PROXY_AMBIGUOUS",
+        "REVERSE_PROXY_NOT_SUPPORTED",
+    }
+    assert reverse_audit["guardrails"]
     assert "sub_setup_split_lab" in baseline["definition_audit"]
     assert "rows" in baseline["definition_audit"]["sub_setup_split_lab"]
     assert baseline["definition_audit"]["sub_setup_split_lab"]["summary"]["read"] in {

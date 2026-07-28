@@ -30,6 +30,8 @@ import {
   MidLongGeometryThresholdRow,
   MidLongIntegrityAudit,
   MidLongPathDecisionRow,
+  MidLongReverseShadowAudit,
+  MidLongReverseShadowRow,
   MidLongResetCohortRow,
   MidLongResetDecisionRow,
   MidLongResetFamilyModifierRow,
@@ -164,9 +166,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {payload?.reverse_shadow_audit && (
+            <SectionCard
+              title="2. Reverse Shadow Audit"
+              description="Audit penasaran: kalau entry MID_LONG 1h yang sama dibaca sebagai short proxy, apakah hasilnya membaik. Ini bukan rule dan belum replay candle final."
+            >
+              <ReverseShadowAuditPanel audit={payload.reverse_shadow_audit} />
+            </SectionCard>
+          )}
+
           {audit.sub_setup_split_lab && (
             <SectionCard
-              title="2. Legacy Sub-Setup Split Lab"
+              title="3. Legacy Sub-Setup Split Lab"
               description="MID_LONG 1h dipecah menjadi sub-label: breakout proxy, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
             >
               <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
@@ -175,7 +186,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.breakout_accepted_deep_dive && (
             <SectionCard
-              title="3. Breakout-State Diagnostics"
+              title="4. Breakout-State Diagnostics"
               description="Audit khusus BREAKOUT_PROXY_CANDIDATE. Fokusnya pre-entry zone: penetrasi close, body terhadap zona, wick, umur zona, jarak entry, dan ruang ke resistance berikutnya."
             >
               <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
@@ -184,7 +195,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.damage_isolation && (
             <SectionCard
-              title="4. Damage Isolation"
+              title="5. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -388,6 +399,111 @@ function DefinitionResetPanel({ lab }: { lab: MidLongDefinitionResetLab }) {
           <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ReverseShadowAuditPanel({ audit }: { audit: MidLongReverseShadowAudit }) {
+  const best = audit.summary.best_row;
+  const rows = audit.rows || [];
+  const promisingRows = rows.filter((row) => row.read === "REVERSE_PROMISING_PROXY" || row.read === "REVERSE_POSITIVE_BUT_THIN");
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(audit.summary.read)} helper={audit.summary.next_action} />
+        <Info label="Direction" value={humanFlag(audit.reverse_direction)} helper="Proxy dari MID_LONG menjadi short." />
+        <Info label="RR tested" value={audit.rr_values.join(", ")} helper="RR reverse proxy." />
+        <Info label="Readable rows" value={`${audit.summary.readable_row_count}`} helper={`Min sample ${audit.summary.min_sample}`} />
+        <Info label="Promising rows" value={`${audit.summary.promising_row_count}`} helper="Masih harus replay candle." />
+        <Info label="Ambiguous rows" value={`${audit.summary.ambiguous_row_count}`} helper="Butuh order candle." />
+      </div>
+
+      {best && (
+        <div className="grid gap-3 border-b border-line p-4 lg:grid-cols-3">
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-4">
+            <div className="text-xs font-semibold uppercase text-amber-800">Best reverse proxy</div>
+            <div className="mt-1 text-xl font-black text-ink">{humanFlag(best.cohort_id || "-")}</div>
+            <div className="mt-2 text-sm text-slate-700">RR {best.rr} | sample {best.sample_count} | TP/SL {best.tp_count}/{best.sl_count}</div>
+          </div>
+          <div className="rounded-md border border-line bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-500">Realistic result</div>
+            <div className={`mt-1 text-2xl font-black ${toneClass(best.realistic_total_r)}`}>{fmtSigned(best.realistic_total_r)}R</div>
+            <div className="mt-2 text-sm text-slate-600">Avg {fmtSigned(best.realistic_avg_r)}R | {humanFlag(best.read || "-")}</div>
+          </div>
+          <div className="rounded-md border border-line bg-white p-4">
+            <div className="text-xs font-semibold uppercase text-slate-500">Top concentration</div>
+            <div className="mt-1 text-2xl font-black text-ink">{best.top_symbol || "-"}</div>
+            <div className="mt-2 text-sm text-slate-600">{formatPct(best.top_symbol_share_pct)} of sample</div>
+          </div>
+        </div>
+      )}
+
+      {promisingRows.length > 0 && (
+        <div className="border-b border-line p-4">
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
+            Ada reverse proxy yang positif. Ini belum berarti kita balik signal; artinya cohort tersebut layak direplay candle order supaya TP/SL sequence-nya tidak cuma tebak dari MFE/MAE.
+          </div>
+        </div>
+      )}
+
+      <ReverseShadowTable rows={rows} />
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {audit.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReverseShadowTable({ rows }: { rows: MidLongReverseShadowRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Reverse audit kosong" detail="Snapshot belum memuat reverse shadow audit." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cohort</th>
+            <th>RR</th>
+            <th>N</th>
+            <th>TP / SL / Both / Neither</th>
+            <th>Realistic R</th>
+            <th>Avg / Median</th>
+            <th>Reverse path</th>
+            <th>Top symbol</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.cohort_id}-${row.rr}`}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.cohort_id)}</div>
+                <div className="mt-1 text-xs text-slate-500">{humanFlag(row.definition_version)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.description}</div>
+              </td>
+              <td className="font-bold">{row.rr}R</td>
+              <td>{row.sample_count}</td>
+              <td>
+                <div>{row.tp_count} / {row.sl_count} / {row.both_hit_count} / {row.neither_count}</div>
+                <div className="text-xs text-slate-500">TP {formatPct(row.tp_share_pct)} | SL {formatPct(row.sl_share_pct)}</div>
+              </td>
+              <td className={toneClass(row.realistic_total_r)}>{fmtSigned(row.realistic_total_r)}R</td>
+              <td>
+                <div>{fmtSigned(row.realistic_avg_r)}R avg</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.median_realistic_r)}R median</div>
+              </td>
+              <td>
+                <div>MFE {fmtSigned(row.median_reverse_mfe_r)}R</div>
+                <div className="text-xs text-slate-500">MAE {fmtSigned(row.median_reverse_mae_r)}R</div>
+              </td>
+              <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
+              <td className="max-w-80"><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
