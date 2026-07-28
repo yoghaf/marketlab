@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-20",
+    title: "MID_LONG Confirmation Predictor Study",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan study pre-entry untuk mencari tanda yang bisa memprediksi apakah MID_LONG 1h akan confirm pada 1 jam pertama.",
+    changes: [
+      "First-Hour Exact Candle Replay sekarang menampilkan confirmation_predictor_study setelah Paired Attribution.",
+      "Label utama dibuat eksplisit: Y_CONFIRM=1 untuk FIRST_HOUR_CONFIRMED, sedangkan stalled/reversed/failed menjadi negative label.",
+      "TP/SL/R tetap hanya metric evaluasi; field outcome, first_hour_state, MFE/MAE, result, dan R tidak boleh menjadi input predictor.",
+      "Study memakai chronological 70/30 split, feature bucket pre-entry, selected predictor specs, score buckets, dan false-positive/false-negative audit.",
+      "Halaman /mid-long-research-study menampilkan label integrity, candidate predictor, validation selected R, top feature buckets, dan contoh miss classification.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang bisa menjawab apakah kelompok yang akan confirm punya jejak pre-entry yang terbaca sebelum entry, bukan hanya terlihat bagus setelah candle 1h berikutnya terjadi.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Confirmation Predictor" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-19",
     title: "MID_LONG Paired Confirmation Attribution",
     status: "LIVE",

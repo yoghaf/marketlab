@@ -302,6 +302,23 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "PAIRED_REPRICE_HELPS_BUT_SELECTION_HURTS",
         "PAIRED_NOT_SUPPORTED",
     }
+    assert "confirmation_predictor_study" in first_hour_exact
+    confirmation_predictor = first_hour_exact["confirmation_predictor_study"]
+    assert confirmation_predictor["scope"] == "MID_LONG 1h Confirmation Predictor Study"
+    assert "FIRST_HOUR_CONFIRMED" in confirmation_predictor["label_integrity"]["confirm_label"]
+    assert confirmation_predictor["label_integrity"]["outcome_policy"]
+    assert "first_hour_state" in confirmation_predictor["label_integrity"]["forbidden_predictors"]
+    assert "numeric_feature_rows" in confirmation_predictor
+    assert "categorical_feature_rows" in confirmation_predictor
+    assert "score_bucket_rows" in confirmation_predictor
+    assert "false_positive_negative" in confirmation_predictor
+    assert confirmation_predictor["summary"]["read"] in {
+        "CP_NO_PREDICTOR_SPEC",
+        "CP_VALIDATION_SAMPLE_SMALL",
+        "CP_SCORE_VALIDATION_PROMISING",
+        "CP_SCORE_REDUCES_DAMAGE",
+        "CP_SCORE_NOT_READY",
+    }
     assert first_hour_exact["summary"]["read"] in {
         "EXACT_EARLY_EXIT_LEADS",
         "EXACT_DELAYED_ENTRY_LEADS",

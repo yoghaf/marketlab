@@ -4124,6 +4124,7 @@ export type MidLongFirstHourExactReplayLab = {
   baseline_max_realistic_drawdown_r?: string | number | null;
   delayed_entry_rows: MidLongFirstHourExactReplayRow[];
   paired_attribution_rows?: MidLongPairedAttributionRow[];
+  confirmation_predictor_study?: MidLongConfirmationPredictorStudy | null;
   early_exit_rows: MidLongFirstHourExactReplayRow[];
   summary: {
     read: string;
@@ -4186,6 +4187,152 @@ export type MidLongFirstHourExactReplayRow = {
   top_symbol_count?: number;
   top_symbol_share_pct?: string | number | null;
   read: string;
+};
+
+export type MidLongConfirmationPredictorStudy = {
+  scope: string;
+  model: string;
+  method: string;
+  source_count: number;
+  labeled_count: number;
+  unavailable_count: number;
+  unavailable_reasons: Record<string, number>;
+  min_sample: number;
+  label_integrity: {
+    confirm_label: string;
+    negative_label: string;
+    outcome_policy: string;
+    forbidden_predictors: string[];
+  };
+  split: {
+    method: string;
+    development_count: number;
+    validation_count: number;
+    development_first_signal?: string | null;
+    development_last_signal?: string | null;
+    validation_first_signal?: string | null;
+    validation_last_signal?: string | null;
+  };
+  label_summary: Record<string, MidLongConfirmationPerf>;
+  numeric_feature_rows: MidLongConfirmationFeatureRow[];
+  categorical_feature_rows: MidLongConfirmationFeatureRow[];
+  selected_predictor_specs: MidLongConfirmationPredictorSpec[];
+  score_threshold?: number | string | null;
+  score_bucket_rows: MidLongConfirmationScoreBucketRow[];
+  false_positive_negative: MidLongConfirmationFalseAudit;
+  summary: {
+    read: string;
+    next_action: string;
+    all_confirm_rate_pct?: string | number | null;
+    development_confirm_rate_pct?: string | number | null;
+    validation_confirm_rate_pct?: string | number | null;
+    selected_predictor_count: number;
+    score_threshold?: number | string | null;
+    validation_selected_count: number;
+    validation_selected_total_r?: string | number | null;
+    validation_selected_avg_delta?: string | number | null;
+    unavailable_count: number;
+  };
+  guardrails: string[];
+};
+
+export type MidLongConfirmationPerf = {
+  sample_count?: number | string | null;
+  signals_evaluated?: number | string | null;
+  closed_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  both_hit_count?: number | string | null;
+  open_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  median_realistic_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  winrate_pct?: string | number | null;
+  sl_share_pct?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+  confirm_count?: number | string | null;
+  skipped_count?: number | string | null;
+  confirm_rate_pct?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  confirm_rate_delta_vs_baseline?: string | number | null;
+};
+
+export type MidLongConfirmationFeatureRow = {
+  field: string;
+  label: string;
+  family: string;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  q33?: string | number | null;
+  q66?: string | number | null;
+  development_q33?: string | number | null;
+  development_q66?: string | number | null;
+  bucket_rows: MidLongConfirmationScoreBucketRow[];
+  development_bucket_rows: MidLongConfirmationScoreBucketRow[];
+  validation_bucket_rows: MidLongConfirmationScoreBucketRow[];
+  development_best_bucket?: string | null;
+  development_worst_bucket?: string | null;
+  development_confirm_gap_pct?: string | number | null;
+  development_avg_r_gap?: string | number | null;
+  validation_selected?: MidLongConfirmationPerf;
+  validation_avg_r_delta_vs_baseline?: string | number | null;
+  development_read: string;
+};
+
+export type MidLongConfirmationPredictorSpec = {
+  field: string;
+  label: string;
+  family: string;
+  favorable_bucket: string;
+  development_q33?: string | number | null;
+  development_q66?: string | number | null;
+  development_confirm_gap_pct?: string | number | null;
+  development_avg_r_gap?: string | number | null;
+  validation_selected?: MidLongConfirmationPerf;
+  read?: string | null;
+};
+
+export type MidLongConfirmationScoreBucketRow = MidLongConfirmationPerf & {
+  bucket: string;
+  segment?: string;
+  read?: string;
+};
+
+export type MidLongConfirmationFalseAudit = {
+  score_threshold: number;
+  selected_count: number;
+  rejected_count: number;
+  true_positive_count: number;
+  false_positive_count: number;
+  false_negative_count: number;
+  true_negative_count: number;
+  selected: MidLongConfirmationPerf;
+  false_positive_breakdown: MidLongConfirmationScoreBucketRow[];
+  false_negative_breakdown: MidLongConfirmationScoreBucketRow[];
+  false_positive_examples: MidLongConfirmationExampleRow[];
+  false_negative_examples: MidLongConfirmationExampleRow[];
+};
+
+export type MidLongConfirmationExampleRow = {
+  signal_id?: string | null;
+  symbol?: string | null;
+  signal_time_wib?: string | null;
+  result_status?: string | null;
+  realistic_realized_r?: string | number | null;
+  confirm_label?: boolean;
+  first_hour_state?: string | null;
+  score?: number | string | null;
+  matched_predictors?: string[];
+  structure_zone_primary_state?: string | null;
+  structure_zone_context_state?: string | null;
+  room_to_next_resistance_atr?: string | number | null;
+  entry_distance_from_zone_atr?: string | number | null;
+  kline_taker_buy_ratio?: string | number | null;
+  oi_zscore?: string | number | null;
 };
 
 export type MidLongPairedAttributionPerf = {

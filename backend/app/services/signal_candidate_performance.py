@@ -5350,6 +5350,41 @@ def _merge_candle_maps(
     return merged
 
 
+MID_LONG_CONFIRM_PREDICTOR_NUMERIC_FEATURES: tuple[tuple[str, str, str], ...] = (
+    ("room_to_next_resistance_atr", "Room to next resistance ATR", "structure_room"),
+    ("entry_distance_from_zone_atr", "Entry distance from zone ATR", "structure_location"),
+    ("bars_since_breakout", "Bars since breakout", "structure_freshness"),
+    ("close_penetration_atr", "Close penetration ATR", "structure_acceptance"),
+    ("body_above_zone_ratio", "Body above zone ratio", "structure_acceptance"),
+    ("upper_wick_to_body_ratio", "Upper wick/body ratio", "structure_rejection"),
+    ("zone_touch_count", "Zone touch count", "structure_quality"),
+    ("zone_age_bars", "Zone age bars", "structure_quality"),
+    ("price_return", "Price return", "impulse"),
+    ("volume_ratio_vs_lookback", "Volume vs lookback", "participation"),
+    ("range_ratio_vs_atr", "Range / ATR", "impulse"),
+    ("atr_extension_normalized", "ATR extension", "chase_extension"),
+    ("price_atr_multiple", "Price / ATR", "chase_extension"),
+    ("kline_taker_buy_ratio", "Taker buy ratio", "initiative_flow"),
+    ("oi_change_pct", "OI change %", "open_interest"),
+    ("oi_zscore", "OI z-score", "open_interest"),
+    ("funding_percentile_30d", "Funding percentile 30d", "crowding"),
+    ("global_long_short_ratio", "Global long/short ratio", "crowding"),
+    ("top_trader_position_ratio", "Top trader position ratio", "crowding"),
+    ("top_trader_account_ratio", "Top trader account ratio", "crowding"),
+    ("futures_spread_pct", "Futures spread %", "tradability"),
+    ("realistic_cost_r_estimate", "Projected cost R", "tradability"),
+)
+
+MID_LONG_CONFIRM_PREDICTOR_CATEGORICAL_FEATURES: tuple[tuple[str, str, str], ...] = (
+    ("structure_zone_status", "Structure zone status", "structure"),
+    ("structure_zone_primary_state", "Primary zone state", "structure"),
+    ("structure_zone_context_state", "Context zone state", "structure"),
+    ("confidence_tier", "Confidence tier", "existing_score"),
+    ("execution_flag", "Execution flag", "tradability"),
+    ("realistic_fill_quality", "Fill quality", "tradability"),
+)
+
+
 def _mid_long_first_hour_exact_replay_lab(
     items: list[dict[str, Any]],
     *,
@@ -5423,6 +5458,12 @@ def _mid_long_first_hour_exact_replay_lab(
         )
         for spec in delayed_specs
     ]
+    confirmation_predictor = _mid_long_confirmation_predictor_study(
+        ordered,
+        candles_by_symbol=candles_by_symbol,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     early_exit_rows = [
         _mid_long_exact_early_exit_row(
             ordered,
@@ -5454,6 +5495,7 @@ def _mid_long_first_hour_exact_replay_lab(
         "baseline_max_realistic_drawdown_r": (baseline or {}).get("max_realistic_drawdown_r"),
         "delayed_entry_rows": delayed_rows,
         "paired_attribution_rows": paired_attribution_rows,
+        "confirmation_predictor_study": confirmation_predictor,
         "early_exit_rows": early_exit_rows,
         "summary": summary,
         "guardrails": [
@@ -5754,6 +5796,600 @@ def _mid_long_paired_attribution_read(row: dict[str, Any], *, min_sample: int) -
     if selection <= 0 and repricing > 0:
         return "PAIRED_REPRICE_HELPS_BUT_SELECTION_HURTS"
     return "PAIRED_NOT_SUPPORTED"
+
+
+def _mid_long_confirmation_predictor_study(
+    items: list[dict[str, Any]],
+    *,
+    candles_by_symbol: dict[str, list[PerfCandle]],
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+) -> dict[str, Any]:
+    labeled: list[dict[str, Any]] = []
+    unavailable_reasons: Counter[str] = Counter()
+    for item in items:
+        replay = _mid_long_exact_replay_context(item, candles_by_symbol)
+        if replay is None:
+            unavailable_reasons["missing_decision_or_geometry"] += 1
+            continue
+        row = dict(item)
+        row["_cp_confirm_label"] = replay["first_hour_state"] == "FIRST_HOUR_CONFIRMED"
+        row["_cp_first_hour_state"] = replay["first_hour_state"]
+        row["_cp_first_hour_close_r"] = replay["first_hour_close_r"]
+        labeled.append(row)
+
+    ordered = sorted(
+        labeled,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+            str(item.get("signal_id") or ""),
+        ),
+    )
+    split_index = max(1, min(len(ordered), int(len(ordered) * 0.70))) if ordered else 0
+    development = ordered[:split_index]
+    validation = ordered[split_index:]
+    all_perf = _cp_confirm_perf_summary(ordered, baseline=None)
+    development_perf = _cp_confirm_perf_summary(development, baseline=None)
+    validation_perf = _cp_confirm_perf_summary(validation, baseline=None)
+    numeric_rows = [
+        _cp_numeric_feature_row(
+            ordered,
+            development=development,
+            validation=validation,
+            field=field,
+            label=label,
+            family=family,
+            min_sample=min_sample,
+        )
+        for field, label, family in MID_LONG_CONFIRM_PREDICTOR_NUMERIC_FEATURES
+    ]
+    numeric_rows.sort(
+        key=lambda row: (
+            row.get("development_read") == "FEATURE_CANDIDATE",
+            _decimal_or_zero(row.get("development_confirm_gap_pct")),
+            _decimal_or_zero(row.get("validation_avg_r_delta_vs_baseline")),
+            int(row.get("available_count") or 0),
+        ),
+        reverse=True,
+    )
+    categorical_rows = [
+        _cp_categorical_feature_row(
+            ordered,
+            development=development,
+            validation=validation,
+            field=field,
+            label=label,
+            family=family,
+            min_sample=min_sample,
+        )
+        for field, label, family in MID_LONG_CONFIRM_PREDICTOR_CATEGORICAL_FEATURES
+    ]
+    categorical_rows.sort(
+        key=lambda row: (
+            row.get("development_read") == "FEATURE_CANDIDATE",
+            _decimal_or_zero(row.get("development_confirm_gap_pct")),
+            _decimal_or_zero(row.get("validation_avg_r_delta_vs_baseline")),
+            int(row.get("available_count") or 0),
+        ),
+        reverse=True,
+    )
+    predictor_specs = _cp_predictor_specs(numeric_rows, min_sample=min_sample, limit=6)
+    scored_all = _cp_score_items(ordered, predictor_specs)
+    scored_development = _cp_score_items(development, predictor_specs)
+    scored_validation = _cp_score_items(validation, predictor_specs)
+    score_threshold = min(2, len(predictor_specs)) if predictor_specs else 999
+    score_bucket_rows = (
+        _cp_score_bucket_rows(scored_all, segment="all", baseline=all_perf, min_sample=min_sample)
+        + _cp_score_bucket_rows(scored_development, segment="development", baseline=development_perf, min_sample=min_sample)
+        + _cp_score_bucket_rows(scored_validation, segment="validation", baseline=validation_perf, min_sample=min_sample)
+    )
+    false_positive_negative = _cp_false_positive_negative_audit(
+        scored_all,
+        score_threshold=score_threshold,
+        min_sample=min_sample,
+    )
+    summary = _cp_confirmation_predictor_summary(
+        all_perf=all_perf,
+        development_perf=development_perf,
+        validation_perf=validation_perf,
+        predictor_specs=predictor_specs,
+        score_bucket_rows=score_bucket_rows,
+        score_threshold=score_threshold,
+        unavailable_count=sum(unavailable_reasons.values()),
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h Confirmation Predictor Study",
+        "model": "PRE_ENTRY_SCORE_BUCKET_READ_ONLY_V1",
+        "method": (
+            "Uses first-hour retained/skipped state as a training label, but ranks only pre-entry fields. "
+            "Predictor directions are selected from the chronological development period and checked on validation."
+        ),
+        "source_count": len(items),
+        "labeled_count": len(ordered),
+        "unavailable_count": sum(unavailable_reasons.values()),
+        "unavailable_reasons": dict(unavailable_reasons),
+        "min_sample": min_sample,
+        "label_integrity": {
+            "confirm_label": "Y_CONFIRM = 1 when first_hour_state == FIRST_HOUR_CONFIRMED",
+            "negative_label": "Y_CONFIRM = 0 when first_hour_state is stalled/reversed/failed",
+            "outcome_policy": "TP/SL/R are evaluation metrics only, not the primary label.",
+            "forbidden_predictors": ["first_hour_state", "mfe_r", "mae_r", "result_status", "realistic_realized_r"],
+        },
+        "split": {
+            "method": "chronological_70_30",
+            "development_count": len(development),
+            "validation_count": len(validation),
+            "development_first_signal": development[0].get("signal_timestamp") if development else None,
+            "development_last_signal": development[-1].get("signal_timestamp") if development else None,
+            "validation_first_signal": validation[0].get("signal_timestamp") if validation else None,
+            "validation_last_signal": validation[-1].get("signal_timestamp") if validation else None,
+        },
+        "label_summary": {
+            "all": all_perf,
+            "development": development_perf,
+            "validation": validation_perf,
+        },
+        "numeric_feature_rows": numeric_rows[:24],
+        "categorical_feature_rows": categorical_rows,
+        "selected_predictor_specs": predictor_specs,
+        "score_threshold": score_threshold if predictor_specs else None,
+        "score_bucket_rows": score_bucket_rows,
+        "false_positive_negative": false_positive_negative,
+        "summary": summary,
+        "guardrails": [
+            "This study does not change Signal Factory, scanner, TP/SL, threshold, outcome logic, or execution.",
+            "first_hour_state is a training label only and must not be used as a live predictor.",
+            "MFE, MAE, TP/SL result, realized R, and future candles are evaluation fields only.",
+            "Selected predictor specs are research score components, not hard gates.",
+        ],
+    }
+
+
+def _cp_numeric_feature_row(
+    items: list[dict[str, Any]],
+    *,
+    development: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    field: str,
+    label: str,
+    family: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    all_values = [value for item in items if (value := _decimal_or_none_any(item.get(field))) is not None]
+    dev_values = [value for item in development if (value := _decimal_or_none_any(item.get(field))) is not None]
+    all_thresholds = _cp_tercile_thresholds(all_values)
+    dev_thresholds = _cp_tercile_thresholds(dev_values)
+    all_buckets = _cp_numeric_bucket_rows(items, field=field, thresholds=all_thresholds, baseline=_cp_confirm_perf_summary(items, baseline=None))
+    dev_buckets = _cp_numeric_bucket_rows(development, field=field, thresholds=dev_thresholds, baseline=_cp_confirm_perf_summary(development, baseline=None))
+    validation_buckets = _cp_numeric_bucket_rows(validation, field=field, thresholds=dev_thresholds, baseline=_cp_confirm_perf_summary(validation, baseline=None))
+    dev_best, dev_worst = _cp_best_worst_feature_buckets(dev_buckets)
+    validation_selected = [
+        item
+        for item in validation
+        if dev_best and _cp_numeric_bucket(_decimal_or_none_any(item.get(field)), dev_thresholds) == dev_best.get("bucket")
+    ]
+    validation_selected_perf = _cp_confirm_perf_summary(validation_selected, baseline=_cp_confirm_perf_summary(validation, baseline=None))
+    row = {
+        "field": field,
+        "label": label,
+        "family": family,
+        "available_count": len(all_values),
+        "missing_count": max(0, len(items) - len(all_values)),
+        "available_pct": Decimal(len(all_values)) / Decimal(len(items)) * Decimal("100") if items else None,
+        "q33": all_thresholds.get("q33"),
+        "q66": all_thresholds.get("q66"),
+        "development_q33": dev_thresholds.get("q33"),
+        "development_q66": dev_thresholds.get("q66"),
+        "bucket_rows": all_buckets,
+        "development_bucket_rows": dev_buckets,
+        "validation_bucket_rows": validation_buckets,
+        "development_best_bucket": dev_best.get("bucket") if dev_best else None,
+        "development_worst_bucket": dev_worst.get("bucket") if dev_worst else None,
+        "development_confirm_gap_pct": _decimal_delta(
+            (dev_best or {}).get("confirm_rate_pct"),
+            (dev_worst or {}).get("confirm_rate_pct"),
+        ),
+        "development_avg_r_gap": _decimal_delta(
+            (dev_best or {}).get("realistic_avg_r_closed"),
+            (dev_worst or {}).get("realistic_avg_r_closed"),
+        ),
+        "validation_selected": validation_selected_perf,
+    }
+    row["validation_avg_r_delta_vs_baseline"] = validation_selected_perf.get("realistic_avg_r_delta_vs_baseline")
+    row["development_read"] = _cp_feature_read(row, min_sample=min_sample)
+    return row
+
+
+def _cp_categorical_feature_row(
+    items: list[dict[str, Any]],
+    *,
+    development: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    field: str,
+    label: str,
+    family: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    all_buckets = _cp_categorical_bucket_rows(items, field=field, baseline=_cp_confirm_perf_summary(items, baseline=None))
+    dev_buckets = _cp_categorical_bucket_rows(development, field=field, baseline=_cp_confirm_perf_summary(development, baseline=None))
+    validation_buckets = _cp_categorical_bucket_rows(validation, field=field, baseline=_cp_confirm_perf_summary(validation, baseline=None))
+    dev_best, dev_worst = _cp_best_worst_feature_buckets(dev_buckets)
+    validation_selected = [item for item in validation if dev_best and str(item.get(field) or "MISSING") == dev_best.get("bucket")]
+    validation_selected_perf = _cp_confirm_perf_summary(validation_selected, baseline=_cp_confirm_perf_summary(validation, baseline=None))
+    available_count = sum(1 for item in items if item.get(field) not in (None, ""))
+    row = {
+        "field": field,
+        "label": label,
+        "family": family,
+        "available_count": available_count,
+        "missing_count": max(0, len(items) - available_count),
+        "available_pct": Decimal(available_count) / Decimal(len(items)) * Decimal("100") if items else None,
+        "bucket_rows": all_buckets,
+        "development_bucket_rows": dev_buckets,
+        "validation_bucket_rows": validation_buckets,
+        "development_best_bucket": dev_best.get("bucket") if dev_best else None,
+        "development_worst_bucket": dev_worst.get("bucket") if dev_worst else None,
+        "development_confirm_gap_pct": _decimal_delta(
+            (dev_best or {}).get("confirm_rate_pct"),
+            (dev_worst or {}).get("confirm_rate_pct"),
+        ),
+        "development_avg_r_gap": _decimal_delta(
+            (dev_best or {}).get("realistic_avg_r_closed"),
+            (dev_worst or {}).get("realistic_avg_r_closed"),
+        ),
+        "validation_selected": validation_selected_perf,
+    }
+    row["validation_avg_r_delta_vs_baseline"] = validation_selected_perf.get("realistic_avg_r_delta_vs_baseline")
+    row["development_read"] = _cp_feature_read(row, min_sample=min_sample)
+    return row
+
+
+def _cp_tercile_thresholds(values: list[Decimal]) -> dict[str, Decimal | None]:
+    return {
+        "q33": _percentile_decimal(values, Decimal("0.3333")),
+        "q66": _percentile_decimal(values, Decimal("0.6667")),
+    }
+
+
+def _cp_numeric_bucket(value: Decimal | None, thresholds: dict[str, Decimal | None]) -> str:
+    if value is None:
+        return "MISSING"
+    q33 = thresholds.get("q33")
+    q66 = thresholds.get("q66")
+    if q33 is None or q66 is None:
+        return "AVAILABLE"
+    if value <= q33:
+        return "LOW"
+    if value <= q66:
+        return "MID"
+    return "HIGH"
+
+
+def _cp_numeric_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    field: str,
+    thresholds: dict[str, Decimal | None],
+    baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[_cp_numeric_bucket(_decimal_or_none_any(item.get(field)), thresholds)].append(item)
+    rows = [_cp_bucket_summary(bucket, bucket_items, baseline=baseline) for bucket, bucket_items in groups.items()]
+    return _cp_sort_bucket_rows(rows)
+
+
+def _cp_categorical_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    field: str,
+    baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[str(item.get(field) or "MISSING")].append(item)
+    rows = [_cp_bucket_summary(bucket, bucket_items, baseline=baseline) for bucket, bucket_items in groups.items()]
+    return _cp_sort_bucket_rows(rows)
+
+
+def _cp_sort_bucket_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows.sort(
+        key=lambda row: (
+            int(row.get("sample_count") or 0),
+            _decimal_or_zero(row.get("confirm_rate_pct")),
+            _decimal_or_zero(row.get("realistic_avg_r_closed")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _cp_bucket_summary(bucket: str, bucket_items: list[dict[str, Any]], *, baseline: dict[str, Any]) -> dict[str, Any]:
+    perf = _cp_confirm_perf_summary(bucket_items, baseline=baseline)
+    return {
+        "bucket": bucket,
+        **perf,
+    }
+
+
+def _cp_confirm_perf_summary(items: list[dict[str, Any]], baseline: dict[str, Any] | None = None) -> dict[str, Any]:
+    perf = _walk_forward_perf(items, baseline=baseline)
+    confirm_count = sum(1 for item in items if bool(item.get("_cp_confirm_label")))
+    skipped_count = max(0, len(items) - confirm_count)
+    perf.update(
+        {
+            "confirm_count": confirm_count,
+            "skipped_count": skipped_count,
+            "confirm_rate_pct": Decimal(confirm_count) / Decimal(len(items)) * Decimal("100") if items else None,
+        }
+    )
+    if baseline is not None:
+        perf["confirm_rate_delta_vs_baseline"] = _decimal_delta(
+            perf.get("confirm_rate_pct"),
+            baseline.get("confirm_rate_pct"),
+        )
+    return perf
+
+
+def _cp_best_worst_feature_buckets(rows: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    candidates = [row for row in rows if row.get("bucket") != "MISSING" and int(row.get("sample_count") or 0) > 0]
+    if not candidates:
+        return None, None
+    candidates.sort(
+        key=lambda row: (
+            _decimal_or_zero(row.get("confirm_rate_pct")),
+            _decimal_or_zero(row.get("realistic_avg_r_closed")),
+            int(row.get("sample_count") or 0),
+        ),
+        reverse=True,
+    )
+    return candidates[0], candidates[-1]
+
+
+def _cp_feature_read(row: dict[str, Any], *, min_sample: int) -> str:
+    selected = row.get("validation_selected") or {}
+    if int(selected.get("sample_count") or 0) < min_sample:
+        return "FEATURE_VALIDATION_SAMPLE_SMALL"
+    confirm_gap = _decimal_or_zero(row.get("development_confirm_gap_pct"))
+    avg_delta = _decimal_or_none_any(selected.get("realistic_avg_r_delta_vs_baseline"))
+    if confirm_gap >= Decimal("10") and avg_delta is not None and avg_delta > 0:
+        return "FEATURE_CANDIDATE"
+    if confirm_gap >= Decimal("10"):
+        return "FEATURE_CONFIRM_ONLY"
+    if avg_delta is not None and avg_delta > 0:
+        return "FEATURE_ECONOMIC_ONLY"
+    return "FEATURE_NO_CLEAR_SEPARATION"
+
+
+def _cp_predictor_specs(rows: list[dict[str, Any]], *, min_sample: int, limit: int) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for row in rows:
+        bucket = row.get("development_best_bucket")
+        if not bucket or bucket == "MISSING":
+            continue
+        if int((row.get("validation_selected") or {}).get("sample_count") or 0) < min_sample:
+            continue
+        if _decimal_or_zero(row.get("development_confirm_gap_pct")) <= 0:
+            continue
+        specs.append(
+            {
+                "field": row["field"],
+                "label": row["label"],
+                "family": row["family"],
+                "favorable_bucket": bucket,
+                "development_q33": row.get("development_q33"),
+                "development_q66": row.get("development_q66"),
+                "development_confirm_gap_pct": row.get("development_confirm_gap_pct"),
+                "development_avg_r_gap": row.get("development_avg_r_gap"),
+                "validation_selected": row.get("validation_selected"),
+                "read": row.get("development_read"),
+            }
+        )
+    specs.sort(
+        key=lambda spec: (
+            spec.get("read") == "FEATURE_CANDIDATE",
+            _decimal_or_zero(spec.get("development_confirm_gap_pct")),
+            _decimal_or_zero((spec.get("validation_selected") or {}).get("realistic_avg_r_delta_vs_baseline")),
+        ),
+        reverse=True,
+    )
+    return specs[:limit]
+
+
+def _cp_score_items(items: list[dict[str, Any]], predictor_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    scored: list[dict[str, Any]] = []
+    for item in items:
+        score = 0
+        matched: list[str] = []
+        for spec in predictor_specs:
+            thresholds = {"q33": spec.get("development_q33"), "q66": spec.get("development_q66")}
+            bucket = _cp_numeric_bucket(_decimal_or_none_any(item.get(str(spec.get("field")))), thresholds)
+            if bucket == spec.get("favorable_bucket"):
+                score += 1
+                matched.append(str(spec.get("field")))
+        row = dict(item)
+        row["_cp_score"] = score
+        row["_cp_matched_predictors"] = matched
+        scored.append(row)
+    return scored
+
+
+def _cp_score_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    segment: str,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        score = int(item.get("_cp_score") or 0)
+        bucket = "SCORE_4_PLUS" if score >= 4 else f"SCORE_{score}"
+        groups[bucket].append(item)
+    rows = []
+    for bucket in ("SCORE_0", "SCORE_1", "SCORE_2", "SCORE_3", "SCORE_4_PLUS"):
+        row = _cp_bucket_summary(bucket, groups.get(bucket, []), baseline=baseline)
+        row.update(
+            {
+                "segment": segment,
+                "read": _cp_score_bucket_read(row, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _cp_score_bucket_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("sample_count") or 0) < min_sample:
+        return "SCORE_BUCKET_SAMPLE_SMALL"
+    avg_delta = _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline"))
+    confirm_delta = _decimal_or_none_any(row.get("confirm_rate_delta_vs_baseline"))
+    if avg_delta is not None and avg_delta > 0 and confirm_delta is not None and confirm_delta > 0:
+        return "SCORE_BUCKET_CONFIRMS_AND_IMPROVES_R"
+    if confirm_delta is not None and confirm_delta > 0:
+        return "SCORE_BUCKET_CONFIRMS_ONLY"
+    if avg_delta is not None and avg_delta > 0:
+        return "SCORE_BUCKET_R_ONLY"
+    return "SCORE_BUCKET_NO_EDGE"
+
+
+def _cp_false_positive_negative_audit(
+    items: list[dict[str, Any]],
+    *,
+    score_threshold: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    selected = [item for item in items if int(item.get("_cp_score") or 0) >= score_threshold]
+    rejected = [item for item in items if int(item.get("_cp_score") or 0) < score_threshold]
+    true_positive = [item for item in selected if bool(item.get("_cp_confirm_label"))]
+    false_positive = [item for item in selected if not bool(item.get("_cp_confirm_label"))]
+    false_negative = [item for item in rejected if bool(item.get("_cp_confirm_label"))]
+    true_negative = [item for item in rejected if not bool(item.get("_cp_confirm_label"))]
+    return {
+        "score_threshold": score_threshold,
+        "selected_count": len(selected),
+        "rejected_count": len(rejected),
+        "true_positive_count": len(true_positive),
+        "false_positive_count": len(false_positive),
+        "false_negative_count": len(false_negative),
+        "true_negative_count": len(true_negative),
+        "selected": _cp_confirm_perf_summary(selected, baseline=_cp_confirm_perf_summary(items, baseline=None)),
+        "false_positive_breakdown": _cp_error_breakdown(false_positive, min_sample=min_sample),
+        "false_negative_breakdown": _cp_error_breakdown(false_negative, min_sample=min_sample),
+        "false_positive_examples": _cp_example_rows(false_positive, limit=8),
+        "false_negative_examples": _cp_example_rows(false_negative, limit=8),
+    }
+
+
+def _cp_error_breakdown(items: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        key = "|".join(
+            (
+                str(item.get("structure_zone_primary_state") or "PRIMARY_UNKNOWN"),
+                str(item.get("structure_zone_context_state") or "CONTEXT_UNKNOWN"),
+                str(item.get("realistic_fill_quality") or "FILL_UNKNOWN"),
+            )
+        )
+        groups[key].append(item)
+    rows = []
+    baseline = _cp_confirm_perf_summary(items, baseline=None)
+    for key, group in groups.items():
+        row = _cp_confirm_perf_summary(group, baseline=baseline)
+        row.update({"bucket": key, "read": "ERROR_BUCKET_SMALL" if len(group) < min_sample else "ERROR_BUCKET_REVIEW"})
+        rows.append(row)
+    rows.sort(key=lambda row: (int(row.get("sample_count") or 0), _decimal_or_zero(row.get("realistic_total_r_closed")) * Decimal("-1")), reverse=True)
+    return rows[:10]
+
+
+def _cp_example_rows(items: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            _parse_dt(item.get("signal_timestamp")) or datetime.min,
+            str(item.get("symbol") or ""),
+        ),
+        reverse=True,
+    )
+    rows = []
+    for item in ordered[:limit]:
+        rows.append(
+            {
+                "signal_id": item.get("signal_id"),
+                "symbol": item.get("symbol"),
+                "signal_time_wib": item.get("signal_time_wib"),
+                "result_status": item.get("result_status"),
+                "realistic_realized_r": item.get("realistic_realized_r"),
+                "confirm_label": bool(item.get("_cp_confirm_label")),
+                "first_hour_state": item.get("_cp_first_hour_state"),
+                "score": item.get("_cp_score"),
+                "matched_predictors": item.get("_cp_matched_predictors") or [],
+                "structure_zone_primary_state": item.get("structure_zone_primary_state"),
+                "structure_zone_context_state": item.get("structure_zone_context_state"),
+                "room_to_next_resistance_atr": item.get("room_to_next_resistance_atr"),
+                "entry_distance_from_zone_atr": item.get("entry_distance_from_zone_atr"),
+                "kline_taker_buy_ratio": item.get("kline_taker_buy_ratio"),
+                "oi_zscore": item.get("oi_zscore"),
+            }
+        )
+    return rows
+
+
+def _cp_confirmation_predictor_summary(
+    *,
+    all_perf: dict[str, Any],
+    development_perf: dict[str, Any],
+    validation_perf: dict[str, Any],
+    predictor_specs: list[dict[str, Any]],
+    score_bucket_rows: list[dict[str, Any]],
+    score_threshold: int,
+    unavailable_count: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    validation_selected = [
+        row
+        for row in score_bucket_rows
+        if row.get("segment") == "validation"
+        and str(row.get("bucket") or "") in {"SCORE_2", "SCORE_3", "SCORE_4_PLUS"}
+    ]
+    selected_count = sum(int(row.get("sample_count") or 0) for row in validation_selected)
+    selected_total_r = sum((_decimal_or_zero(row.get("realistic_total_r_closed")) for row in validation_selected), Decimal("0"))
+    selected_values = [
+        _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline"))
+        for row in validation_selected
+        if _decimal_or_none_any(row.get("realistic_avg_r_delta_vs_baseline")) is not None
+    ]
+    avg_delta = _avg_decimal([value for value in selected_values if value is not None])
+    if not predictor_specs:
+        read = "CP_NO_PREDICTOR_SPEC"
+        next_action = "Feature rows are available, but no development-period predictor passed sample requirements."
+    elif selected_count < min_sample:
+        read = "CP_VALIDATION_SAMPLE_SMALL"
+        next_action = "Collect more validation rows before judging the score."
+    elif selected_total_r > 0 and avg_delta is not None and avg_delta > 0:
+        read = "CP_SCORE_VALIDATION_PROMISING"
+        next_action = "Audit false positives/negatives, then freeze a simple shadow score. Do not change live rules yet."
+    elif avg_delta is not None and avg_delta > 0:
+        read = "CP_SCORE_REDUCES_DAMAGE"
+        next_action = "Score improves average validation R but not total R. Refine structure-family splits."
+    else:
+        read = "CP_SCORE_NOT_READY"
+        next_action = "Keep searching pre-entry predictors; current score does not improve validation enough."
+    return {
+        "read": read,
+        "next_action": next_action,
+        "all_confirm_rate_pct": all_perf.get("confirm_rate_pct"),
+        "development_confirm_rate_pct": development_perf.get("confirm_rate_pct"),
+        "validation_confirm_rate_pct": validation_perf.get("confirm_rate_pct"),
+        "selected_predictor_count": len(predictor_specs),
+        "score_threshold": score_threshold if predictor_specs else None,
+        "validation_selected_count": selected_count,
+        "validation_selected_total_r": selected_total_r,
+        "validation_selected_avg_delta": avg_delta,
+        "unavailable_count": unavailable_count,
+    }
 
 
 def _mid_long_exact_early_exit_row(

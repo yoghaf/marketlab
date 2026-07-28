@@ -38,6 +38,12 @@ import {
   MidLongFirstHourSampleRow,
   MidLongFirstHourStateRow,
   MidLongGeometryThresholdRow,
+  MidLongConfirmationFeatureRow,
+  MidLongConfirmationFalseAudit,
+  MidLongConfirmationPerf,
+  MidLongConfirmationPredictorSpec,
+  MidLongConfirmationPredictorStudy,
+  MidLongConfirmationScoreBucketRow,
   MidLongIntegrityAudit,
   MidLongPairedAttributionPerf,
   MidLongPairedAttributionRow,
@@ -903,6 +909,18 @@ function FirstHourExactReplayPanel({ lab }: { lab: MidLongFirstHourExactReplayLa
         </div>
       )}
 
+      {lab.confirmation_predictor_study && (
+        <div className="border-b border-line">
+          <div className="px-4 py-3">
+            <div className="font-bold">Confirmation predictor study</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">
+              Mencari tanda pre-entry yang bisa membedakan signal yang akan confirm pada 1 jam pertama. Label Y_CONFIRM memakai first-hour response; TP/SL/R hanya metric evaluasi, bukan input predictor.
+            </div>
+          </div>
+          <ConfirmationPredictorPanel study={lab.confirmation_predictor_study} />
+        </div>
+      )}
+
       <div className="border-b border-line">
         <div className="px-4 py-3">
           <div className="font-bold">Delayed-entry exact replay</div>
@@ -924,6 +942,290 @@ function FirstHourExactReplayPanel({ lab }: { lab: MidLongFirstHourExactReplayLa
           <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ConfirmationPredictorPanel({ study }: { study: MidLongConfirmationPredictorStudy }) {
+  const summary = study.summary;
+  const selected = study.false_positive_negative?.selected;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <Info label="Read" value={humanFlag(summary.read)} helper={summary.next_action} />
+        <Info label="Labeled" value={`${study.labeled_count} / ${study.source_count}`} helper={`unavailable ${study.unavailable_count}`} />
+        <Info label="Confirm all" value={formatPct(summary.all_confirm_rate_pct)} helper="Y_CONFIRM rate" />
+        <Info label="Confirm dev" value={formatPct(summary.development_confirm_rate_pct)} helper={`${study.split.development_count} train rows`} />
+        <Info label="Confirm validation" value={formatPct(summary.validation_confirm_rate_pct)} helper={`${study.split.validation_count} validation rows`} />
+        <Info label="Predictors" value={String(summary.selected_predictor_count)} helper={`threshold ${summary.score_threshold ?? "-"}`} />
+        <Info label="Validation selected" value={String(summary.validation_selected_count)} helper={`R ${fmtSigned(summary.validation_selected_total_r)} | avg delta ${fmtSigned(summary.validation_selected_avg_delta)}R`} />
+        <Info label="Selected TP/SL" value={`${selected?.tp_count || 0} / ${selected?.sl_count || 0}`} helper={`confirm ${formatPct(selected?.confirm_rate_pct)}`} />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded-md border border-line bg-field/40 p-3 text-sm leading-6">
+            <div className="font-bold">Label integrity</div>
+            <div className="mt-2 text-slate-700">
+              <div>Positive label: <span className="font-semibold">{study.label_integrity.confirm_label}</span></div>
+              <div>Negative label: <span className="font-semibold">{study.label_integrity.negative_label}</span></div>
+              <div>Outcome policy: <span className="font-semibold">{study.label_integrity.outcome_policy}</span></div>
+            </div>
+          </div>
+          <div className="rounded-md border border-line bg-field/40 p-3 text-sm leading-6">
+            <div className="font-bold">Forbidden predictors</div>
+            <div className="mt-2 text-slate-700">{study.label_integrity.forbidden_predictors.join(", ")}</div>
+            <div className="mt-2 text-xs text-slate-500">Kalau field ini muncul sebagai input, hasil study invalid karena bocor dari masa depan atau outcome.</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Selected pre-entry predictor specs</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Dipilih dari development split, lalu dicek lagi di validation. Ini candidate evidence, bukan rule live.</div>
+        </div>
+        <ConfirmationPredictorSpecTable rows={study.selected_predictor_specs} />
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Top numeric feature buckets</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Bucket per field pre-entry. Dev gap mencari pemisahan Y_CONFIRM; validation R hanya sanity check ekonomi.</div>
+        </div>
+        <ConfirmationFeatureTable rows={study.numeric_feature_rows.slice(0, 14)} />
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Top categorical buckets</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Status structure, confidence, flag execution, dan fill quality sebagai kandidat pemisah confirmation.</div>
+        </div>
+        <ConfirmationFeatureTable rows={study.categorical_feature_rows.slice(0, 10)} />
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Score bucket validation</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Skor jumlah predictor yang cocok. Bucket tinggi harus lebih confirm dan tidak merusak R di validation agar pantas lanjut shadow.</div>
+        </div>
+        <ConfirmationScoreBucketTable rows={study.score_bucket_rows.filter((row) => row.segment === "validation" || row.segment === "all")} />
+      </div>
+
+      <ConfirmationFalseAuditPanel audit={study.false_positive_negative} />
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {study.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationPredictorSpecTable({ rows }: { rows: MidLongConfirmationPredictorSpec[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Belum ada predictor terpilih" detail="Development split belum menemukan bucket pre-entry yang cukup stabil." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Favorable bucket</th>
+            <th>Development split</th>
+            <th>Validation selected</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.field}-${row.favorable_bucket}`}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field} | {row.family}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.favorable_bucket)} /></td>
+              <td className="text-xs leading-5">
+                <div>q33/q66 {fmtSigned(row.development_q33)} / {fmtSigned(row.development_q66)}</div>
+                <div>confirm gap {fmtSigned(row.development_confirm_gap_pct)}%</div>
+                <div>avg R gap {fmtSigned(row.development_avg_r_gap)}R</div>
+              </td>
+              <td><ConfirmationPerfCell perf={row.validation_selected} /></td>
+              <td><StatusBadge value={humanFlag(row.read || "-")} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationFeatureTable({ rows }: { rows: MidLongConfirmationFeatureRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Feature bucket kosong" detail="Snapshot belum memuat feature rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Available</th>
+            <th>Best / worst dev</th>
+            <th>Dev separation</th>
+            <th>Validation selected</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field} | {row.family}</div>
+              </td>
+              <td>
+                <div>{row.available_count} / miss {row.missing_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.available_pct)} available</div>
+              </td>
+              <td>
+                <div><StatusBadge value={humanFlag(row.development_best_bucket || "-")} /></div>
+                <div className="mt-1"><StatusBadge value={humanFlag(row.development_worst_bucket || "-")} /></div>
+              </td>
+              <td className="text-xs leading-5">
+                <div>confirm gap {fmtSigned(row.development_confirm_gap_pct)}%</div>
+                <div>avg R gap {fmtSigned(row.development_avg_r_gap)}R</div>
+                <div>q33/q66 {fmtSigned(row.development_q33)} / {fmtSigned(row.development_q66)}</div>
+              </td>
+              <td><ConfirmationPerfCell perf={row.validation_selected} /></td>
+              <td><StatusBadge value={humanFlag(row.development_read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationScoreBucketTable({ rows }: { rows: MidLongConfirmationScoreBucketRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Score bucket kosong" detail="Belum ada score bucket rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Segment</th>
+            <th>Bucket</th>
+            <th>Sample</th>
+            <th>Confirm</th>
+            <th>TP / SL</th>
+            <th>R</th>
+            <th>Symbol concentration</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.segment}-${row.bucket}`}>
+              <td className="font-bold">{humanFlag(row.segment || "-")}</td>
+              <td><StatusBadge value={humanFlag(row.bucket)} /></td>
+              <td>{row.sample_count || row.signals_evaluated || 0}</td>
+              <td>
+                <div>{row.confirm_count || 0} ({formatPct(row.confirm_rate_pct)})</div>
+                <div className="text-xs text-slate-500">delta {fmtSigned(row.confirm_rate_delta_vs_baseline)}%</div>
+              </td>
+              <td>{row.tp_count || 0} / {row.sl_count || 0}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>
+                <div>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg {fmtSigned(row.realistic_avg_r_closed)}R | delta {fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</div>
+              </td>
+              <td>{row.top_symbol || "-"} {formatPct(row.top_symbol_share_pct)}</td>
+              <td><StatusBadge value={humanFlag(row.read || "-")} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationFalseAuditPanel({ audit }: { audit: MidLongConfirmationFalseAudit }) {
+  return (
+    <div className="border-b border-line">
+      <div className="px-4 py-3">
+        <div className="font-bold">False positive / false negative audit</div>
+        <div className="mt-1 text-xs leading-5 text-slate-500">False positive = skor lolos tapi tidak confirm. False negative = skor tidak lolos tapi ternyata confirm.</div>
+      </div>
+      <div className="grid gap-3 border-b border-line p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        <Info label="Selected" value={String(audit.selected_count)} helper={`threshold ${audit.score_threshold}`} />
+        <Info label="Rejected" value={String(audit.rejected_count)} helper="score below threshold" />
+        <Info label="True positive" value={String(audit.true_positive_count)} helper="selected + confirm" />
+        <Info label="False positive" value={String(audit.false_positive_count)} helper="selected + not confirm" />
+        <Info label="False negative" value={String(audit.false_negative_count)} helper="rejected + confirm" />
+        <Info label="True negative" value={String(audit.true_negative_count)} helper="rejected + not confirm" />
+      </div>
+      <div className="grid gap-4 p-4 xl:grid-cols-2">
+        <div>
+          <div className="mb-2 font-bold">False positive examples</div>
+          <ConfirmationExampleTable rows={audit.false_positive_examples} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">False negative examples</div>
+          <ConfirmationExampleTable rows={audit.false_negative_examples} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationExampleTable({ rows }: { rows: MidLongConfirmationFalseAudit["false_positive_examples"] }) {
+  if (!rows.length) return <EmptyState title="Tidak ada sample" detail="Bucket ini kosong pada snapshot sekarang." />;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Symbol</th>
+            <th>State</th>
+            <th>R</th>
+            <th>Score</th>
+            <th>Structure</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={`${row.signal_id || row.symbol || "row"}-${idx}`}>
+              <td className="min-w-40">{row.signal_time_wib || "-"}</td>
+              <td className="font-bold">{row.symbol || "-"}</td>
+              <td>
+                <div><StatusBadge value={humanFlag(row.first_hour_state || "-")} /></div>
+                <div className="mt-1 text-xs text-slate-500">{row.result_status || "-"}</div>
+              </td>
+              <td className={toneClass(row.realistic_realized_r)}>{fmtSigned(row.realistic_realized_r)}R</td>
+              <td>
+                <div className="font-bold">{row.score ?? "-"}</div>
+                <div className="text-xs leading-5 text-slate-500">{(row.matched_predictors || []).slice(0, 3).join(", ") || "-"}</div>
+              </td>
+              <td className="text-xs leading-5 text-slate-600">
+                <div>{humanFlag(row.structure_zone_primary_state || "-")}</div>
+                <div>{humanFlag(row.structure_zone_context_state || "-")}</div>
+                <div>room {fmtSigned(row.room_to_next_resistance_atr)} ATR | entry dist {fmtSigned(row.entry_distance_from_zone_atr)} ATR</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationPerfCell({ perf }: { perf?: MidLongConfirmationPerf | null }) {
+  if (!perf) return <span className="text-slate-400">-</span>;
+  return (
+    <div className="min-w-48 text-xs leading-5">
+      <div className={toneClass(perf.realistic_total_r_closed)}>{fmtSigned(perf.realistic_total_r_closed)}R total</div>
+      <div>avg {fmtSigned(perf.realistic_avg_r_closed)}R | TP/SL {perf.tp_count || 0}/{perf.sl_count || 0}</div>
+      <div>confirm {formatPct((perf as MidLongConfirmationScoreBucketRow).confirm_rate_pct)} | n {(perf as MidLongConfirmationScoreBucketRow).sample_count || perf.closed_count || 0}</div>
+      <div className="text-slate-500">top {perf.top_symbol || "-"} {formatPct(perf.top_symbol_share_pct)}</div>
     </div>
   );
 }
