@@ -4123,6 +4123,7 @@ export type MidLongFirstHourExactReplayLab = {
   baseline_realistic_avg_r_closed?: string | number | null;
   baseline_max_realistic_drawdown_r?: string | number | null;
   delayed_entry_rows: MidLongFirstHourExactReplayRow[];
+  paired_attribution_rows?: MidLongPairedAttributionRow[];
   early_exit_rows: MidLongFirstHourExactReplayRow[];
   summary: {
     read: string;
@@ -4184,6 +4185,55 @@ export type MidLongFirstHourExactReplayRow = {
   top_symbol?: string | null;
   top_symbol_count?: number;
   top_symbol_share_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongPairedAttributionPerf = {
+  closed_count?: number | string | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  both_hit_count?: number | string | null;
+  open_count?: number | string | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  median_realistic_r_closed?: string | number | null;
+  max_realistic_drawdown_r?: string | number | null;
+  winrate_pct?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidLongPairedAttributionRow = {
+  variant_id: string;
+  label: string;
+  expression: string;
+  scope: string;
+  source_count: number;
+  retained_count: number;
+  skipped_count: number;
+  unavailable_count: number;
+  state_mix: Record<string, number>;
+  skipped_state_mix: Record<string, number>;
+  unavailable_reasons: Record<string, number>;
+  retained_original: MidLongPairedAttributionPerf;
+  delayed_repriced: MidLongPairedAttributionPerf;
+  skipped_original: MidLongPairedAttributionPerf;
+  unavailable_original: MidLongPairedAttributionPerf;
+  repricing_effect_r?: string | number | null;
+  selection_effect_r?: string | number | null;
+  unavailable_effect_r?: string | number | null;
+  decomposed_improvement_r?: string | number | null;
+  direct_delta_vs_baseline_r?: string | number | null;
+  decomposition_gap_r?: string | number | null;
+  tp_skipped_count?: number | string | null;
+  sl_avoided_count?: number | string | null;
+  entry_deterioration_r_avg?: string | number | null;
+  entry_deterioration_r_median?: string | number | null;
+  remaining_room_after_delay_r_avg?: string | number | null;
+  remaining_room_after_delay_r_median?: string | number | null;
+  first_hour_close_r_avg?: string | number | null;
+  first_hour_close_r_median?: string | number | null;
+  projected_cost_change_r?: string | number | null;
   read: string;
 };
 

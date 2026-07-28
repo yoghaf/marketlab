@@ -287,6 +287,21 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert first_hour_exact["scope"] == "MID_LONG 1h First-Hour Exact Candle Replay"
     assert {row["simulation_family"] for row in first_hour_exact["delayed_entry_rows"]} == {"DELAYED_ENTRY_EXACT"}
     assert {row["simulation_family"] for row in first_hour_exact["early_exit_rows"]} == {"EARLY_EXIT_EXACT"}
+    assert len(first_hour_exact["paired_attribution_rows"]) == len(first_hour_exact["delayed_entry_rows"])
+    paired = first_hour_exact["paired_attribution_rows"][0]
+    assert "retained_original" in paired
+    assert "delayed_repriced" in paired
+    assert "skipped_original" in paired
+    assert "selection_effect_r" in paired
+    assert "repricing_effect_r" in paired
+    assert paired["read"] in {
+        "PAIRED_SAMPLE_SMALL",
+        "PAIRED_CONFIRMATION_AND_REPRICE_PROMISING",
+        "PAIRED_SELECTION_HELPS_REPRICING_HURTS",
+        "PAIRED_SELECTION_AND_REPRICE_REDUCE_DAMAGE",
+        "PAIRED_REPRICE_HELPS_BUT_SELECTION_HURTS",
+        "PAIRED_NOT_SUPPORTED",
+    }
     assert first_hour_exact["summary"]["read"] in {
         "EXACT_EARLY_EXIT_LEADS",
         "EXACT_DELAYED_ENTRY_LEADS",

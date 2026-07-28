@@ -5413,6 +5413,16 @@ def _mid_long_first_hour_exact_replay_lab(
         )
         for spec in delayed_specs
     ]
+    paired_attribution_rows = [
+        _mid_long_paired_confirmation_attribution_row(
+            ordered,
+            candles_by_symbol=candles_by_symbol,
+            baseline=baseline,
+            min_sample=min_sample,
+            **spec,
+        )
+        for spec in delayed_specs
+    ]
     early_exit_rows = [
         _mid_long_exact_early_exit_row(
             ordered,
@@ -5443,6 +5453,7 @@ def _mid_long_first_hour_exact_replay_lab(
         "baseline_realistic_avg_r_closed": (baseline or {}).get("realistic_avg_r_closed"),
         "baseline_max_realistic_drawdown_r": (baseline or {}).get("max_realistic_drawdown_r"),
         "delayed_entry_rows": delayed_rows,
+        "paired_attribution_rows": paired_attribution_rows,
         "early_exit_rows": early_exit_rows,
         "summary": summary,
         "guardrails": [
@@ -5450,6 +5461,7 @@ def _mid_long_first_hour_exact_replay_lab(
             "All fills use the next available local futures candle open; no intrabar discretionary exit is assumed.",
             "If TP/SL is touched before a first-hour early-exit decision, the original terminal result remains in force.",
             "Delayed-entry rows are sample-reducing cohorts; compare both total R and retained sample count.",
+            "Paired attribution separates skipped-signal selection effect from delayed-entry repricing effect.",
         ],
     }
 
@@ -5549,6 +5561,199 @@ def _mid_long_exact_delayed_entry_row(
         }
     )
     return row
+
+
+def _mid_long_paired_confirmation_attribution_row(
+    items: list[dict[str, Any]],
+    *,
+    candles_by_symbol: dict[str, list[PerfCandle]],
+    baseline: dict[str, Any] | None,
+    min_sample: int,
+    variant_id: str,
+    label: str,
+    expression: str,
+    allowed_states: set[str],
+) -> dict[str, Any]:
+    retained_original_results: list[dict[str, Any]] = []
+    delayed_results: list[dict[str, Any]] = []
+    skipped_original_results: list[dict[str, Any]] = []
+    unavailable_original_results: list[dict[str, Any]] = []
+    state_counts: Counter[str] = Counter()
+    skipped_state_counts: Counter[str] = Counter()
+    unavailable_reasons: Counter[str] = Counter()
+    entry_deterioration_values: list[Decimal] = []
+    remaining_room_values: list[Decimal] = []
+    first_hour_close_values: list[Decimal] = []
+
+    for item in items:
+        replay = _mid_long_exact_replay_context(item, candles_by_symbol)
+        control = _mid_long_control_result(item)
+        if replay is None:
+            unavailable_reasons["missing_decision_or_geometry"] += 1
+            if control is not None:
+                unavailable_original_results.append(control)
+            continue
+
+        state = replay["first_hour_state"]
+        state_counts[state] += 1
+        if state not in allowed_states:
+            skipped_state_counts[state] += 1
+            if control is not None:
+                skipped_original_results.append(control)
+            continue
+
+        fill = _mid_long_next_fill_candle(replay["candles"], decision_close=replay["decision_candle"].close_time)
+        rr = replay["target_rr"]
+        risk = replay["risk"]
+        if fill is None:
+            unavailable_reasons["missing_next_open_fill"] += 1
+            if control is not None:
+                unavailable_original_results.append(control)
+            continue
+        if rr is None or risk <= 0:
+            unavailable_reasons["invalid_rr_or_risk"] += 1
+            if control is not None:
+                unavailable_original_results.append(control)
+            continue
+
+        delayed_entry = fill.open
+        delayed_stop = delayed_entry - risk
+        delayed_target = delayed_entry + (risk * rr)
+        if delayed_stop <= 0 or delayed_target <= delayed_entry:
+            unavailable_reasons["invalid_delayed_geometry"] += 1
+            if control is not None:
+                unavailable_original_results.append(control)
+            continue
+
+        future = [candle for candle in replay["candles"] if candle.open_time >= fill.open_time]
+        delayed = _mid_long_replay_long_path(
+            item,
+            entry=delayed_entry,
+            stop=delayed_stop,
+            target=delayed_target,
+            risk=risk,
+            future=future,
+            replay_status_prefix="PAIRED_DELAYED_ENTRY",
+        )
+        delayed.update(
+            {
+                "simulation_family": "PAIRED_CONFIRMATION_ATTRIBUTION",
+                "variant_id": variant_id,
+                "first_hour_state": state,
+                "decision_time_utc": replay["decision_candle"].close_time,
+                "fill_time_utc": fill.open_time,
+                "fill_price": fill.open,
+            }
+        )
+        if control is not None:
+            control["first_hour_state"] = state
+            retained_original_results.append(control)
+        delayed_results.append(delayed)
+        entry_deterioration_values.append((delayed_entry - replay["entry"]) / risk)
+        remaining_room_values.append((replay["target"] - delayed_entry) / risk)
+        first_hour_close_values.append(replay["first_hour_close_r"])
+
+    retained_original_perf = _mid_long_exact_replay_performance(retained_original_results)
+    delayed_perf = _mid_long_exact_replay_performance(delayed_results)
+    skipped_perf = _mid_long_exact_replay_performance(skipped_original_results)
+    unavailable_perf = _mid_long_exact_replay_performance(unavailable_original_results)
+
+    retained_original_total = _decimal_or_zero(retained_original_perf.get("realistic_total_r_closed"))
+    delayed_total = _decimal_or_zero(delayed_perf.get("realistic_total_r_closed"))
+    skipped_total = _decimal_or_zero(skipped_perf.get("realistic_total_r_closed"))
+    unavailable_total = _decimal_or_zero(unavailable_perf.get("realistic_total_r_closed"))
+    baseline_total = _decimal_or_zero((baseline or {}).get("realistic_total_r_closed"))
+    repricing_effect = delayed_total - retained_original_total
+    selection_effect = -skipped_total
+    unavailable_effect = -unavailable_total
+    decomposed_improvement = repricing_effect + selection_effect + unavailable_effect
+    direct_delta = delayed_total - baseline_total if baseline else None
+    decomposition_gap = direct_delta - decomposed_improvement if direct_delta is not None else None
+    cost_change = _mid_long_realism_penalty_r(delayed_results) - _mid_long_realism_penalty_r(retained_original_results)
+
+    row = {
+        "variant_id": variant_id,
+        "label": label,
+        "expression": expression,
+        "scope": "MID_LONG 1h paired confirmation attribution",
+        "source_count": len(items),
+        "retained_count": len(delayed_results),
+        "skipped_count": len(skipped_original_results),
+        "unavailable_count": len(unavailable_original_results),
+        "state_mix": dict(state_counts),
+        "skipped_state_mix": dict(skipped_state_counts),
+        "unavailable_reasons": dict(unavailable_reasons),
+        "retained_original": _mid_long_paired_perf_summary(retained_original_perf),
+        "delayed_repriced": _mid_long_paired_perf_summary(delayed_perf),
+        "skipped_original": _mid_long_paired_perf_summary(skipped_perf),
+        "unavailable_original": _mid_long_paired_perf_summary(unavailable_perf),
+        "repricing_effect_r": repricing_effect,
+        "selection_effect_r": selection_effect,
+        "unavailable_effect_r": unavailable_effect,
+        "decomposed_improvement_r": decomposed_improvement,
+        "direct_delta_vs_baseline_r": direct_delta,
+        "decomposition_gap_r": decomposition_gap,
+        "tp_skipped_count": skipped_perf.get("tp_count"),
+        "sl_avoided_count": skipped_perf.get("sl_count"),
+        "entry_deterioration_r_avg": _avg_decimal(entry_deterioration_values),
+        "entry_deterioration_r_median": _percentile_decimal(entry_deterioration_values, Decimal("0.50")),
+        "remaining_room_after_delay_r_avg": _avg_decimal(remaining_room_values),
+        "remaining_room_after_delay_r_median": _percentile_decimal(remaining_room_values, Decimal("0.50")),
+        "first_hour_close_r_avg": _avg_decimal(first_hour_close_values),
+        "first_hour_close_r_median": _percentile_decimal(first_hour_close_values, Decimal("0.50")),
+        "projected_cost_change_r": cost_change,
+    }
+    row["read"] = _mid_long_paired_attribution_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_paired_perf_summary(perf: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "closed_count": perf.get("closed_count"),
+        "tp_count": perf.get("tp_count"),
+        "sl_count": perf.get("sl_count"),
+        "both_hit_count": perf.get("both_hit_count"),
+        "open_count": perf.get("open_count"),
+        "realistic_total_r_closed": perf.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": perf.get("realistic_avg_r_closed"),
+        "median_realistic_r_closed": perf.get("median_realistic_r_closed"),
+        "max_realistic_drawdown_r": perf.get("max_realistic_drawdown_r"),
+        "winrate_pct": perf.get("winrate_pct"),
+        "top_symbol": perf.get("top_symbol"),
+        "top_symbol_share_pct": perf.get("top_symbol_share_pct"),
+    }
+
+
+def _mid_long_realism_penalty_r(results: list[dict[str, Any]]) -> Decimal:
+    penalty = Decimal("0")
+    for result in results:
+        status = str(result.get("result_status") or "")
+        if status not in COMPLETED_OUTCOMES and not status.startswith("EXACT_EXIT_"):
+            continue
+        ideal = _decimal_or_none_any(result.get("realized_r"))
+        realistic = _decimal_or_none_any(result.get("realistic_realized_r"))
+        if ideal is None or realistic is None:
+            continue
+        penalty += realistic - ideal
+    return penalty
+
+
+def _mid_long_paired_attribution_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("retained_count") or 0) < min_sample:
+        return "PAIRED_SAMPLE_SMALL"
+    repricing = _decimal_or_zero(row.get("repricing_effect_r"))
+    selection = _decimal_or_zero(row.get("selection_effect_r"))
+    delayed = row.get("delayed_repriced") or {}
+    delayed_total = _decimal_or_zero(delayed.get("realistic_total_r_closed"))
+    if delayed_total > 0 and repricing > 0 and selection > 0:
+        return "PAIRED_CONFIRMATION_AND_REPRICE_PROMISING"
+    if selection > 0 and repricing <= 0:
+        return "PAIRED_SELECTION_HELPS_REPRICING_HURTS"
+    if selection > 0 and repricing > 0:
+        return "PAIRED_SELECTION_AND_REPRICE_REDUCE_DAMAGE"
+    if selection <= 0 and repricing > 0:
+        return "PAIRED_REPRICE_HELPS_BUT_SELECTION_HURTS"
+    return "PAIRED_NOT_SUPPORTED"
 
 
 def _mid_long_exact_early_exit_row(

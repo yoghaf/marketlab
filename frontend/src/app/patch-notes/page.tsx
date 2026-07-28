@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-19",
+    title: "MID_LONG Paired Confirmation Attribution",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan attribution lab untuk membedakan efek signal yang diskip dari efek entry yang benar-benar ditunda.",
+    changes: [
+      "First-Hour Exact Candle Replay sekarang menampilkan paired_attribution_rows untuk setiap delayed-entry variant.",
+      "Retained original membandingkan hasil signal yang sama jika tetap memakai entry lama.",
+      "Delayed repriced membandingkan hasil signal yang sama setelah entry di next-open dan SL/TP dihitung ulang.",
+      "Skipped original menunjukkan apakah signal yang tidak diambil memang lebih banyak menyelamatkan SL atau justru memotong TP.",
+      "Halaman /mid-long-research-study menambahkan tabel Paired confirmation attribution dengan selection effect, repricing effect, entry deterioration, remaining room, dan cost change.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang tidak lagi membaca delayed-entry secara mentah. Kita bisa tahu apakah perbaikan total R datang dari filtering signal buruk atau dari entry baru yang memang lebih baik.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Paired Attribution" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-18",
     title: "MID_LONG First-Hour Exact Candle Replay",
     status: "LIVE",

@@ -39,6 +39,8 @@ import {
   MidLongFirstHourStateRow,
   MidLongGeometryThresholdRow,
   MidLongIntegrityAudit,
+  MidLongPairedAttributionPerf,
+  MidLongPairedAttributionRow,
   MidLongPathDecisionRow,
   MidLongReverseShadowAudit,
   MidLongReverseShadowRow,
@@ -889,6 +891,18 @@ function FirstHourExactReplayPanel({ lab }: { lab: MidLongFirstHourExactReplayLa
         </div>
       </div>
 
+      {!!lab.paired_attribution_rows?.length && (
+        <div className="border-b border-line">
+          <div className="px-4 py-3">
+            <div className="font-bold">Paired confirmation attribution</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">
+              Memisahkan efek selection dari efek repricing. Retained original = hasil sinyal yang sama kalau tetap entry lama; delayed repriced = hasil entry baru; skipped original = hasil sinyal yang tidak jadi diambil.
+            </div>
+          </div>
+          <PairedAttributionTable rows={lab.paired_attribution_rows} />
+        </div>
+      )}
+
       <div className="border-b border-line">
         <div className="px-4 py-3">
           <div className="font-bold">Delayed-entry exact replay</div>
@@ -910,6 +924,80 @@ function FirstHourExactReplayPanel({ lab }: { lab: MidLongFirstHourExactReplayLa
           <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PairedAttributionTable({ rows }: { rows: MidLongPairedAttributionRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Paired attribution kosong" detail="Snapshot belum memuat attribution rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th>Coverage</th>
+            <th>Retained original</th>
+            <th>Delayed repriced</th>
+            <th>Skipped original</th>
+            <th>Attribution</th>
+            <th>Entry quality</th>
+            <th>State mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.variant_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{row.label}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.retained_count} / {row.source_count}</div>
+                <div className="text-xs leading-5 text-slate-500">
+                  skipped {row.skipped_count} | unavailable {row.unavailable_count}
+                </div>
+              </td>
+              <td><PairedPerfCell perf={row.retained_original} /></td>
+              <td><PairedPerfCell perf={row.delayed_repriced} /></td>
+              <td>
+                <PairedPerfCell perf={row.skipped_original} />
+                <div className="mt-1 text-xs text-slate-500">TP skipped {row.tp_skipped_count || 0} | SL avoided {row.sl_avoided_count || 0}</div>
+              </td>
+              <td className="min-w-72 text-xs leading-5">
+                <div className={toneClass(row.selection_effect_r)}>Selection {fmtSigned(row.selection_effect_r)}R</div>
+                <div className={toneClass(row.repricing_effect_r)}>Repricing {fmtSigned(row.repricing_effect_r)}R</div>
+                <div className={toneClass(row.decomposed_improvement_r)}>Explained {fmtSigned(row.decomposed_improvement_r)}R</div>
+                <div className="text-slate-500">Direct delta {fmtSigned(row.direct_delta_vs_baseline_r)}R | gap {fmtSigned(row.decomposition_gap_r)}R</div>
+              </td>
+              <td className="min-w-72 text-xs leading-5 text-slate-600">
+                <div>Entry deteriorate avg/med: {fmtSigned(row.entry_deterioration_r_avg)}R / {fmtSigned(row.entry_deterioration_r_median)}R</div>
+                <div>Room after delay avg/med: {fmtSigned(row.remaining_room_after_delay_r_avg)}R / {fmtSigned(row.remaining_room_after_delay_r_median)}R</div>
+                <div>1h close avg/med: {fmtSigned(row.first_hour_close_r_avg)}R / {fmtSigned(row.first_hour_close_r_median)}R</div>
+                <div>Cost change: {fmtSigned(row.projected_cost_change_r)}R</div>
+              </td>
+              <td className="max-w-96 text-xs leading-5 text-slate-600">
+                <div>All: {pathMixSummary(row.state_mix)}</div>
+                <div className="mt-1">Skipped: {pathMixSummary(row.skipped_state_mix)}</div>
+                <div className="mt-1">Unavailable: {statusMixSummary(row.unavailable_reasons)}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PairedPerfCell({ perf }: { perf: MidLongPairedAttributionPerf }) {
+  return (
+    <div className="min-w-44 text-xs leading-5">
+      <div className={toneClass(perf.realistic_total_r_closed)}>{fmtSigned(perf.realistic_total_r_closed)}R total</div>
+      <div>avg {fmtSigned(perf.realistic_avg_r_closed)}R | med {fmtSigned(perf.median_realistic_r_closed)}R</div>
+      <div>TP/SL {perf.tp_count || 0}/{perf.sl_count || 0} | win {formatPct(perf.winrate_pct)}</div>
+      <div className="text-slate-500">DD {fmtSigned(perf.max_realistic_drawdown_r)}R | top {perf.top_symbol || "-"} {formatPct(perf.top_symbol_share_pct)}</div>
     </div>
   );
 }
