@@ -3882,6 +3882,7 @@ export type MidLongDefinitionAudit = {
   integrity_audit?: MidLongIntegrityAudit;
   damage_isolation?: MidLongDamageIsolation;
   sl_anatomy_v2?: MidLongSlAnatomyV2;
+  first_hour_response_audit?: MidLongFirstHourResponseAudit;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
   breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
@@ -3982,6 +3983,97 @@ export type MidLongSlCauseRow = {
   top_symbol?: string | null;
   top_symbol_share_pct?: string | number | null;
   read: string;
+};
+
+export type MidLongFirstHourResponseAudit = {
+  scope: string;
+  method: string;
+  state_model: string;
+  thresholds: Record<string, string | number | null>;
+  state_definitions: Record<string, string>;
+  total_signal_count: number;
+  state_rows: MidLongFirstHourStateRow[];
+  family_state_rows: MidLongFirstHourFamilyStateRow[];
+  checkpoint_rows: MidLongFirstHourCheckpointRow[];
+  sample_rows: MidLongFirstHourSampleRow[];
+  summary: {
+    read: string;
+    dominant_state?: string | null;
+    dominant_state_count?: number | string | null;
+    confirmed_count?: number | string | null;
+    stalled_count?: number | string | null;
+    price_reversed_count?: number | string | null;
+    structure_failed_count?: number | string | null;
+    unavailable_count?: number | string | null;
+    latest_logged_checkpoint?: string | null;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongFirstHourStateRow = MidLongEntryCombinationRow & {
+  state: string;
+  definition: string;
+  available_60m_count?: number | string | null;
+  available_60m_pct?: string | number | null;
+  median_close_followthrough_1h_r?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_wick_decay_r?: string | number | null;
+  path_mix: Record<string, number>;
+  primary_family_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
+  flow_mix: Record<string, number>;
+  room_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongFirstHourFamilyStateRow = MidLongEntryCombinationRow & {
+  primary_family: string;
+  state: string;
+  is_readable: boolean;
+  median_close_followthrough_1h_r?: string | number | null;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  path_mix: Record<string, number>;
+  modifier_mix: Record<string, number>;
+  flow_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongFirstHourCheckpointRow = {
+  checkpoint: string;
+  label: string;
+  candidate_fields: string[];
+  available_by_field: Record<string, number>;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  median_close_r?: string | number | null;
+  q25_close_r?: string | number | null;
+  q75_close_r?: string | number | null;
+  read: string;
+};
+
+export type MidLongFirstHourSampleRow = {
+  signal_id?: string | null;
+  symbol?: string | null;
+  signal_timestamp?: string | null;
+  timeframe?: string | null;
+  result_status?: string | null;
+  state: string;
+  primary_family?: string | null;
+  path_bucket?: string | null;
+  path_label_050?: string | null;
+  flow_state?: string | null;
+  room_bucket?: string | null;
+  close_followthrough_1h_r?: string | number | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+  realistic_realized_r?: string | number | null;
+  price_at_signal?: string | number | null;
+  sl_ref?: string | number | null;
+  tp_ref?: string | number | null;
 };
 
 export type MidLongSlPathCauseRow = {

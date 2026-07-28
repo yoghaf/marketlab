@@ -1357,6 +1357,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    first_hour_response = _mid_long_first_hour_response_audit(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     definition_reset = _mid_long_definition_reset_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1398,6 +1404,7 @@ def _mid_long_definition_audit(
         "integrity_audit": integrity,
         "damage_isolation": damage,
         "sl_anatomy_v2": sl_anatomy,
+        "first_hour_response_audit": first_hour_response,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
         "breakout_accepted_deep_dive": breakout_deep_dive,
@@ -3125,6 +3132,420 @@ def _mid_long_decimal_ratio(numerator: Any, denominator: Any) -> Decimal | None:
     if parsed_num is None or parsed_den is None or parsed_den == 0:
         return None
     return parsed_num / parsed_den
+
+
+MID_LONG_FIRST_HOUR_STATE_DEFINITIONS: dict[str, str] = {
+    "FIRST_HOUR_CONFIRMED": "First closed hour finishes at least +0.25R in the intended long direction.",
+    "FIRST_HOUR_STALLED": "First closed hour is between -0.10R and +0.25R; direction has not confirmed or failed clearly.",
+    "FIRST_HOUR_PRICE_REVERSED": "First closed hour closes below -0.10R but not deeply enough to mark structure-failed proxy.",
+    "FIRST_HOUR_STRUCTURE_FAILED": "Structured setup closes at or below -0.50R in the first hour. This is a proxy, not a replayed zone break.",
+    "FIRST_HOUR_UNAVAILABLE": "First-hour follow-through field is missing from this snapshot.",
+}
+
+
+def _mid_long_first_hour_response_audit(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    state_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_first_hour_state(
+            item,
+            reset_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    state_rows = _mid_long_first_hour_state_rows(
+        items,
+        state_by_id=state_by_id,
+        reset_by_id=reset_by_id,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    family_state_rows = _mid_long_first_hour_family_state_rows(
+        items,
+        state_by_id=state_by_id,
+        reset_by_id=reset_by_id,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    checkpoint_rows = _mid_long_first_hour_checkpoint_rows(items)
+    sample_rows = _mid_long_first_hour_sample_rows(
+        items,
+        state_by_id=state_by_id,
+        reset_by_id=reset_by_id,
+        taxonomy_by_id=taxonomy_by_id,
+        limit_per_state=3,
+    )
+    summary = _mid_long_first_hour_summary(
+        state_rows=state_rows,
+        checkpoint_rows=checkpoint_rows,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h First-Hour Response Audit",
+        "method": (
+            "Diagnostic-only first response study. The 60m checkpoint uses close_followthrough_1h_r "
+            "from paper-live futures candles; 15m/30m only appear when those fields are logged."
+        ),
+        "state_model": "FIRST_HOUR_RESPONSE_PROXY_V1",
+        "thresholds": {
+            "confirmed_min_r": Decimal("0.25"),
+            "price_reversed_below_r": Decimal("-0.10"),
+            "structure_failed_proxy_below_r": Decimal("-0.50"),
+        },
+        "state_definitions": MID_LONG_FIRST_HOUR_STATE_DEFINITIONS,
+        "total_signal_count": len(items),
+        "state_rows": state_rows,
+        "family_state_rows": family_state_rows,
+        "checkpoint_rows": checkpoint_rows,
+        "sample_rows": sample_rows,
+        "summary": summary,
+        "guardrails": [
+            "This audit does not change Signal Factory, scanner, TP/SL, timeout, or execution.",
+            "FIRST_HOUR_STRUCTURE_FAILED is a proxy from first-hour close R and setup family, not a candle-by-candle zone invalidation.",
+            "Post-entry response state must not be used as a live entry gate without a separate delayed-entry simulation.",
+            "15m/30m checkpoint rows are availability checks unless those checkpoint fields are explicitly logged.",
+        ],
+    }
+
+
+def _mid_long_first_hour_state(item: dict[str, Any], reset: dict[str, Any]) -> str:
+    followthrough = _decimal_or_none_snapshot(item.get("close_followthrough_1h_r"))
+    if followthrough is None:
+        return "FIRST_HOUR_UNAVAILABLE"
+    primary = str(reset.get("primary_family") or "")
+    if followthrough <= Decimal("-0.50") and primary != "UNCLASSIFIED_MID_LONG":
+        return "FIRST_HOUR_STRUCTURE_FAILED"
+    if followthrough < Decimal("-0.10"):
+        return "FIRST_HOUR_PRICE_REVERSED"
+    if followthrough >= Decimal("0.25"):
+        return "FIRST_HOUR_CONFIRMED"
+    return "FIRST_HOUR_STALLED"
+
+
+def _mid_long_first_hour_state_rows(
+    items: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    reset_by_id: dict[str, dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {state: [] for state in MID_LONG_FIRST_HOUR_STATE_DEFINITIONS}
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        grouped.setdefault(state_by_id.get(key, "FIRST_HOUR_UNAVAILABLE"), []).append(item)
+
+    rows: list[dict[str, Any]] = []
+    for state, state_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"FIRST_HOUR:{state}",
+            state,
+            f"first_hour_state == {state}",
+            state_items,
+            baseline=baseline,
+            required_fields=("close_followthrough_1h_r",),
+            missing_data_count=sum(1 for item in state_items if _decimal_or_none_snapshot(item.get("close_followthrough_1h_r")) is None),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "state": state,
+                "definition": MID_LONG_FIRST_HOUR_STATE_DEFINITIONS[state],
+                "available_60m_count": len(_mid_long_item_decimal_values(state_items, "close_followthrough_1h_r")),
+                "available_60m_pct": _pct_decimal(
+                    len(_mid_long_item_decimal_values(state_items, "close_followthrough_1h_r")),
+                    len(state_items),
+                ),
+                "median_close_followthrough_1h_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(state_items, "close_followthrough_1h_r")
+                ),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(state_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(state_items, "mae_r")),
+                "median_wick_decay_r": _median_decimal_snapshot(_mid_long_item_decimal_values(state_items, "wick_to_close_decay_r")),
+                "path_mix": _mid_long_path_mix(state_items),
+                "primary_family_mix": _mid_long_reset_mix(state_items, reset_by_id=reset_by_id, field="primary_family"),
+                "modifier_mix": _mid_long_reset_modifier_mix(state_items, reset_by_id=reset_by_id),
+                "flow_mix": _mid_long_taxonomy_mix(
+                    state_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="flow_state_provisional",
+                ),
+                "room_mix": _mid_long_taxonomy_mix(
+                    state_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="room_to_resistance_bucket",
+                ),
+                "read": _mid_long_first_hour_state_read(state, state_items, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_first_hour_state_priority(str(row.get("state") or "")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_first_hour_family_state_rows(
+    items: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    reset_by_id: dict[str, dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        reset = reset_by_id[key]
+        grouped[(str(reset.get("primary_family") or "UNKNOWN"), state_by_id.get(key, "FIRST_HOUR_UNAVAILABLE"))].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for (family, state), state_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"FIRST_HOUR_FAMILY:{family}:{state}",
+            f"{family} x {state}",
+            f"primary_family == {family} AND first_hour_state == {state}",
+            state_items,
+            baseline=baseline,
+            required_fields=("close_followthrough_1h_r",),
+            missing_data_count=sum(1 for item in state_items if _decimal_or_none_snapshot(item.get("close_followthrough_1h_r")) is None),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "primary_family": family,
+                "state": state,
+                "is_readable": int(row.get("closed_count") or 0) >= min_sample,
+                "median_close_followthrough_1h_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(state_items, "close_followthrough_1h_r")
+                ),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(state_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(state_items, "mae_r")),
+                "path_mix": _mid_long_path_mix(state_items),
+                "modifier_mix": _mid_long_reset_modifier_mix(state_items, reset_by_id=reset_by_id),
+                "flow_mix": _mid_long_taxonomy_mix(
+                    state_items,
+                    taxonomy_by_id=taxonomy_by_id,
+                    taxonomy_key="flow_state_provisional",
+                ),
+                "read": _mid_long_first_hour_family_state_read(family, state, state_items, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            bool(row.get("is_readable")),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows[:30]
+
+
+def _mid_long_first_hour_checkpoint_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    checkpoint_specs: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        ("15m", "First 15m close response", ("close_followthrough_15m_r", "checkpoint_15m_close_r", "first_15m_close_r")),
+        ("30m", "First 30m close response", ("close_followthrough_30m_r", "checkpoint_30m_close_r", "first_30m_close_r")),
+        ("60m", "First 60m / 1h close response", ("close_followthrough_1h_r", "checkpoint_60m_close_r", "first_hour_close_r")),
+    )
+    rows: list[dict[str, Any]] = []
+    for checkpoint, label, fields in checkpoint_specs:
+        field_values: list[Decimal] = []
+        available_by_field: dict[str, int] = {}
+        for field in fields:
+            values = _mid_long_item_decimal_values(items, field)
+            available_by_field[field] = len(values)
+            field_values.extend(values)
+        available_count = max(available_by_field.values(), default=0)
+        rows.append(
+            {
+                "checkpoint": checkpoint,
+                "label": label,
+                "candidate_fields": list(fields),
+                "available_by_field": available_by_field,
+                "available_count": available_count,
+                "missing_count": max(0, len(items) - available_count),
+                "available_pct": _pct_decimal(available_count, len(items)),
+                "median_close_r": _median_decimal_snapshot(field_values),
+                "q25_close_r": _percentile_decimal_snapshot(field_values, Decimal("0.25")),
+                "q75_close_r": _percentile_decimal_snapshot(field_values, Decimal("0.75")),
+                "read": "CHECKPOINT_LOGGED" if available_count > 0 else "CHECKPOINT_NOT_LOGGED_YET",
+            }
+        )
+    return rows
+
+
+def _mid_long_first_hour_sample_rows(
+    items: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    reset_by_id: dict[str, dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    limit_per_state: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        grouped[state_by_id.get(key, "FIRST_HOUR_UNAVAILABLE")].append(item)
+
+    rows: list[dict[str, Any]] = []
+    for state in MID_LONG_FIRST_HOUR_STATE_DEFINITIONS:
+        state_items = sorted(
+            grouped.get(state, []),
+            key=lambda item: str(item.get("signal_timestamp") or item.get("window_close_time") or ""),
+            reverse=True,
+        )[:limit_per_state]
+        for item in state_items:
+            key = str(item.get("signal_id") or items.index(item))
+            reset = reset_by_id.get(key, {})
+            taxonomy = taxonomy_by_id.get(key, {})
+            rows.append(
+                {
+                    "signal_id": item.get("signal_id"),
+                    "symbol": item.get("symbol"),
+                    "signal_timestamp": item.get("signal_timestamp"),
+                    "timeframe": item.get("timeframe"),
+                    "result_status": item.get("result_status"),
+                    "state": state,
+                    "primary_family": reset.get("primary_family"),
+                    "path_bucket": _mid_long_path_bucket(item),
+                    "path_label_050": _mid_long_path_label_050(item),
+                    "flow_state": taxonomy.get("flow_state_provisional"),
+                    "room_bucket": taxonomy.get("room_to_resistance_bucket"),
+                    "close_followthrough_1h_r": item.get("close_followthrough_1h_r"),
+                    "mfe_r": item.get("mfe_r"),
+                    "mae_r": item.get("mae_r"),
+                    "realistic_realized_r": item.get("realistic_realized_r"),
+                    "price_at_signal": item.get("price_at_signal"),
+                    "sl_ref": item.get("sl_ref"),
+                    "tp_ref": item.get("tp_ref"),
+                }
+            )
+    return rows
+
+
+def _mid_long_first_hour_summary(
+    *,
+    state_rows: list[dict[str, Any]],
+    checkpoint_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    available_60 = next((row for row in checkpoint_rows if row.get("checkpoint") == "60m"), None)
+    dominant = max(state_rows, key=lambda row: int(row.get("closed_count") or 0), default=None)
+    confirmed = next((row for row in state_rows if row.get("state") == "FIRST_HOUR_CONFIRMED"), None)
+    reversed_row = next((row for row in state_rows if row.get("state") == "FIRST_HOUR_PRICE_REVERSED"), None)
+    structure_failed = next((row for row in state_rows if row.get("state") == "FIRST_HOUR_STRUCTURE_FAILED"), None)
+    unavailable = next((row for row in state_rows if row.get("state") == "FIRST_HOUR_UNAVAILABLE"), None)
+    read = _mid_long_first_hour_audit_read(
+        available_60=available_60,
+        dominant=dominant,
+        confirmed=confirmed,
+        reversed_row=reversed_row,
+        structure_failed=structure_failed,
+        min_sample=min_sample,
+    )
+    return {
+        "read": read,
+        "dominant_state": dominant.get("state") if dominant else None,
+        "dominant_state_count": dominant.get("closed_count") if dominant else 0,
+        "confirmed_count": confirmed.get("closed_count") if confirmed else 0,
+        "stalled_count": next((row.get("closed_count") for row in state_rows if row.get("state") == "FIRST_HOUR_STALLED"), 0),
+        "price_reversed_count": reversed_row.get("closed_count") if reversed_row else 0,
+        "structure_failed_count": structure_failed.get("closed_count") if structure_failed else 0,
+        "unavailable_count": unavailable.get("closed_count") if unavailable else 0,
+        "latest_logged_checkpoint": "60m" if available_60 and int(available_60.get("available_count") or 0) > 0 else None,
+        "next_action": _mid_long_first_hour_next_action(read),
+    }
+
+
+def _mid_long_first_hour_state_read(state: str, state_items: list[dict[str, Any]], *, min_sample: int) -> str:
+    if len(state_items) < min_sample:
+        return "SAMPLE_SMALL"
+    perf = aggregate_signal_performance_items(state_items)
+    total_r = _decimal_or_zero_snapshot(perf.get("realistic_total_r_closed"))
+    sl_share = _sl_share_snapshot(perf)
+    if state == "FIRST_HOUR_CONFIRMED" and total_r > 0:
+        return "CONFIRMED_RESPONSE_CONSTRUCTIVE"
+    if state in {"FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"} and _decimal_or_zero_snapshot(sl_share) >= Decimal("60"):
+        return "EARLY_DAMAGE_CLUSTER"
+    if state == "FIRST_HOUR_UNAVAILABLE":
+        return "DATA_NOT_LOGGED"
+    return "MIXED_RESPONSE"
+
+
+def _mid_long_first_hour_family_state_read(family: str, state: str, state_items: list[dict[str, Any]], *, min_sample: int) -> str:
+    if len(state_items) < min_sample:
+        return "SAMPLE_SMALL"
+    perf = aggregate_signal_performance_items(state_items)
+    total_r = _decimal_or_zero_snapshot(perf.get("realistic_total_r_closed"))
+    if state == "FIRST_HOUR_CONFIRMED" and total_r > 0:
+        return "FAMILY_CONFIRMS_WELL"
+    if state in {"FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"} and total_r < 0:
+        return "FAMILY_EARLY_DAMAGE"
+    if family == "UNCLASSIFIED_MID_LONG":
+        return "FAMILY_UNCLASSIFIED"
+    return "FAMILY_MIXED"
+
+
+def _mid_long_first_hour_audit_read(
+    *,
+    available_60: dict[str, Any] | None,
+    dominant: dict[str, Any] | None,
+    confirmed: dict[str, Any] | None,
+    reversed_row: dict[str, Any] | None,
+    structure_failed: dict[str, Any] | None,
+    min_sample: int,
+) -> str:
+    if not available_60 or int(available_60.get("available_count") or 0) < min_sample:
+        return "FIRST_HOUR_DATA_NOT_READY"
+    damage_count = int((reversed_row or {}).get("closed_count") or 0) + int((structure_failed or {}).get("closed_count") or 0)
+    confirmed_count = int((confirmed or {}).get("closed_count") or 0)
+    dominant_state = str((dominant or {}).get("state") or "")
+    if damage_count >= confirmed_count and damage_count >= min_sample:
+        return "FIRST_HOUR_DAMAGE_DOMINANT"
+    if dominant_state == "FIRST_HOUR_CONFIRMED":
+        return "FIRST_HOUR_CONFIRMATION_PROMISING"
+    return "FIRST_HOUR_RESPONSE_MIXED"
+
+
+def _mid_long_first_hour_next_action(read: str) -> str:
+    if read == "FIRST_HOUR_DAMAGE_DOMINANT":
+        return "Run delayed-entry and early-failure-exit simulations; do not convert this post-entry state into a live gate directly."
+    if read == "FIRST_HOUR_CONFIRMATION_PROMISING":
+        return "Compare confirmed vs stalled/reversed cohorts chronologically before proposing any V2.1 shadow rule."
+    if read == "FIRST_HOUR_DATA_NOT_READY":
+        return "Keep logging 1h follow-through and add explicit 15m/30m checkpoints before testing finer timing."
+    return "Use family x first-hour rows to decide whether confirmation or exit research is the next cleaner branch."
+
+
+def _mid_long_first_hour_state_priority(state: str) -> int:
+    return {
+        "FIRST_HOUR_STRUCTURE_FAILED": 5,
+        "FIRST_HOUR_PRICE_REVERSED": 4,
+        "FIRST_HOUR_CONFIRMED": 3,
+        "FIRST_HOUR_STALLED": 2,
+        "FIRST_HOUR_UNAVAILABLE": 1,
+    }.get(state, 0)
 
 
 MID_LONG_RESET_PRIMARY_DEFINITIONS: dict[str, str] = {

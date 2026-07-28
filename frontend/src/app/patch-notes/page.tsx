@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-16",
+    title: "MID_LONG First-Hour Response Audit",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan audit reaksi 1 jam pertama untuk melihat apakah MID_LONG 1h langsung confirm, stall, reverse, atau gagal struktur secara proxy.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan first_hour_response_audit dengan state FIRST_HOUR_CONFIRMED, FIRST_HOUR_STALLED, FIRST_HOUR_PRICE_REVERSED, FIRST_HOUR_STRUCTURE_FAILED, dan FIRST_HOUR_UNAVAILABLE.",
+      "State 60m memakai close_followthrough_1h_r dari candle futures paper-live; checkpoint 15m/30m ditampilkan sebagai availability check jika field belum dilog.",
+      "Audit baru menampilkan performance per state, family x first-hour state, checkpoint availability, dan sample signal terbaru per state.",
+      "Halaman /mid-long-research-study menambahkan panel First-Hour Response Audit setelah SL Anatomy v2.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang bisa membedakan apakah loss lebih dekat ke entry yang langsung gagal, follow-through yang stall, atau setup yang butuh studi delayed-entry/early-exit terpisah.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open First-Hour Audit" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-15",
     title: "MID_LONG SL Anatomy v2",
     status: "LIVE",

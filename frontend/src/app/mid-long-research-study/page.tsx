@@ -27,6 +27,11 @@ import {
   MidLongDamageExperimentRow,
   MidLongEconomicRow,
   MidLongEvidenceComparisonRow,
+  MidLongFirstHourCheckpointRow,
+  MidLongFirstHourFamilyStateRow,
+  MidLongFirstHourResponseAudit,
+  MidLongFirstHourSampleRow,
+  MidLongFirstHourStateRow,
   MidLongGeometryThresholdRow,
   MidLongIntegrityAudit,
   MidLongPathDecisionRow,
@@ -188,9 +193,18 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
             </SectionCard>
           )}
 
+          {audit.first_hour_response_audit && (
+            <SectionCard
+              title="4. First-Hour Response Audit"
+              description="Audit reaksi 1 jam pertama setelah entry MID_LONG 1h. Ini menjawab apakah signal langsung confirm, diam, berbalik, atau gagal struktur secara proxy. Belum menjadi gate live."
+            >
+              <FirstHourResponsePanel audit={audit.first_hour_response_audit} />
+            </SectionCard>
+          )}
+
           {audit.sub_setup_split_lab && (
             <SectionCard
-              title="4. Legacy Sub-Setup Split Lab"
+              title="5. Legacy Sub-Setup Split Lab"
               description="MID_LONG 1h dipecah menjadi sub-label: breakout proxy, retest, support bounce, mid-range invalid, dan unclassified. Tujuannya mencari bagian yang masih layak hidup."
             >
               <SubSetupSplitPanel lab={audit.sub_setup_split_lab} />
@@ -199,7 +213,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.breakout_accepted_deep_dive && (
             <SectionCard
-              title="5. Breakout-State Diagnostics"
+              title="6. Breakout-State Diagnostics"
               description="Audit khusus BREAKOUT_PROXY_CANDIDATE. Fokusnya pre-entry zone: penetrasi close, body terhadap zona, wick, umur zona, jarak entry, dan ruang ke resistance berikutnya."
             >
               <BreakoutDeepDivePanel lab={audit.breakout_accepted_deep_dive} />
@@ -208,7 +222,7 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
 
           {audit.damage_isolation && (
             <SectionCard
-              title="6. Damage Isolation"
+              title="7. Damage Isolation"
               description="DI-00 sampai DI-05 membandingkan retained cohort vs removed damage. Ini masih read-only dan belum menjadi Signal Factory gate."
             >
               <DamageIsolationPanel damage={audit.damage_isolation} />
@@ -218,37 +232,37 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           {taxonomy && (
             <>
               <SectionCard
-                title="4. Taxonomy v1"
+                title="8. Taxonomy v1"
                 description="MID_LONG 1h sekarang dibedah sebagai banyak flag sekaligus: setup, breakout/retest, flow, crowding, room, cost, dan path setelah entry. Ini belum mengubah rule."
               >
                 <TaxonomyOverview taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="5. Pre-entry dimensions"
+                title="9. Pre-entry dimensions"
                 description="Bucket ini dibuat dari data sebelum entry. Tujuannya mencari bagian definisi MID_LONG yang paling sering membawa TP atau SL."
               >
                 <TaxonomyDimensionPanels taxonomy={taxonomy} />
               </SectionCard>
 
               <SectionCard
-                title="6. Path sequencing +0.5R"
+                title="10. Path sequencing +0.5R"
                 description="Path ini menjawab apakah signal langsung salah arah, cuma wick profit, close diterima lalu gagal, atau continuation bersih. Acceptance canonical sementara: close profit +0.5R."
               >
                 <TaxonomyPathTable rows={taxonomy.path_sequence_rows} />
               </SectionCard>
 
               <div className="grid gap-4 2xl:grid-cols-2">
-                <SectionCard title="7A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
+                <SectionCard title="11A. Setup x path" description="Cek setup family mana yang paling sering jatuh ke instant SL, wick fail, atau clean continuation.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.setup_family_x_path || []} />
                 </SectionCard>
-                <SectionCard title="7B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
+                <SectionCard title="11B. Flow x path" description="Cek apakah flow sebelum entry punya hubungan jelas dengan path setelah entry.">
                   <TaxonomyCrossTable rows={taxonomy.taxonomy_path_cross_tables.flow_x_path || []} />
                 </SectionCard>
               </div>
 
               <SectionCard
-                title="8. Draft V2.1 preview"
+                title="12. Draft V2.1 preview"
                 description="Empat skenario ini hanya preview riset. Retained/discarded dibandingkan untuk tahu apakah hygiene, breakout, retest, atau crowding interaction layak diteliti lanjut."
               >
                 <DraftPreviewTable rows={taxonomy.draft_v21_previews} />
@@ -257,58 +271,58 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
           )}
 
           <SectionCard
-            title="9. Layer decomposition"
+            title="13. Layer decomposition"
             description="Pisahkan dulu apakah masalahnya sudah ada di ideal R, atau baru rusak setelah fee/spread/slippage. EXECUTION_VALID cuma strata audit, bukan filter live."
           >
             <LayerTable rows={audit.layer_decomposition} />
           </SectionCard>
 
           <SectionCard
-            title="10. Path anatomy legacy"
+            title="14. Path anatomy legacy"
             description="Ini pemisah utama: instant SL mengarah ke problem definisi entry; sempat +1R lalu SL mengarah ke problem geometry/exit."
           >
             <PathDecisionTable rows={audit.path_decision_summary.rows} read={audit.path_decision_summary.read} />
           </SectionCard>
 
           <SectionCard
-            title="11. 4-axis definition flags legacy"
+            title="15. 4-axis definition flags legacy"
             description="EXT, STR, FLW, dan CRD adalah flag kandidat, bukan gate. Kolom negative R share menunjukkan bucket mana yang menyumbang kerusakan terbesar."
           >
             <AxisAuditTable rows={audit.axis_rows} />
           </SectionCard>
 
           <div className="grid gap-4 2xl:grid-cols-2">
-            <SectionCard title="12A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
+            <SectionCard title="16A. EXT x STR" description="Cek apakah damage terkonsentrasi pada entry extended yang dekat resistance atau mid-range.">
               <CrossTable rows={audit.cross_tables.EXTxSTR || []} />
             </SectionCard>
-            <SectionCard title="12B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
+            <SectionCard title="16B. FLW x CRD" description="Cek apakah flow lemah dan crowding menjelaskan SL atau cuma noise.">
               <CrossTable rows={audit.cross_tables.FLWxCRD || []} />
             </SectionCard>
           </div>
 
           <SectionCard
-            title="13. Geometry diagnostic"
+            title="17. Geometry diagnostic"
             description="Kalau banyak signal pernah +0.5R/+1R tapi gagal TP, problemnya bukan hanya definisi, tapi cara panen target/stop."
           >
             <GeometryTable rows={audit.geometry_diagnostic.mfe_threshold_rows} read={audit.geometry_diagnostic.read} quantiles={audit.geometry_diagnostic} />
           </SectionCard>
 
           <SectionCard
-            title="14. Ablation preview"
+            title="18. Ablation preview"
             description="Simulasi read-only: jika flag tertentu dibuang, survivor membaik atau tidak. Ini belum rule, baru calon hipotesis."
           >
             <AblationTable rows={audit.ablation_preview} />
           </SectionCard>
 
           <SectionCard
-            title="15. TP vs SL evidence"
+            title="19. TP vs SL evidence"
             description="Median dan kuartil angka aktual. Ini menjawab data mana yang beda antara signal yang kena target dan stop."
           >
             <EvidenceTable rows={(payload.evidence_comparison || []).slice(0, 18)} sampleTotal={coverage.mid_long_1h_rows} />
           </SectionCard>
 
           <SectionCard
-            title="16. Recent closed MID_LONG 1h"
+            title="20. Recent closed MID_LONG 1h"
             description="Sample sinyal terbaru untuk dibuka ke detail chart. Gunakan ini untuk validasi visual bucket yang terlihat merusak."
           >
             <BaselineSignalTable rows={payload.items} />
@@ -702,6 +716,247 @@ function SlPathCauseMatrix({ rows }: { rows: MidLongSlPathCauseRow[] }) {
               <td className="max-w-80 text-sm leading-5 text-slate-700">{humanFlag(row.cause_id)}</td>
               <td className="font-bold">{row.count} / {row.path_count}</td>
               <td>{formatPct(row.path_share_pct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FirstHourResponsePanel({ audit }: { audit: MidLongFirstHourResponseAudit }) {
+  const summary = audit.summary;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(summary.read)} helper={summary.next_action} />
+        <Info label="Dominant state" value={humanFlag(summary.dominant_state || "-")} helper={`${summary.dominant_state_count || 0} signal`} />
+        <Info label="Confirmed" value={`${summary.confirmed_count || 0}`} helper="Close 1h >= +0.25R" />
+        <Info label="Stalled" value={`${summary.stalled_count || 0}`} helper="-0.10R sampai +0.25R" />
+        <Info label="Reversed" value={`${summary.price_reversed_count || 0}`} helper="Close 1h < -0.10R" />
+        <Info label="Structure fail proxy" value={`${summary.structure_failed_count || 0}`} helper="Structured setup <= -0.50R" />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          Model ini diagnostic-only. State 60m boleh dipakai untuk memahami path setelah entry, tapi belum boleh menjadi gate live tanpa simulasi delayed-entry atau early-exit terpisah.
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[1fr_0.75fr]">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">State performance</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">TP/SL dan R realistis per reaksi 1 jam pertama.</div>
+          </div>
+          <FirstHourStateTable rows={audit.state_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Checkpoint availability</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Kalau 15m/30m kosong, itu berarti field belum dilog, bukan dianggap netral.</div>
+          </div>
+          <FirstHourCheckpointTable rows={audit.checkpoint_rows} />
+        </div>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Family x first-hour state</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Membedakan apakah breakout/retest/pullback punya respons awal yang berbeda.</div>
+        </div>
+        <FirstHourFamilyStateTable rows={audit.family_state_rows} />
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Recent examples by state</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Contoh terbaru agar bisa dibuka silang dengan chart signal detail.</div>
+        </div>
+        <FirstHourSampleTable rows={audit.sample_rows} />
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {audit.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FirstHourStateTable({ rows }: { rows: MidLongFirstHourStateRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="First-hour state kosong" detail="Snapshot belum memuat first-hour audit." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>State</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>1h close / MFE / MAE</th>
+            <th>Family / flow</th>
+            <th>Path mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.state}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.state)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.definition}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.closed_count}</div>
+                <div className="text-xs text-slate-500">60m {row.available_60m_count || 0} ({formatPct(row.available_60m_pct)})</div>
+              </td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>
+                <div>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.realistic_avg_r_closed)}R avg</div>
+              </td>
+              <td>
+                <div>1h {fmtSigned(row.median_close_followthrough_1h_r)}R</div>
+                <div className="text-xs text-slate-500">MFE {fmtSigned(row.median_mfe_r)}R / MAE {fmtSigned(row.median_mae_r)}R</div>
+              </td>
+              <td className="max-w-96 text-xs leading-5 text-slate-600">
+                <div>{pathMixSummary(row.primary_family_mix)}</div>
+                <div className="mt-1">{pathMixSummary(row.flow_mix)}</div>
+              </td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FirstHourCheckpointTable({ rows }: { rows: MidLongFirstHourCheckpointRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Checkpoint kosong" detail="Belum ada checkpoint audit." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Checkpoint</th>
+            <th>Available</th>
+            <th>Median / Q1-Q3</th>
+            <th>Fields</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.checkpoint}>
+              <td>
+                <div className="font-bold">{row.checkpoint}</div>
+                <div className="text-xs text-slate-500">{row.label}</div>
+              </td>
+              <td>{row.available_count} / miss {row.missing_count} ({formatPct(row.available_pct)})</td>
+              <td>
+                <div>{fmtSigned(row.median_close_r)}R</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.q25_close_r)}R / {fmtSigned(row.q75_close_r)}R</div>
+              </td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{row.candidate_fields.join(", ")}</td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FirstHourFamilyStateTable({ rows }: { rows: MidLongFirstHourFamilyStateRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Family x state kosong" detail="Belum ada kombinasi family dan first-hour state." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Family x state</th>
+            <th>Readable</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>1h / MFE / MAE</th>
+            <th>Path / flow</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-96">
+                <div className="font-bold">{humanFlag(row.primary_family)}</div>
+                <div className="text-xs text-slate-500">{humanFlag(row.state)}</div>
+              </td>
+              <td><StatusBadge value={row.is_readable ? "Readable" : "Small sample"} /></td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>
+                <div>{fmtSigned(row.median_close_followthrough_1h_r)}R</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.median_mfe_r)}R / {fmtSigned(row.median_mae_r)}R</div>
+              </td>
+              <td className="max-w-96 text-xs leading-5 text-slate-600">
+                <div>{pathMixSummary(row.path_mix)}</div>
+                <div className="mt-1">{pathMixSummary(row.flow_mix)}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FirstHourSampleTable({ rows }: { rows: MidLongFirstHourSampleRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Sample kosong" detail="Belum ada contoh first-hour response." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Symbol</th>
+            <th>State</th>
+            <th>Result</th>
+            <th>Family / path</th>
+            <th>1h / MFE / MAE</th>
+            <th>Entry / SL / TP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={`${row.state}-${row.signal_id || idx}`}>
+              <td className="min-w-44">{fmtTime(row.signal_timestamp)}</td>
+              <td className="font-bold">{row.symbol || "-"}</td>
+              <td><StatusBadge value={humanFlag(row.state)} /></td>
+              <td>
+                <div><StatusBadge value={humanFlag(row.result_status || "-")} /></div>
+                <div className={`mt-1 text-xs ${toneClass(row.realistic_realized_r)}`}>{fmtSigned(row.realistic_realized_r)}R</div>
+              </td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">
+                <div>{humanFlag(row.primary_family || "-")}</div>
+                <div>{humanFlag(row.path_bucket || row.path_label_050 || "-")}</div>
+                <div>{humanFlag(row.flow_state || "-")}</div>
+              </td>
+              <td>
+                <div>1h {fmtSigned(row.close_followthrough_1h_r)}R</div>
+                <div className="text-xs text-slate-500">MFE {fmtSigned(row.mfe_r)}R / MAE {fmtSigned(row.mae_r)}R</div>
+              </td>
+              <td className="text-xs leading-5">
+                <div>Entry {fmtPrice(row.price_at_signal)}</div>
+                <div>SL {fmtPrice(row.sl_ref)}</div>
+                <div>TP {fmtPrice(row.tp_ref)}</div>
+              </td>
             </tr>
           ))}
         </tbody>

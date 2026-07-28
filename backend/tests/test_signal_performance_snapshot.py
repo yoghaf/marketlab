@@ -254,6 +254,23 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "EXIT_RESEARCH_REQUIRED",
         "SL_CAUSES_MIXED",
     }
+    assert "first_hour_response_audit" in baseline["definition_audit"]
+    first_hour = baseline["definition_audit"]["first_hour_response_audit"]
+    assert first_hour["scope"] == "MID_LONG 1h First-Hour Response Audit"
+    assert {row["state"] for row in first_hour["state_rows"]} == {
+        "FIRST_HOUR_CONFIRMED",
+        "FIRST_HOUR_STALLED",
+        "FIRST_HOUR_PRICE_REVERSED",
+        "FIRST_HOUR_STRUCTURE_FAILED",
+        "FIRST_HOUR_UNAVAILABLE",
+    }
+    assert {row["checkpoint"] for row in first_hour["checkpoint_rows"]} == {"15m", "30m", "60m"}
+    assert first_hour["summary"]["read"] in {
+        "FIRST_HOUR_DATA_NOT_READY",
+        "FIRST_HOUR_DAMAGE_DOMINANT",
+        "FIRST_HOUR_CONFIRMATION_PROMISING",
+        "FIRST_HOUR_RESPONSE_MIXED",
+    }
     assert "definition_reset_lab" in baseline["definition_audit"]
     reset_lab = baseline["definition_audit"]["definition_reset_lab"]
     assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V2"
