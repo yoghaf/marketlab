@@ -3719,9 +3719,9 @@ def _mid_long_first_hour_delayed_entry_row(
             "skipped_sl_count": skipped_perf.get("sl_count"),
             "skipped_realistic_total_r_closed": skipped_perf.get("realistic_total_r_closed"),
             "skipped_realistic_avg_r_closed": skipped_perf.get("realistic_avg_r_closed"),
-            "read": _mid_long_first_hour_delayed_read(row, skipped_perf, min_sample=min_sample),
         }
     )
+    row["read"] = _mid_long_first_hour_delayed_read(row, skipped_perf, min_sample=min_sample)
     return row
 
 
