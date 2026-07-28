@@ -185,24 +185,25 @@ class SignalPerformanceSnapshotRunner:
             )
 
         if scope in {"all", "one-hour"}:
+            performance_1h_payload, forward_integrity_1h_payload = service.summary_and_forward_integrity(
+                epoch=epoch,
+                include_watch_only=False,
+                position_lock=True,
+                stage=None,
+                timeframe="1h",
+                symbol=None,
+                result_status="closed",
+                performance_limit=max(DEFAULT_PERFORMANCE_1H_LIMIT, performance_limit),
+                forward_integrity_limit=max(1, forward_integrity_limit),
+            )
             performance_1h = _with_snapshot_meta(
-                _performance_payload(
-                    service,
-                    epoch=epoch,
-                    timeframe="1h",
-                    limit=max(DEFAULT_PERFORMANCE_1H_LIMIT, performance_limit),
-                ),
+                performance_1h_payload,
                 generated_at_utc=generated_at,
                 source="signal_performance_snapshot_1h",
                 filename=PERFORMANCE_1H_FILE,
             )
             forward_integrity_1h = _with_snapshot_meta(
-                _forward_integrity_payload(
-                    service,
-                    epoch=epoch,
-                    timeframe="1h",
-                    limit=max(1, forward_integrity_limit),
-                ),
+                forward_integrity_1h_payload,
                 generated_at_utc=generated_at,
                 source="signal_forward_integrity_snapshot_1h",
                 filename=FORWARD_INTEGRITY_1H_FILE,

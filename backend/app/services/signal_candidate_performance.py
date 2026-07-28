@@ -163,9 +163,86 @@ class SignalCandidatePerformanceService:
             symbol=symbol,
             position_lock=position_lock,
         )
-        evaluated = _filter_by_result_status(evaluated, result_status)
-        aggregate = self._aggregate(evaluated, skipped)
-        items = sorted(evaluated, key=lambda item: item["signal_timestamp"] or datetime.min, reverse=True)[:limit]
+        return self._summary_payload_from_evaluated(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=symbol,
+            result_status=result_status,
+            limit=limit,
+        )
+
+    def summary_and_forward_integrity(
+        self,
+        *,
+        epoch: str = OBSERVATION_EPOCH,
+        include_watch_only: bool = False,
+        position_lock: bool = True,
+        stage: str | None = None,
+        timeframe: str | None = None,
+        symbol: str | None = None,
+        result_status: str | None = None,
+        performance_limit: int = 100,
+        forward_integrity_limit: int = 50,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        evaluated, skipped, latest_candle_time = self._evaluated_context(
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            stage=stage,
+            timeframe=timeframe,
+            symbol=symbol,
+            position_lock=position_lock,
+        )
+        return (
+            self._summary_payload_from_evaluated(
+                evaluated=evaluated,
+                skipped=skipped,
+                latest_candle_time=latest_candle_time,
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                stage=stage,
+                timeframe=timeframe,
+                symbol=symbol,
+                result_status=result_status,
+                limit=performance_limit,
+            ),
+            self._forward_integrity_payload_from_evaluated(
+                evaluated=evaluated,
+                skipped=skipped,
+                latest_candle_time=latest_candle_time,
+                epoch=epoch,
+                include_watch_only=include_watch_only,
+                position_lock=position_lock,
+                stage=stage,
+                timeframe=timeframe,
+                limit=forward_integrity_limit,
+            ),
+        )
+
+    def _summary_payload_from_evaluated(
+        self,
+        *,
+        evaluated: list[dict[str, Any]],
+        skipped: Counter[str],
+        latest_candle_time: datetime | None,
+        epoch: str,
+        include_watch_only: bool,
+        position_lock: bool,
+        stage: str | None,
+        timeframe: str | None,
+        symbol: str | None,
+        result_status: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        filtered = _filter_by_result_status(evaluated, result_status)
+        aggregate = self._aggregate(filtered, skipped)
+        items = sorted(filtered, key=lambda item: item["signal_timestamp"] or datetime.min, reverse=True)[:limit]
         return {
             "generated_at_utc": utcnow(),
             "epoch": epoch,
@@ -2002,6 +2079,31 @@ class SignalCandidatePerformanceService:
             position_lock=position_lock,
             with_shadow=False,
         )
+        return self._forward_integrity_payload_from_evaluated(
+            evaluated=evaluated,
+            skipped=skipped,
+            latest_candle_time=latest_candle_time,
+            epoch=epoch,
+            include_watch_only=include_watch_only,
+            position_lock=position_lock,
+            stage=stage,
+            timeframe=timeframe,
+            limit=limit,
+        )
+
+    def _forward_integrity_payload_from_evaluated(
+        self,
+        *,
+        evaluated: list[dict[str, Any]],
+        skipped: Counter[str],
+        latest_candle_time: datetime | None,
+        epoch: str,
+        include_watch_only: bool,
+        position_lock: bool,
+        stage: str | None,
+        timeframe: str | None,
+        limit: int,
+    ) -> dict[str, Any]:
         tracked_statuses = {"OPEN", "WAITING_DATA", "STALE_FORWARD_DATA"}
         tracked = [item for item in evaluated if item.get("result_status") in tracked_statuses]
         tracked = sorted(
