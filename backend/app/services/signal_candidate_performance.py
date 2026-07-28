@@ -2718,6 +2718,7 @@ class SignalCandidatePerformanceService:
             if item.get("stage") == "MID_LONG"
             and item.get("timeframe") == "1h"
             and item.get("signal_id")
+            and _mid_long_breakout_proxy_candidate_from_item(item)
         ]
         if not signal_ids:
             return output
@@ -5376,6 +5377,17 @@ def _structure_zone_snapshot(signal: SignalForwardReturnLog) -> dict[str, Any] |
     raw_evidence = signal.evidence if isinstance(signal.evidence, dict) else {}
     snapshot = raw_evidence.get("structure_zone_shadow")
     return snapshot if isinstance(snapshot, dict) else None
+
+
+def _mid_long_breakout_proxy_candidate_from_item(item: dict[str, Any]) -> bool:
+    status = str(item.get("structure_zone_status") or "").upper()
+    primary = str(item.get("structure_zone_primary_state") or "").upper()
+    reason = str(item.get("structure_zone_primary_reason") or "").upper()
+    if not status or "UNAVAILABLE" in status:
+        return False
+    is_breakout = "BREAKOUT" in primary or "RESISTANCE_BREAK" in primary
+    close_accepted = "ALIGNED" in status or "CLOSE" in reason or "CLOSED" in reason
+    return is_breakout and close_accepted
 
 
 BREAKOUT_DIAGNOSTIC_FIELDS = (
