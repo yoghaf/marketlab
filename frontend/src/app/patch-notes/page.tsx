@@ -18,6 +18,26 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-28",
+    version: "LAB-RESET-10",
+    title: "MID_LONG Breakout Purity + Cause Audit",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Memperjelas Breakout-State Diagnostics agar tidak mencampur path setelah entry dengan penyebab pre-entry.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan label_purity_rows untuk audit zone anchor, zone timestamp, no-future-data flag, dan close-acceptance fields.",
+      "Breakout deep dive sekarang memisahkan observable_path_rows dari pre_entry_cause_rows, sehingga STRUCTURAL_FALSE_BREAKOUT tidak dibaca sebagai sebab tunggal.",
+      "Pre-entry cause flags baru mencakup thin close acceptance, large breakout wick, late chase, low room, weak initiative flow, high crowding, dan high projected cost.",
+      "Halaman /mid-long-research-study menampilkan Label Purity, Observable Path, Pre-entry Causes, dan Pre-entry Geometry x Observable Path.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang lebih aman dari leakage/overclaim: filter post-entry tetap diagnostic-only, sedangkan calon perbaikan V2.1 harus berasal dari data yang benar-benar tersedia sebelum entry.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Purity Audit" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
     date: "2026-07-27",
     version: "LAB-RESET-09",
     title: "MID_LONG Breakout-State Diagnostics",

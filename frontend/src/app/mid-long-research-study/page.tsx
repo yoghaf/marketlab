@@ -11,11 +11,14 @@ import {
   MidLongAxisCrossRow,
   MidLongBaselineResponse,
   MidLongBreakoutAcceptedDeepDive,
+  MidLongBreakoutCauseRow,
   MidLongBreakoutDraftRow,
   MidLongBreakoutFieldAvailabilityRow,
   MidLongBreakoutFilterRow,
   MidLongBreakoutInteractionRow,
+  MidLongBreakoutLabelPurityRow,
   MidLongBreakoutMechanismRow,
+  MidLongBreakoutObservablePathRow,
   MidLongDefinitionLayerRow,
   MidLongDraftPreviewRow,
   MidLongDamageExperimentRow,
@@ -394,11 +397,28 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
     <div>
       <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
         <Info label="Read" value={humanFlag(summary.read)} helper="Apakah proxy breakout sudah punya angka zona untuk dibedah." />
-        <Info label="Zone coverage" value={humanFlag(summary.label_purity_read)} helper={`${summary.precise_zone_fields_missing_count} precise zone field kosong.`} />
+        <Info label="Zone purity" value={humanFlag(summary.label_purity_read)} helper={`${summary.precise_zone_fields_missing_count} field kosong, ${summary.label_purity_failed_count || 0} purity fail.`} />
         <Info label="Control sample" value={String(lab.control.closed_count || 0)} helper={`${lab.control.tp_count || 0} TP / ${lab.control.sl_count || 0} SL`} />
         <Info label="Control R" value={`${fmtSigned(lab.control.realistic_total_r_closed)}R`} helper={`${fmtSigned(lab.control.realistic_avg_r_closed)}R avg`} />
         <BreakoutSummaryCard title="Best filter" row={summary.best_filter} />
         <BreakoutSummaryCard title="Worst mechanism" row={summary.worst_mechanism} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.8fr_1.2fr]">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Label purity / leakage audit</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Membuktikan zona dan close-acceptance tersedia sebelum signal. Jika gagal, breakout tetap proxy.</div>
+          </div>
+          <BreakoutLabelPurityTable rows={lab.label_purity_rows || []} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Observable path, bukan sebab tunggal</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Path ini terjadi setelah entry. Dipakai untuk membedah, bukan untuk memilih entry sejak awal.</div>
+          </div>
+          <BreakoutObservablePathTable rows={lab.observable_path_rows || []} />
+        </div>
       </div>
 
       <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.9fr_1.1fr]">
@@ -416,6 +436,14 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
           </div>
           <BreakoutMechanismTable rows={lab.mechanism_rows} />
         </div>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Pre-entry hypothesized causes</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Satu signal bisa kena beberapa flag. Ini hipotesis sebelum entry, bukan klaim penyebab final.</div>
+        </div>
+        <BreakoutCauseTable rows={lab.pre_entry_cause_rows || []} />
       </div>
 
       <div className="border-b border-line">
@@ -444,6 +472,11 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
       </div>
 
       <BreakoutCrossPanels tables={lab.evidence_path_tables} />
+      <BreakoutCrossPanels
+        title="Pre-entry geometry x observable path"
+        description="Cross-table ini menjawab apakah path buruk terkonsentrasi pada acceptance tipis, wick besar, late chase, jarak entry, atau room rendah."
+        tables={lab.pre_entry_geometry_path_tables || {}}
+      />
 
       <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
         {lab.guardrails.map((guardrail) => (
@@ -481,6 +514,40 @@ function BreakoutSummaryCard({
   );
 }
 
+function BreakoutLabelPurityTable({ rows }: { rows: MidLongBreakoutLabelPurityRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Purity audit kosong" detail="Belum ada purity check untuk breakout proxy." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Pass / fail</th>
+            <th>Status</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.check_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{row.label}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>
+                <div>{row.pass_count} / {row.fail_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.pass_pct)} pass</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.status)} /></td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function BreakoutFieldAvailabilityTable({ rows }: { rows: MidLongBreakoutFieldAvailabilityRow[] }) {
   if (!rows.length) return <div className="p-4"><EmptyState title="Field audit kosong" detail="Belum ada field untuk diaudit." /></div>;
   return (
@@ -504,6 +571,40 @@ function BreakoutFieldAvailabilityTable({ rows }: { rows: MidLongBreakoutFieldAv
               <td>{humanFlag(row.source)}</td>
               <td>{row.available_count} / miss {row.missing_count} ({formatPct(row.available_pct)})</td>
               <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutObservablePathTable({ rows }: { rows: MidLongBreakoutObservablePathRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Path kosong" detail="Belum ada observable path untuk breakout proxy." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Observable path</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>MFE / MAE</th>
+            <th>Wick decay</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72"><StatusBadge value={humanFlag(row.observable_path)} /></td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>{fmtSigned(row.median_mfe_r)}R / {fmtSigned(row.median_mae_r)}R</td>
+              <td>{fmtSigned(row.median_wick_decay_r)}R</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.path_read}</td>
             </tr>
           ))}
         </tbody>
@@ -540,6 +641,43 @@ function BreakoutMechanismTable({ rows }: { rows: MidLongBreakoutMechanismRow[] 
               <td>{fmtSigned(row.median_mfe_r)}R / {fmtSigned(row.median_mae_r)}R</td>
               <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.path_mix)}</td>
               <td className="max-w-96 text-sm leading-5 text-slate-700">{row.mechanism_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutCauseTable({ rows }: { rows: MidLongBreakoutCauseRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Cause audit kosong" detail="Belum ada pre-entry cause flag." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Cause flag</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Avg delta</th>
+            <th>Observable path mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.cause_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.cause_label)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td className="font-bold">{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
+              <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.observable_path_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.cause_read}</td>
             </tr>
           ))}
         </tbody>
@@ -669,20 +807,34 @@ function BreakoutDraftTable({ rows }: { rows: MidLongBreakoutDraftRow[] }) {
   );
 }
 
-function BreakoutCrossPanels({ tables }: { tables: Record<string, MidLongTaxonomyPathCrossRow[]> }) {
+function BreakoutCrossPanels({
+  tables,
+  title = "Evidence x observable path",
+  description = "Path cross untuk breakout proxy cohort."
+}: {
+  tables: Record<string, MidLongTaxonomyPathCrossRow[]>;
+  title?: string;
+  description?: string;
+}) {
   const entries = Object.entries(tables);
   if (!entries.length) return null;
   return (
-    <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
-      {entries.slice(0, 4).map(([key, rows]) => (
+    <div className="border-b border-line">
+      <div className="px-4 py-3">
+        <div className="font-bold">{title}</div>
+        <div className="mt-1 text-xs leading-5 text-slate-500">{description}</div>
+      </div>
+      <div className="grid gap-4 p-4 2xl:grid-cols-2">
+      {entries.slice(0, 6).map(([key, rows]) => (
         <div key={key} className="rounded-md border border-line bg-white">
           <div className="border-b border-line px-4 py-3">
             <div className="font-bold">{humanFlag(key)}</div>
-            <div className="mt-1 text-xs text-slate-500">Path cross untuk breakout proxy cohort.</div>
+            <div className="mt-1 text-xs text-slate-500">Bucket x observable path.</div>
           </div>
           <TaxonomyCrossTable rows={rows.slice(0, 10)} />
         </div>
       ))}
+      </div>
     </div>
   );
 }

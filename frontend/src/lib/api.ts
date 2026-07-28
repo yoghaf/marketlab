@@ -3883,9 +3883,13 @@ export type MidLongBreakoutAcceptedDeepDive = {
   scope: string;
   method: string;
   control: MidLongEntryCombinationRow;
+  label_purity_rows?: MidLongBreakoutLabelPurityRow[];
   field_availability_rows: MidLongBreakoutFieldAvailabilityRow[];
+  observable_path_rows?: MidLongBreakoutObservablePathRow[];
   mechanism_rows: MidLongBreakoutMechanismRow[];
+  pre_entry_cause_rows?: MidLongBreakoutCauseRow[];
   evidence_path_tables: Record<string, MidLongTaxonomyPathCrossRow[]>;
+  pre_entry_geometry_path_tables?: Record<string, MidLongTaxonomyPathCrossRow[]>;
   single_filter_rows: MidLongBreakoutFilterRow[];
   interaction_rows: MidLongBreakoutInteractionRow[];
   draft_cohort_rows: MidLongBreakoutDraftRow[];
@@ -3893,6 +3897,7 @@ export type MidLongBreakoutAcceptedDeepDive = {
     read: string;
     label_purity_read: string;
     precise_zone_fields_missing_count: number;
+    label_purity_failed_count?: number;
     best_filter?: MidLongBreakoutSummaryRow | null;
     worst_mechanism?: MidLongBreakoutSummaryRow | null;
     best_draft?: MidLongBreakoutSummaryRow | null;
@@ -3922,6 +3927,18 @@ export type MidLongBreakoutFieldAvailabilityRow = {
   read: string;
 };
 
+export type MidLongBreakoutLabelPurityRow = {
+  check_id: string;
+  label: string;
+  expression: string;
+  total_count: number;
+  pass_count: number;
+  fail_count: number;
+  pass_pct?: string | number | null;
+  status: string;
+  read: string;
+};
+
 export type MidLongBreakoutMechanismRow = MidLongEntryCombinationRow & {
   mechanism: string;
   mechanism_read: string;
@@ -3931,6 +3948,23 @@ export type MidLongBreakoutMechanismRow = MidLongEntryCombinationRow & {
   median_mfe_r?: string | number | null;
   median_mae_r?: string | number | null;
   median_wick_decay_r?: string | number | null;
+};
+
+export type MidLongBreakoutObservablePathRow = MidLongEntryCombinationRow & {
+  observable_path: string;
+  path_read: string;
+  median_mfe_r?: string | number | null;
+  median_mae_r?: string | number | null;
+  median_wick_decay_r?: string | number | null;
+};
+
+export type MidLongBreakoutCauseRow = MidLongEntryCombinationRow & {
+  cause_id: string;
+  cause_label: string;
+  cause_class: string;
+  path_mix: Record<string, number>;
+  observable_path_mix: Record<string, number>;
+  cause_read: string;
 };
 
 export type MidLongBreakoutFilterRow = MidLongEntryCombinationRow & {

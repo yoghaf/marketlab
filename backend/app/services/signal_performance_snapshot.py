@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from copy import deepcopy
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -2807,15 +2808,34 @@ def _mid_long_breakout_accepted_deep_dive(
         field_rows=field_rows,
         min_sample=min_sample,
     )
+    label_purity_rows = _mid_long_breakout_label_purity_rows(breakout_items)
+    pre_entry_cause_rows = _mid_long_breakout_pre_entry_cause_rows(
+        breakout_items,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    pre_entry_geometry_path_tables = _mid_long_breakout_pre_entry_geometry_path_tables(
+        breakout_items,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    observable_path_rows = _mid_long_breakout_observable_path_rows(
+        breakout_items,
+        baseline=control,
+        min_sample=min_sample,
+    )
     return {
         "scope": "MID_LONG_BREAKOUT_PROXY_CANDIDATE deep dive",
         "method": (
-            "Audits whether the breakout proxy is structurally proven or still only proxy-based, then separates "
-            "false-breakout candidates from accepted-but-failed continuation and pullback winners."
+            "Audits whether the breakout proxy is structurally proven with pre-entry zone data, then separates "
+            "observable post-entry path from pre-entry hypothesized causes."
         ),
         "control": control,
+        "label_purity_rows": label_purity_rows,
         "field_availability_rows": field_rows,
+        "observable_path_rows": observable_path_rows,
         "mechanism_rows": mechanism_rows,
+        "pre_entry_cause_rows": pre_entry_cause_rows,
         "evidence_path_tables": {
             "extension_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
                 breakout_items,
@@ -2858,12 +2878,14 @@ def _mid_long_breakout_accepted_deep_dive(
                 min_sample=min_sample,
             ),
         },
+        "pre_entry_geometry_path_tables": pre_entry_geometry_path_tables,
         "single_filter_rows": single_filter_rows,
         "interaction_rows": interaction_rows,
         "draft_cohort_rows": draft_rows,
         "summary": _mid_long_breakout_summary(
             control=control,
             field_rows=field_rows,
+            label_purity_rows=label_purity_rows,
             mechanism_rows=mechanism_rows,
             single_filter_rows=single_filter_rows,
             draft_rows=draft_rows,
@@ -2871,6 +2893,7 @@ def _mid_long_breakout_accepted_deep_dive(
         "guardrails": [
             "Breakout proxy is a research label, not a proven continuation rule.",
             "Post-entry path labels explain behavior; they must not become live entry gates.",
+            "POST_ENTRY_DIAGNOSTIC_ONLY filters are leakage-risk for initial entries and can only be used as delayed confirmation or management research.",
             "Room-to-resistance UNKNOWN is not a hard reject.",
             "No Signal Factory rule, scanner decision, TP/SL formula, threshold, or execution behavior is changed.",
         ],
@@ -2943,6 +2966,515 @@ def _mid_long_breakout_field_read(*, source: str, available_count: int, total: i
     if available_count < total:
         return "PARTIAL_AVAILABLE"
     return "AVAILABLE"
+
+
+def _mid_long_breakout_label_purity_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    checks: tuple[tuple[str, str, str, Callable[[dict[str, Any]], bool]], ...] = (
+        (
+            "LP-01",
+            "Zone anchor exists",
+            "zone_id, zone_lower, and zone_upper are present before judging the row as breakout proxy.",
+            lambda item: all(_mid_long_item_field_available(item, field) for field in ("zone_id", "zone_lower", "zone_upper")),
+        ),
+        (
+            "LP-02",
+            "Zone was created before signal",
+            "zone_created_at <= signal_timestamp. This guards against future-revised zones.",
+            lambda item: _mid_long_time_lte(item.get("zone_created_at"), item.get("signal_timestamp")),
+        ),
+        (
+            "LP-03",
+            "Zone last touch is not future",
+            "zone_last_touch_at <= signal_timestamp. A later touch cannot be part of the entry definition.",
+            lambda item: _mid_long_time_lte(item.get("zone_last_touch_at"), item.get("signal_timestamp")),
+        ),
+        (
+            "LP-04",
+            "Breakout diagnostics marked no future data",
+            "breakout_no_future_data == true from the zone diagnostics engine.",
+            lambda item: bool(item.get("breakout_no_future_data") is True),
+        ),
+        (
+            "LP-05",
+            "Close acceptance fields exist",
+            "close_penetration_atr, body_above_zone_ratio, close_location_in_candle, and upper_wick_to_body_ratio are available.",
+            lambda item: all(
+                _mid_long_item_field_available(item, field)
+                for field in (
+                    "close_penetration_atr",
+                    "body_above_zone_ratio",
+                    "close_location_in_candle",
+                    "upper_wick_to_body_ratio",
+                )
+            ),
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    total = len(items)
+    for check_id, label, expression, predicate in checks:
+        pass_count = sum(1 for item in items if predicate(item))
+        fail_count = max(total - pass_count, 0)
+        rows.append(
+            {
+                "check_id": check_id,
+                "label": label,
+                "expression": expression,
+                "total_count": total,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "pass_pct": _pct_decimal(pass_count, total),
+                "status": "PASS" if total > 0 and fail_count == 0 else "FAIL" if fail_count > 0 else "NO_SAMPLE",
+                "read": _mid_long_breakout_label_purity_read(check_id, fail_count=fail_count, total=total),
+            }
+        )
+    return rows
+
+
+def _mid_long_breakout_label_purity_read(check_id: str, *, fail_count: int, total: int) -> str:
+    if total <= 0:
+        return "No breakout proxy sample."
+    if fail_count <= 0:
+        return "Clean for this purity check."
+    if check_id in {"LP-02", "LP-03", "LP-04"}:
+        return "Leakage risk: this row must not support any entry-filter conclusion until audited."
+    return "Definition-purity gap: keep as proxy, not accepted breakout."
+
+
+def _mid_long_breakout_observable_path_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[_mid_long_breakout_observable_path(item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for path, path_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"BA-PATH:{path}",
+            path,
+            _mid_long_breakout_observable_path_expression(path),
+            path_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "observable_path": path,
+                "path_read": _mid_long_breakout_observable_path_read(path),
+                "median_mfe_r": _median_decimal_snapshot(_mid_long_item_decimal_values(path_items, "mfe_r")),
+                "median_mae_r": _median_decimal_snapshot(_mid_long_item_decimal_values(path_items, "mae_r")),
+                "median_wick_decay_r": _median_decimal_snapshot(
+                    _mid_long_item_decimal_values(path_items, "wick_to_close_decay_r")
+                ),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_observable_path_rank(str(row.get("observable_path") or "")),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_observable_path(item: dict[str, Any]) -> str:
+    path = _mid_long_path_label_050(item)
+    if path == "INSTANT_SL":
+        return "EARLY_FAILURE"
+    if path in {"SHALLOW_PROFIT_THEN_FAIL", "WICK_PROFIT_THEN_FAIL"}:
+        return "WICK_BREAK_FAILURE"
+    if path == "CLOSE_PROFIT_THEN_FAIL":
+        return "CLOSE_ACCEPTED_FAILURE"
+    if path in {"PULLBACK_TP", "DRAWDOWN_FIRST_THEN_TP"}:
+        return "PULLBACK_WINNER"
+    if path in {"WICK_PROFIT_THEN_TP", "CLEAN_CONTINUATION_TP"}:
+        return "CLEAN_WINNER"
+    if path == "SAME_BAR_AMBIGUOUS":
+        return "SAME_BAR_AMBIGUOUS"
+    return "OTHER_PATH"
+
+
+def _mid_long_breakout_observable_path_expression(path: str) -> str:
+    return {
+        "EARLY_FAILURE": "SL with little/no favorable move after entry.",
+        "WICK_BREAK_FAILURE": "Signal touched some favorable move by wick, but never earned close acceptance before failing.",
+        "CLOSE_ACCEPTED_FAILURE": "Signal closed at least +0.50R, then failed before target.",
+        "PULLBACK_WINNER": "Target hit after meaningful pullback.",
+        "CLEAN_WINNER": "Target hit after clean continuation or wick-first continuation.",
+        "SAME_BAR_AMBIGUOUS": "TP/SL ambiguity inside the same candle.",
+        "OTHER_PATH": "Open, unknown, or other path.",
+    }.get(path, "Observable path bucket.")
+
+
+def _mid_long_breakout_observable_path_read(path: str) -> str:
+    return {
+        "EARLY_FAILURE": "Post-entry behavior only; use this to inspect pre-entry causes, not as an entry filter.",
+        "WICK_BREAK_FAILURE": "Often looks like breakout failure; test thin close acceptance and large wick before entry.",
+        "CLOSE_ACCEPTED_FAILURE": "Not a pure false breakout; study room, crowding, and management separately.",
+        "PULLBACK_WINNER": "Do not over-tighten stops/filters that would remove pullback winners.",
+        "CLEAN_WINNER": "Reference profile for accepted continuation.",
+        "SAME_BAR_AMBIGUOUS": "Keep out of clean rule conclusions.",
+    }.get(path, "Diagnostic only.")
+
+
+def _mid_long_observable_path_rank(path: str) -> int:
+    return {
+        "EARLY_FAILURE": 7,
+        "WICK_BREAK_FAILURE": 6,
+        "CLOSE_ACCEPTED_FAILURE": 5,
+        "SAME_BAR_AMBIGUOUS": 4,
+        "PULLBACK_WINNER": 3,
+        "CLEAN_WINNER": 2,
+        "OTHER_PATH": 1,
+    }.get(path, 0)
+
+
+def _mid_long_breakout_pre_entry_cause_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    cause_specs: tuple[tuple[str, str, str, Callable[[dict[str, Any]], bool], str], ...] = (
+        (
+            "CAUSE-01",
+            "THIN_CLOSE_ACCEPTANCE",
+            "close_penetration_atr < 0.10 OR body_above_zone_ratio < 0.35 OR close_location_in_candle < 0.55",
+            lambda item: _mid_long_breakout_thin_acceptance(item),
+            "Definition weakness: breakout close exists, but acceptance is thin.",
+        ),
+        (
+            "CAUSE-02",
+            "LARGE_BREAKOUT_WICK",
+            "upper_wick_to_body_ratio >= 1.00",
+            lambda item: _mid_long_breakout_decimal_gte(item, "upper_wick_to_body_ratio", "1.00"),
+            "Pre-entry wick risk, not the post-entry wick-decay filter.",
+        ),
+        (
+            "CAUSE-03",
+            "LATE_CHASE",
+            "bars_since_breakout >= 2 AND entry_distance_from_zone_atr >= 1.00",
+            lambda item: _mid_long_breakout_late_chase(item),
+            "Entry may be late relative to the breakout zone.",
+        ),
+        (
+            "CAUSE-04",
+            "LOW_REMAINING_ROOM",
+            "0 <= room_to_next_resistance_atr <= 0.75",
+            lambda item: _mid_long_breakout_low_room(item),
+            "Only rows with known next resistance are counted; missing room is not treated as safe.",
+        ),
+        (
+            "CAUSE-05",
+            "WEAK_INITIATIVE_FLOW",
+            "volume_ratio_vs_lookback < 1.00 OR kline_taker_buy_ratio < 0.53 OR oi_change_pct <= 0",
+            lambda item: _mid_long_breakout_weak_flow(item),
+            "Flow is not confirming the long continuation strongly enough.",
+        ),
+        (
+            "CAUSE-06",
+            "HIGH_CROWDING",
+            "funding_percentile_30d >= 75 OR oi_zscore >= 3.00",
+            lambda item: _mid_long_breakout_high_crowding(item),
+            "OI/funding may indicate crowded expansion, not automatically bullish quality.",
+        ),
+        (
+            "CAUSE-07",
+            "HIGH_PROJECTED_COST",
+            "realistic_cost_r_estimate > 0.20",
+            lambda item: _mid_long_breakout_decimal_gt(item, "realistic_cost_r_estimate", "0.20"),
+            "Tradability damage, separate from breakout validity.",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    assigned: set[str] = set()
+    for cause_id, label, expression, predicate, read in cause_specs:
+        selected = [item for item in items if predicate(item)]
+        assigned.update(str(item.get("signal_id") or id(item)) for item in selected)
+        row = _mid_long_perf_row(
+            cause_id,
+            label,
+            expression,
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "cause_id": cause_id,
+                "cause_label": label,
+                "cause_class": "PRE_ENTRY_HYPOTHESIS",
+                "path_mix": _mid_long_path_mix(selected),
+                "observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in selected)),
+                "cause_read": read,
+            }
+        )
+        rows.append(row)
+    unknown = [item for item in items if str(item.get("signal_id") or id(item)) not in assigned]
+    unknown_row = _mid_long_perf_row(
+        "CAUSE-99",
+        "UNKNOWN_CAUSE",
+        "No current pre-entry cause flag matched.",
+        unknown,
+        baseline=baseline,
+        required_fields=(),
+        min_sample=min_sample,
+    )
+    unknown_row.update(
+        {
+            "cause_id": "CAUSE-99",
+            "cause_label": "UNKNOWN_CAUSE",
+            "cause_class": "PRE_ENTRY_HYPOTHESIS",
+            "path_mix": _mid_long_path_mix(unknown),
+            "observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in unknown)),
+            "cause_read": "Current cause set does not explain these rows; inspect examples before adding more flags.",
+        }
+    )
+    rows.append(unknown_row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_pre_entry_geometry_path_tables(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, list[dict[str, Any]]]:
+    specs: tuple[tuple[str, str, Callable[[dict[str, Any]], str]], ...] = (
+        ("close_penetration_bucket_x_path", "Close penetration x path", _mid_long_close_penetration_bucket),
+        ("body_above_zone_bucket_x_path", "Body above zone x path", _mid_long_body_above_zone_bucket),
+        ("upper_wick_body_bucket_x_path", "Upper wick/body x path", _mid_long_upper_wick_body_bucket),
+        ("bars_since_breakout_bucket_x_path", "Bars since breakout x path", _mid_long_bars_since_breakout_bucket),
+        ("entry_distance_zone_bucket_x_path", "Entry distance from zone x path", _mid_long_entry_distance_zone_bucket),
+        ("room_to_resistance_precise_bucket_x_path", "Room to resistance x path", _mid_long_room_to_resistance_precise_bucket),
+    )
+    return {
+        key: _mid_long_breakout_geometry_path_rows(
+            items,
+            dimension_key=key,
+            dimension_label=label,
+            bucket_fn=bucket_fn,
+            baseline=baseline,
+            min_sample=min_sample,
+        )
+        for key, label, bucket_fn in specs
+    }
+
+
+def _mid_long_breakout_geometry_path_rows(
+    items: list[dict[str, Any]],
+    *,
+    dimension_key: str,
+    dimension_label: str,
+    bucket_fn: Callable[[dict[str, Any]], str],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        bucket = bucket_fn(item)
+        path = _mid_long_breakout_observable_path(item)
+        grouped[f"{bucket} x {path}"].append(item)
+    rows: list[dict[str, Any]] = []
+    for cell, cell_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"BA-GEOM:{dimension_key}:{cell}",
+            cell,
+            f"{dimension_label} == {cell}",
+            cell_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            {
+                "cell": cell,
+                "taxonomy_key": dimension_key,
+                "taxonomy_label": dimension_label,
+                "path_label": cell.rsplit(" x ", 1)[-1],
+                "read": _mid_long_geometry_path_read(cell=cell, row=row),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0),
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_geometry_path_read(*, cell: str, row: dict[str, Any]) -> str:
+    if int(row.get("closed_count") or 0) <= 0:
+        return "No sample."
+    if "UNKNOWN" in cell:
+        return "Do not treat missing structure as safe or unsafe."
+    if _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")) < 0:
+        return "Negative cell; inspect whether this pre-entry bucket explains failure concentration."
+    return "Positive cell; avoid filters that remove it without validation."
+
+
+def _mid_long_time_lte(left: Any, right: Any) -> bool:
+    left_dt = _mid_long_parse_time(left)
+    right_dt = _mid_long_parse_time(right)
+    if left_dt is None or right_dt is None:
+        return False
+    return left_dt <= right_dt
+
+
+def _mid_long_parse_time(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        text = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _mid_long_breakout_decimal(item: dict[str, Any], field: str) -> Decimal | None:
+    return _decimal_or_none_snapshot(item.get(field))
+
+
+def _mid_long_breakout_decimal_gte(item: dict[str, Any], field: str, threshold: str) -> bool:
+    value = _mid_long_breakout_decimal(item, field)
+    return value is not None and value >= Decimal(threshold)
+
+
+def _mid_long_breakout_decimal_gt(item: dict[str, Any], field: str, threshold: str) -> bool:
+    value = _mid_long_breakout_decimal(item, field)
+    return value is not None and value > Decimal(threshold)
+
+
+def _mid_long_breakout_decimal_lt(item: dict[str, Any], field: str, threshold: str) -> bool:
+    value = _mid_long_breakout_decimal(item, field)
+    return value is not None and value < Decimal(threshold)
+
+
+def _mid_long_breakout_thin_acceptance(item: dict[str, Any]) -> bool:
+    return (
+        _mid_long_breakout_decimal_lt(item, "close_penetration_atr", "0.10")
+        or _mid_long_breakout_decimal_lt(item, "body_above_zone_ratio", "0.35")
+        or _mid_long_breakout_decimal_lt(item, "close_location_in_candle", "0.55")
+    )
+
+
+def _mid_long_breakout_late_chase(item: dict[str, Any]) -> bool:
+    bars = _mid_long_breakout_decimal(item, "bars_since_breakout")
+    distance = _mid_long_breakout_decimal(item, "entry_distance_from_zone_atr")
+    return bars is not None and bars >= Decimal("2") and distance is not None and distance >= Decimal("1.00")
+
+
+def _mid_long_breakout_low_room(item: dict[str, Any]) -> bool:
+    room = _mid_long_breakout_decimal(item, "room_to_next_resistance_atr")
+    return room is not None and Decimal("0") <= room <= Decimal("0.75")
+
+
+def _mid_long_breakout_weak_flow(item: dict[str, Any]) -> bool:
+    volume = _mid_long_evidence_value(item, "volume_ratio_vs_lookback")
+    taker_buy = _mid_long_evidence_value(item, "kline_taker_buy_ratio")
+    oi_change = _mid_long_evidence_value(item, "oi_change_pct")
+    return (
+        (volume is not None and volume < Decimal("1.00"))
+        or (taker_buy is not None and taker_buy < Decimal("0.53"))
+        or (oi_change is not None and oi_change <= Decimal("0"))
+    )
+
+
+def _mid_long_breakout_high_crowding(item: dict[str, Any]) -> bool:
+    funding = _mid_long_evidence_value(item, "funding_percentile_30d")
+    oi_z = _mid_long_evidence_value(item, "oi_zscore")
+    return (funding is not None and funding >= Decimal("75")) or (oi_z is not None and oi_z >= Decimal("3.00"))
+
+
+def _mid_long_close_penetration_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "close_penetration_atr")
+    if value is None:
+        return "PENETRATION_UNKNOWN"
+    if value < Decimal("0.10"):
+        return "THIN_PENETRATION"
+    if value < Decimal("0.30"):
+        return "MODERATE_PENETRATION"
+    return "STRONG_PENETRATION"
+
+
+def _mid_long_body_above_zone_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "body_above_zone_ratio")
+    if value is None:
+        return "BODY_ZONE_UNKNOWN"
+    if value < Decimal("0.35"):
+        return "LOW_BODY_ACCEPTANCE"
+    if value < Decimal("0.70"):
+        return "MID_BODY_ACCEPTANCE"
+    return "HIGH_BODY_ACCEPTANCE"
+
+
+def _mid_long_upper_wick_body_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "upper_wick_to_body_ratio")
+    if value is None:
+        return "WICK_UNKNOWN"
+    if value < Decimal("0.50"):
+        return "LOW_UPPER_WICK"
+    if value < Decimal("1.00"):
+        return "MID_UPPER_WICK"
+    return "HIGH_UPPER_WICK"
+
+
+def _mid_long_bars_since_breakout_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "bars_since_breakout")
+    if value is None:
+        return "BARS_UNKNOWN"
+    if value <= Decimal("0"):
+        return "BREAKOUT_ENTRY"
+    if value <= Decimal("1"):
+        return "POST_BREAKOUT_NORMAL"
+    return "LATE_BREAKOUT_CHASE"
+
+
+def _mid_long_entry_distance_zone_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "entry_distance_from_zone_atr")
+    if value is None:
+        return "ENTRY_DISTANCE_UNKNOWN"
+    if value < Decimal("0.30"):
+        return "NEAR_ZONE"
+    if value < Decimal("1.00"):
+        return "NORMAL_DISTANCE"
+    return "FAR_FROM_ZONE"
+
+
+def _mid_long_room_to_resistance_precise_bucket(item: dict[str, Any]) -> str:
+    value = _mid_long_breakout_decimal(item, "room_to_next_resistance_atr")
+    if value is None:
+        return "ROOM_UNKNOWN"
+    if value < Decimal("0"):
+        return "RESISTANCE_COLLISION"
+    if value <= Decimal("0.75"):
+        return "LOW_ROOM"
+    if value <= Decimal("1.50"):
+        return "MODERATE_ROOM"
+    return "HIGH_ROOM"
 
 
 def _mid_long_breakout_mechanism_rows(
@@ -3402,6 +3934,7 @@ def _mid_long_breakout_summary(
     *,
     control: dict[str, Any],
     field_rows: list[dict[str, Any]],
+    label_purity_rows: list[dict[str, Any]],
     mechanism_rows: list[dict[str, Any]],
     single_filter_rows: list[dict[str, Any]],
     draft_rows: list[dict[str, Any]],
@@ -3429,8 +3962,10 @@ def _mid_long_breakout_summary(
     )
     if precise_missing:
         label_purity_read = "PROXY_LABEL_ONLY_NEEDS_ZONE_FIELDS"
+    elif any(str(row.get("status")) == "FAIL" for row in label_purity_rows):
+        label_purity_read = "PURITY_CHECK_HAS_FAILURES"
     else:
-        label_purity_read = "ZONE_FIELDS_AVAILABLE_FOR_PURITY_AUDIT"
+        label_purity_read = "PRE_ENTRY_ZONE_PURITY_PASS"
     return {
         "read": _mid_long_breakout_deep_dive_read(
             control=control,
@@ -3440,6 +3975,7 @@ def _mid_long_breakout_summary(
         ),
         "label_purity_read": label_purity_read,
         "precise_zone_fields_missing_count": len(precise_missing),
+        "label_purity_failed_count": sum(1 for row in label_purity_rows if str(row.get("status")) == "FAIL"),
         "best_filter": _mid_long_breakout_summary_row(best_filter),
         "worst_mechanism": _mid_long_breakout_summary_row(worst_mechanism),
         "best_draft": _mid_long_breakout_summary_row(best_draft),
