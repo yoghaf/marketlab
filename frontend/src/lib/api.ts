@@ -3883,6 +3883,7 @@ export type MidLongDefinitionAudit = {
   damage_isolation?: MidLongDamageIsolation;
   sl_anatomy_v2?: MidLongSlAnatomyV2;
   first_hour_response_audit?: MidLongFirstHourResponseAudit;
+  first_hour_action_simulation?: MidLongFirstHourActionSimulation;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
   breakout_accepted_deep_dive?: MidLongBreakoutAcceptedDeepDive;
@@ -4074,6 +4075,99 @@ export type MidLongFirstHourSampleRow = {
   price_at_signal?: string | number | null;
   sl_ref?: string | number | null;
   tp_ref?: string | number | null;
+};
+
+export type MidLongFirstHourActionSimulation = {
+  scope: string;
+  method: string;
+  model: string;
+  source_state_model: string;
+  baseline_realistic_total_r_closed?: string | number | null;
+  baseline_realistic_avg_r_closed?: string | number | null;
+  baseline_max_realistic_drawdown_r?: string | number | null;
+  delayed_entry_rows: MidLongFirstHourDelayedEntryRow[];
+  early_exit_rows: MidLongFirstHourEarlyExitRow[];
+  summary: {
+    read: string;
+    baseline_realistic_total_r_closed?: string | number | null;
+    best_delayed_entry?: MidLongFirstHourActionSummaryRow | null;
+    best_early_exit?: MidLongFirstHourActionSummaryRow | null;
+    best_delayed_delta_r?: string | number | null;
+    best_early_exit_delta_r?: string | number | null;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongFirstHourActionSummaryRow = {
+  filter_id?: string | null;
+  label?: string | null;
+  read?: string | null;
+  sample_count?: number | string | null;
+  action_count?: number | string | null;
+  retained_count?: number | string | null;
+  delta_r?: string | number | null;
+  total_r?: string | number | null;
+  avg_r?: string | number | null;
+};
+
+export type MidLongFirstHourDelayedEntryRow = MidLongEntryCombinationRow & {
+  simulation_family: string;
+  source_count: number;
+  retained_count: number;
+  skipped_count: number;
+  excluded_unavailable_count?: number;
+  retained_state_mix: Record<string, number>;
+  skipped_state_mix: Record<string, number>;
+  skipped_tp_count?: number | string | null;
+  skipped_sl_count?: number | string | null;
+  skipped_realistic_total_r_closed?: string | number | null;
+  skipped_realistic_avg_r_closed?: string | number | null;
+  read: string;
+};
+
+export type MidLongFirstHourEarlyExitRow = {
+  filter_id: string;
+  label: string;
+  expression: string;
+  simulation_family: string;
+  required_fields: string[];
+  source_count: number;
+  sample_count: number;
+  closed_count: number;
+  action_count: number;
+  unchanged_count: number;
+  missing_followthrough_count: number;
+  original_action_tp_count: number;
+  original_action_sl_count: number;
+  original_action_both_count: number;
+  sl_reduced_count: number;
+  tp_cut_count: number;
+  proxy_positive_count: number;
+  proxy_negative_count: number;
+  proxy_flat_count: number;
+  original_realistic_total_r_closed?: string | number | null;
+  proxy_realistic_total_r_closed?: string | number | null;
+  proxy_realistic_avg_r_closed?: string | number | null;
+  proxy_median_realistic_r_closed?: string | number | null;
+  action_original_total_r?: string | number | null;
+  action_proxy_total_r?: string | number | null;
+  r_saved?: string | number | null;
+  r_sacrificed?: string | number | null;
+  net_saved_r?: string | number | null;
+  proxy_realistic_total_r_delta_vs_baseline?: string | number | null;
+  proxy_realistic_avg_r_delta_vs_baseline?: string | number | null;
+  proxy_max_drawdown_r?: string | number | null;
+  proxy_max_drawdown_delta_vs_baseline?: string | number | null;
+  median_original_r?: string | number | null;
+  median_proxy_r?: string | number | null;
+  median_action_original_r?: string | number | null;
+  median_action_proxy_r?: string | number | null;
+  action_state_mix: Record<string, number>;
+  top_symbol?: string | null;
+  top_symbol_count?: number;
+  top_symbol_share_pct?: string | number | null;
+  read: string;
 };
 
 export type MidLongSlPathCauseRow = {

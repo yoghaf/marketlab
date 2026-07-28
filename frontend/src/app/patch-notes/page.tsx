@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-17",
+    title: "MID_LONG First-Hour Action Simulation",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan simulasi read-only untuk membandingkan delayed-entry proxy dan early-exit proxy setelah audit respons 1 jam pertama.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan first_hour_action_simulation dengan delayed_entry_rows dan early_exit_rows.",
+      "Delayed-entry proxy menguji retained cohort seperti enter only after confirmed 1h dan skip early damage 1h tanpa mereprice entry/SL/TP.",
+      "Early-exit proxy mengganti final R dengan close_followthrough_1h_r untuk state reversed/stalled/failed agar terlihat apakah damage bisa dikurangi.",
+      "Halaman /mid-long-research-study menambahkan panel First-Hour Action Simulation setelah First-Hour Response Audit.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang bisa memilih cabang berikutnya secara data: exact delayed-entry replay atau exact early-exit replay, tanpa langsung mengubah rule live.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Action Simulation" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-16",
     title: "MID_LONG First-Hour Response Audit",
     status: "LIVE",

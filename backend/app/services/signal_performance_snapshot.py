@@ -1363,6 +1363,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    first_hour_action = _mid_long_first_hour_action_simulation(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     definition_reset = _mid_long_definition_reset_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1405,6 +1411,7 @@ def _mid_long_definition_audit(
         "damage_isolation": damage,
         "sl_anatomy_v2": sl_anatomy,
         "first_hour_response_audit": first_hour_response,
+        "first_hour_action_simulation": first_hour_action,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
         "breakout_accepted_deep_dive": breakout_deep_dive,
@@ -3546,6 +3553,400 @@ def _mid_long_first_hour_state_priority(state: str) -> int:
         "FIRST_HOUR_STALLED": 2,
         "FIRST_HOUR_UNAVAILABLE": 1,
     }.get(state, 0)
+
+
+def _mid_long_first_hour_action_simulation(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    state_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_first_hour_state(
+            item,
+            reset_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    delayed_rows = [
+        _mid_long_first_hour_delayed_entry_row(
+            "DELAY_KEEP_CONFIRMED_1H",
+            "Enter only after confirmed 1h response",
+            "Keep rows where first_hour_state == FIRST_HOUR_CONFIRMED; skipped rows are diagnostic damage avoided.",
+            items,
+            state_by_id=state_by_id,
+            keep_states={"FIRST_HOUR_CONFIRMED"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        _mid_long_first_hour_delayed_entry_row(
+            "DELAY_SKIP_EARLY_DAMAGE_1H",
+            "Skip first-hour reversed/failed rows",
+            "Keep confirmed + stalled rows, skip FIRST_HOUR_PRICE_REVERSED and FIRST_HOUR_STRUCTURE_FAILED.",
+            items,
+            state_by_id=state_by_id,
+            keep_states={"FIRST_HOUR_CONFIRMED", "FIRST_HOUR_STALLED"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        _mid_long_first_hour_delayed_entry_row(
+            "DELAY_REQUIRE_LOGGED_1H_NON_DAMAGE",
+            "Require logged non-damage 1h response",
+            "Keep confirmed + stalled rows and exclude unavailable first-hour rows from the proxy.",
+            items,
+            state_by_id=state_by_id,
+            keep_states={"FIRST_HOUR_CONFIRMED", "FIRST_HOUR_STALLED"},
+            exclude_states={"FIRST_HOUR_UNAVAILABLE"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+    ]
+    early_exit_rows = [
+        _mid_long_first_hour_early_exit_row(
+            "EXIT_PRICE_REVERSED_AT_1H_CLOSE_PROXY",
+            "Exit first-hour price reversal",
+            "Replace final R with close_followthrough_1h_r only for FIRST_HOUR_PRICE_REVERSED rows.",
+            items,
+            state_by_id=state_by_id,
+            action_states={"FIRST_HOUR_PRICE_REVERSED"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        _mid_long_first_hour_early_exit_row(
+            "EXIT_EARLY_DAMAGE_AT_1H_CLOSE_PROXY",
+            "Exit first-hour reversal or structure fail",
+            "Replace final R with close_followthrough_1h_r for FIRST_HOUR_PRICE_REVERSED and FIRST_HOUR_STRUCTURE_FAILED rows.",
+            items,
+            state_by_id=state_by_id,
+            action_states={"FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+        _mid_long_first_hour_early_exit_row(
+            "EXIT_NON_CONFIRMED_AT_1H_CLOSE_PROXY",
+            "Exit any non-confirmed logged 1h response",
+            "Replace final R with close_followthrough_1h_r for stalled, reversed, and structure-failed rows.",
+            items,
+            state_by_id=state_by_id,
+            action_states={"FIRST_HOUR_STALLED", "FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"},
+            baseline=baseline,
+            min_sample=min_sample,
+        ),
+    ]
+    summary = _mid_long_first_hour_action_summary(
+        delayed_rows=delayed_rows,
+        early_exit_rows=early_exit_rows,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h First-Hour Action Simulation",
+        "method": (
+            "Read-only proxy simulation. Delayed-entry rows are retained-cohort tests and do not reprice entry/SL/TP. "
+            "Early-exit rows replace final R with the logged 1h close-followthrough R for action rows only."
+        ),
+        "model": "FIRST_HOUR_ACTION_PROXY_V1",
+        "source_state_model": "FIRST_HOUR_RESPONSE_PROXY_V1",
+        "baseline_realistic_total_r_closed": baseline.get("realistic_total_r_closed"),
+        "baseline_realistic_avg_r_closed": baseline.get("realistic_avg_r_closed"),
+        "baseline_max_realistic_drawdown_r": baseline.get("max_realistic_drawdown_r"),
+        "delayed_entry_rows": delayed_rows,
+        "early_exit_rows": early_exit_rows,
+        "summary": summary,
+        "guardrails": [
+            "This does not change Signal Factory, scanner, TP/SL, timeout, or execution.",
+            "Delayed-entry proxy does not reprice the later entry; it only tells whether confirmation is worth exact replay.",
+            "Early-exit proxy uses 1h close R, not intrabar order-book execution.",
+            "Any promising row must be rerun with candle-by-candle replay before becoming a shadow rule.",
+        ],
+    }
+
+
+def _mid_long_first_hour_delayed_entry_row(
+    filter_id: str,
+    label: str,
+    expression: str,
+    items: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    keep_states: set[str],
+    baseline: dict[str, Any],
+    min_sample: int,
+    exclude_states: set[str] | None = None,
+) -> dict[str, Any]:
+    excluded = exclude_states or set()
+    retained: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    unavailable_excluded: list[dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        state = state_by_id.get(str(item.get("signal_id") or idx), "FIRST_HOUR_UNAVAILABLE")
+        if state in keep_states:
+            retained.append(item)
+        elif state in excluded:
+            unavailable_excluded.append(item)
+        else:
+            skipped.append(item)
+
+    row = _mid_long_perf_row(
+        filter_id,
+        label,
+        expression,
+        retained,
+        baseline=baseline,
+        required_fields=("close_followthrough_1h_r",),
+        missing_data_count=sum(1 for item in retained if _decimal_or_none_snapshot(item.get("close_followthrough_1h_r")) is None),
+        min_sample=min_sample,
+    )
+    skipped_perf = aggregate_signal_performance_items(skipped)
+    row.update(
+        {
+            "simulation_family": "DELAYED_ENTRY_PROXY",
+            "source_count": len(items),
+            "retained_count": len(retained),
+            "skipped_count": len(skipped),
+            "excluded_unavailable_count": len(unavailable_excluded),
+            "retained_state_mix": _mid_long_first_hour_state_mix(retained, state_by_id=state_by_id, all_items=items),
+            "skipped_state_mix": _mid_long_first_hour_state_mix(skipped, state_by_id=state_by_id, all_items=items),
+            "skipped_tp_count": skipped_perf.get("tp_count"),
+            "skipped_sl_count": skipped_perf.get("sl_count"),
+            "skipped_realistic_total_r_closed": skipped_perf.get("realistic_total_r_closed"),
+            "skipped_realistic_avg_r_closed": skipped_perf.get("realistic_avg_r_closed"),
+            "read": _mid_long_first_hour_delayed_read(row, skipped_perf, min_sample=min_sample),
+        }
+    )
+    return row
+
+
+def _mid_long_first_hour_early_exit_row(
+    filter_id: str,
+    label: str,
+    expression: str,
+    items: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    action_states: set[str],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    scored: list[tuple[dict[str, Any], Decimal, Decimal, bool]] = []
+    action_items: list[dict[str, Any]] = []
+    missing_followthrough_count = 0
+    for idx, item in enumerate(items):
+        if item.get("result_status") not in COMPLETED_OUTCOMES:
+            continue
+        original = _decimal_or_none_snapshot(item.get("realistic_realized_r"))
+        if original is None:
+            continue
+        state = state_by_id.get(str(item.get("signal_id") or idx), "FIRST_HOUR_UNAVAILABLE")
+        followthrough = _decimal_or_none_snapshot(item.get("close_followthrough_1h_r"))
+        should_exit = state in action_states
+        if should_exit and followthrough is None:
+            missing_followthrough_count += 1
+        simulated = followthrough if should_exit and followthrough is not None else original
+        scored.append((item, original, simulated, bool(should_exit and followthrough is not None)))
+        if should_exit and followthrough is not None:
+            action_items.append(item)
+
+    proxy_values = [simulated for _, _, simulated, _ in scored]
+    original_values = [original for _, original, _, _ in scored]
+    action_original_values = [original for _, original, _, acted in scored if acted]
+    action_simulated_values = [simulated for _, _, simulated, acted in scored if acted]
+    proxy_total = sum(proxy_values, Decimal("0"))
+    original_total = sum(original_values, Decimal("0"))
+    r_saved = sum((simulated - original for _, original, simulated, acted in scored if acted and simulated > original), Decimal("0"))
+    r_sacrificed = sum((original - simulated for _, original, simulated, acted in scored if acted and original > simulated), Decimal("0"))
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item, _, _, _ in scored)
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    original_action_tp = sum(1 for item in action_items if item.get("result_status") == "TP_HIT")
+    original_action_sl = sum(1 for item in action_items if item.get("result_status") == "SL_HIT")
+    original_action_both = sum(1 for item in action_items if item.get("result_status") == "BOTH_HIT_SAME_CANDLE")
+    row = {
+        "filter_id": filter_id,
+        "label": label,
+        "expression": expression,
+        "simulation_family": "EARLY_EXIT_PROXY",
+        "required_fields": ["close_followthrough_1h_r"],
+        "source_count": len(items),
+        "sample_count": len(scored),
+        "closed_count": len(scored),
+        "action_count": len(action_items),
+        "unchanged_count": max(0, len(scored) - len(action_items)),
+        "missing_followthrough_count": missing_followthrough_count,
+        "original_action_tp_count": original_action_tp,
+        "original_action_sl_count": original_action_sl,
+        "original_action_both_count": original_action_both,
+        "sl_reduced_count": sum(1 for item, original, simulated, acted in scored if acted and item.get("result_status") == "SL_HIT" and simulated > original),
+        "tp_cut_count": sum(1 for item, original, simulated, acted in scored if acted and item.get("result_status") == "TP_HIT" and simulated < original),
+        "proxy_positive_count": sum(1 for value in proxy_values if value > 0),
+        "proxy_negative_count": sum(1 for value in proxy_values if value < 0),
+        "proxy_flat_count": sum(1 for value in proxy_values if value == 0),
+        "original_realistic_total_r_closed": original_total,
+        "proxy_realistic_total_r_closed": proxy_total,
+        "proxy_realistic_avg_r_closed": proxy_total / Decimal(len(proxy_values)) if proxy_values else None,
+        "proxy_median_realistic_r_closed": _median_decimal_snapshot(proxy_values),
+        "action_original_total_r": sum(action_original_values, Decimal("0")),
+        "action_proxy_total_r": sum(action_simulated_values, Decimal("0")),
+        "r_saved": r_saved,
+        "r_sacrificed": r_sacrificed,
+        "net_saved_r": r_saved - r_sacrificed,
+        "proxy_realistic_total_r_delta_vs_baseline": _decimal_delta_snapshot(proxy_total, baseline.get("realistic_total_r_closed")),
+        "proxy_realistic_avg_r_delta_vs_baseline": _decimal_delta_snapshot(
+            proxy_total / Decimal(len(proxy_values)) if proxy_values else None,
+            baseline.get("realistic_avg_r_closed"),
+        ),
+        "proxy_max_drawdown_r": _mid_long_simulated_drawdown(scored)["max_drawdown_r"],
+        "proxy_max_drawdown_delta_vs_baseline": _decimal_delta_snapshot(
+            _mid_long_simulated_drawdown(scored)["max_drawdown_r"],
+            baseline.get("max_realistic_drawdown_r"),
+        ),
+        "median_original_r": _median_decimal_snapshot(original_values),
+        "median_proxy_r": _median_decimal_snapshot(proxy_values),
+        "median_action_original_r": _median_decimal_snapshot(action_original_values),
+        "median_action_proxy_r": _median_decimal_snapshot(action_simulated_values),
+        "action_state_mix": _mid_long_first_hour_state_mix(action_items, state_by_id=state_by_id, all_items=items),
+        "top_symbol": top_symbol,
+        "top_symbol_count": top_symbol_count,
+        "top_symbol_share_pct": _pct_decimal(top_symbol_count, len(scored)) if scored else None,
+    }
+    row["read"] = _mid_long_first_hour_early_exit_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_first_hour_state_mix(
+    selected: list[dict[str, Any]],
+    *,
+    state_by_id: dict[str, str],
+    all_items: list[dict[str, Any]],
+) -> dict[str, int]:
+    index_by_identity = {id(item): idx for idx, item in enumerate(all_items)}
+    counter: Counter[str] = Counter()
+    for item in selected:
+        idx = index_by_identity.get(id(item), 0)
+        counter[state_by_id.get(str(item.get("signal_id") or idx), "FIRST_HOUR_UNAVAILABLE")] += 1
+    return dict(counter)
+
+
+def _mid_long_simulated_drawdown(scored: list[tuple[dict[str, Any], Decimal, Decimal, bool]]) -> dict[str, Decimal | int]:
+    ordered = sorted(
+        scored,
+        key=lambda row: (
+            str(row[0].get("result_time_utc") or row[0].get("signal_timestamp") or ""),
+            str(row[0].get("symbol") or ""),
+        ),
+    )
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
+    for _, _, simulated, _ in ordered:
+        cumulative += simulated
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    return {
+        "closed_count": len(ordered),
+        "total_r_closed": cumulative,
+        "peak_r": peak,
+        "max_drawdown_r": max_drawdown,
+        "current_drawdown_r": cumulative - peak,
+    }
+
+
+def _mid_long_first_hour_delayed_read(row: dict[str, Any], skipped_perf: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("retained_count") or 0) < min_sample:
+        return "DELAYED_ENTRY_SAMPLE_SMALL"
+    retained_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    retained_avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    skipped_total = _decimal_or_zero_snapshot(skipped_perf.get("realistic_total_r_closed"))
+    if retained_total > 0 and retained_avg_delta > Decimal("0.10") and skipped_total < 0:
+        return "DELAYED_ENTRY_PROXY_PROMISING"
+    if retained_avg_delta > 0 and skipped_total < 0:
+        return "DELAYED_ENTRY_DAMAGE_REDUCED"
+    if retained_total > 0:
+        return "DELAYED_ENTRY_POSITIVE_BUT_NOT_CLEAN"
+    return "DELAYED_ENTRY_NOT_SUPPORTED"
+
+
+def _mid_long_first_hour_early_exit_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("action_count") or 0) < min_sample:
+        return "EARLY_EXIT_SAMPLE_SMALL"
+    net_saved = _decimal_or_zero_snapshot(row.get("net_saved_r"))
+    delta = _decimal_or_zero_snapshot(row.get("proxy_realistic_total_r_delta_vs_baseline"))
+    tp_cut = int(row.get("tp_cut_count") or 0)
+    sl_reduced = int(row.get("sl_reduced_count") or 0)
+    if net_saved > Decimal("10") and delta > 0 and sl_reduced > tp_cut:
+        return "EARLY_EXIT_PROXY_PROMISING"
+    if net_saved > 0 and sl_reduced >= tp_cut:
+        return "EARLY_EXIT_DAMAGE_REDUCED"
+    if net_saved > 0:
+        return "EARLY_EXIT_SAVES_R_BUT_CUTS_TP"
+    return "EARLY_EXIT_NOT_SUPPORTED"
+
+
+def _mid_long_first_hour_action_summary(
+    *,
+    delayed_rows: list[dict[str, Any]],
+    early_exit_rows: list[dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    delayed_candidates = [row for row in delayed_rows if int(row.get("retained_count") or 0) >= min_sample]
+    exit_candidates = [row for row in early_exit_rows if int(row.get("action_count") or 0) >= min_sample]
+    best_delayed = max(
+        delayed_candidates,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_total_r_delta_vs_baseline")),
+        default=None,
+    )
+    best_exit = max(
+        exit_candidates,
+        key=lambda row: _decimal_or_zero_snapshot(row.get("proxy_realistic_total_r_delta_vs_baseline")),
+        default=None,
+    )
+    best_delayed_delta = _decimal_or_zero_snapshot((best_delayed or {}).get("realistic_total_r_delta_vs_baseline"))
+    best_exit_delta = _decimal_or_zero_snapshot((best_exit or {}).get("proxy_realistic_total_r_delta_vs_baseline"))
+    if best_exit and str(best_exit.get("read")) in {"EARLY_EXIT_PROXY_PROMISING", "EARLY_EXIT_DAMAGE_REDUCED"}:
+        read = "EARLY_EXIT_PROXY_LEADS"
+        next_action = "Run exact candle replay for the best early-exit proxy before touching any MID_LONG rule."
+    elif best_delayed and str(best_delayed.get("read")) in {"DELAYED_ENTRY_PROXY_PROMISING", "DELAYED_ENTRY_DAMAGE_REDUCED"}:
+        read = "DELAYED_ENTRY_PROXY_LEADS"
+        next_action = "Run exact delayed-entry replay with repriced entry/SL/TP for the best retained confirmation cohort."
+    elif best_exit_delta > 0 or best_delayed_delta > 0:
+        read = "ACTION_PROXY_MIXED"
+        next_action = "Keep both branches in research; require exact replay because proxy improvement is not clean enough."
+    else:
+        read = "NO_ACTION_PROXY_READY"
+        next_action = "Do not promote first-hour action logic yet; continue defining cleaner pre-entry MID_LONG cohorts."
+    return {
+        "read": read,
+        "baseline_realistic_total_r_closed": baseline.get("realistic_total_r_closed"),
+        "best_delayed_entry": _mid_long_action_summary_row(best_delayed, delta_key="realistic_total_r_delta_vs_baseline"),
+        "best_early_exit": _mid_long_action_summary_row(best_exit, delta_key="proxy_realistic_total_r_delta_vs_baseline"),
+        "best_delayed_delta_r": best_delayed_delta,
+        "best_early_exit_delta_r": best_exit_delta,
+        "next_action": next_action,
+    }
+
+
+def _mid_long_action_summary_row(row: dict[str, Any] | None, *, delta_key: str) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "filter_id": row.get("filter_id"),
+        "label": row.get("label"),
+        "read": row.get("read"),
+        "sample_count": row.get("sample_count"),
+        "action_count": row.get("action_count"),
+        "retained_count": row.get("retained_count"),
+        "delta_r": row.get(delta_key),
+        "total_r": row.get("proxy_realistic_total_r_closed") or row.get("realistic_total_r_closed"),
+        "avg_r": row.get("proxy_realistic_avg_r_closed") or row.get("realistic_avg_r_closed"),
+    }
 
 
 MID_LONG_RESET_PRIMARY_DEFINITIONS: dict[str, str] = {

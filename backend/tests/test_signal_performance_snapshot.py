@@ -271,6 +271,17 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "FIRST_HOUR_CONFIRMATION_PROMISING",
         "FIRST_HOUR_RESPONSE_MIXED",
     }
+    assert "first_hour_action_simulation" in baseline["definition_audit"]
+    first_hour_action = baseline["definition_audit"]["first_hour_action_simulation"]
+    assert first_hour_action["scope"] == "MID_LONG 1h First-Hour Action Simulation"
+    assert {row["simulation_family"] for row in first_hour_action["delayed_entry_rows"]} == {"DELAYED_ENTRY_PROXY"}
+    assert {row["simulation_family"] for row in first_hour_action["early_exit_rows"]} == {"EARLY_EXIT_PROXY"}
+    assert first_hour_action["summary"]["read"] in {
+        "EARLY_EXIT_PROXY_LEADS",
+        "DELAYED_ENTRY_PROXY_LEADS",
+        "ACTION_PROXY_MIXED",
+        "NO_ACTION_PROXY_READY",
+    }
     assert "definition_reset_lab" in baseline["definition_audit"]
     reset_lab = baseline["definition_audit"]["definition_reset_lab"]
     assert reset_lab["taxonomy_version"] == "MID_LONG_DEFINITION_RESET_V2"
