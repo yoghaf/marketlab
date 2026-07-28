@@ -311,6 +311,19 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "numeric_feature_rows" in confirmation_predictor
     assert "categorical_feature_rows" in confirmation_predictor
     assert "score_bucket_rows" in confirmation_predictor
+    assert "validation_selected_deep_dive" in confirmation_predictor
+    deep_dive = confirmation_predictor["validation_selected_deep_dive"]
+    assert deep_dive["scope"] == "MID_LONG 1h Confirmation Predictor Validation-Selected Deep Dive"
+    assert "numeric_comparison_rows" in deep_dive
+    assert "categorical_comparison_rows" in deep_dive
+    assert "first_hour_state_rows" in deep_dive
+    assert deep_dive["summary"]["read"] in {
+        "CP_DEEP_SELECTED_SAMPLE_SMALL",
+        "CP_DEEP_SELECTED_SL_DOMINANT",
+        "CP_DEEP_HAS_TP_SL_GAP",
+        "CP_DEEP_REDUCES_DAMAGE_NO_CLEAR_DRIVER",
+        "CP_DEEP_NO_DRIVER_FOUND",
+    }
     assert "false_positive_negative" in confirmation_predictor
     assert confirmation_predictor["summary"]["read"] in {
         "CP_NO_PREDICTOR_SPEC",

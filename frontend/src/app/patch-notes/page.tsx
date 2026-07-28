@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-21",
+    title: "MID_LONG Confirmation Predictor Deep Dive",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan deep dive untuk subset validation-selected agar jelas kenapa score confirmation yang lolos masih bisa TP atau SL.",
+    changes: [
+      "confirmation_predictor_study sekarang menambahkan validation_selected_deep_dive.",
+      "Deep dive membandingkan TP vs SL median/Q1/Q3 untuk field pre-entry seperti zone distance, penetration, wick/body, room, taker, OI, funding, spread, dan cost.",
+      "Panel baru menampilkan result split, first-hour state split, primary/context zone split, categorical driver check, dan contoh TP/SL/false-positive terbaru.",
+      "Summary deep dive memberi read seperti selected sample kecil, SL dominant, ada TP/SL gap, atau belum ada driver jelas.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang tidak berhenti di 'score mengurangi damage'. Kita bisa melihat field mana yang memisahkan TP dan SL di subset yang sudah lolos predictor.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Deep Dive" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-20",
     title: "MID_LONG Confirmation Predictor Study",
     status: "LIVE",

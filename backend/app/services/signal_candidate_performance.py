@@ -5884,6 +5884,13 @@ def _mid_long_confirmation_predictor_study(
         + _cp_score_bucket_rows(scored_development, segment="development", baseline=development_perf, min_sample=min_sample)
         + _cp_score_bucket_rows(scored_validation, segment="validation", baseline=validation_perf, min_sample=min_sample)
     )
+    validation_selected = [item for item in scored_validation if int(item.get("_cp_score") or 0) >= score_threshold]
+    validation_selected_deep_dive = _cp_validation_selected_deep_dive(
+        validation_selected,
+        validation=validation,
+        score_threshold=score_threshold,
+        min_sample=min_sample,
+    )
     false_positive_negative = _cp_false_positive_negative_audit(
         scored_all,
         score_threshold=score_threshold,
@@ -5936,6 +5943,7 @@ def _mid_long_confirmation_predictor_study(
         "selected_predictor_specs": predictor_specs,
         "score_threshold": score_threshold if predictor_specs else None,
         "score_bucket_rows": score_bucket_rows,
+        "validation_selected_deep_dive": validation_selected_deep_dive,
         "false_positive_negative": false_positive_negative,
         "summary": summary,
         "guardrails": [
@@ -6000,6 +6008,278 @@ def _cp_numeric_feature_row(
     row["validation_avg_r_delta_vs_baseline"] = validation_selected_perf.get("realistic_avg_r_delta_vs_baseline")
     row["development_read"] = _cp_feature_read(row, min_sample=min_sample)
     return row
+
+
+def _cp_validation_selected_deep_dive(
+    selected: list[dict[str, Any]],
+    *,
+    validation: list[dict[str, Any]],
+    score_threshold: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    validation_baseline = _cp_confirm_perf_summary(validation, baseline=None)
+    selected_perf = _cp_confirm_perf_summary(selected, baseline=validation_baseline)
+    selected_tp = [item for item in selected if item.get("result_status") == "TP_HIT"]
+    selected_sl = [item for item in selected if item.get("result_status") == "SL_HIT"]
+    selected_both = [item for item in selected if item.get("result_status") == "BOTH_HIT_SAME_CANDLE"]
+    selected_open = [item for item in selected if item.get("result_status") == "OPEN"]
+    true_positive = [item for item in selected if bool(item.get("_cp_confirm_label"))]
+    false_positive = [item for item in selected if not bool(item.get("_cp_confirm_label"))]
+    numeric_rows = [
+        _cp_selected_numeric_comparison_row(
+            selected,
+            selected_tp=selected_tp,
+            selected_sl=selected_sl,
+            true_positive=true_positive,
+            false_positive=false_positive,
+            field=field,
+            label=label,
+            family=family,
+            min_sample=min_sample,
+        )
+        for field, label, family in MID_LONG_CONFIRM_PREDICTOR_NUMERIC_FEATURES
+    ]
+    numeric_rows.sort(
+        key=lambda row: (
+            row.get("read") != "SAMPLE_TOO_SMALL",
+            abs(_decimal_or_zero(row.get("tp_sl_median_gap"))),
+            abs(_decimal_or_zero(row.get("confirm_false_positive_median_gap"))),
+            int(row.get("available_count") or 0),
+        ),
+        reverse=True,
+    )
+    categorical_rows = [
+        _cp_selected_categorical_comparison_row(
+            selected,
+            field=field,
+            label=label,
+            family=family,
+            min_sample=min_sample,
+        )
+        for field, label, family in MID_LONG_CONFIRM_PREDICTOR_CATEGORICAL_FEATURES
+    ]
+    categorical_rows.sort(
+        key=lambda row: (
+            int(row.get("selected_count") or 0),
+            abs(_decimal_or_zero(row.get("sl_share_gap_vs_selected"))),
+            abs(_decimal_or_zero(row.get("confirm_rate_gap_vs_selected"))),
+        ),
+        reverse=True,
+    )
+    status_rows = _cp_selected_status_rows(selected, field="result_status", label="Result status", baseline=selected_perf)
+    first_hour_rows = _cp_selected_status_rows(selected, field="_cp_first_hour_state", label="First-hour state", baseline=selected_perf)
+    path_rows = _cp_selected_status_rows(selected, field="structure_zone_primary_state", label="Primary zone state", baseline=selected_perf)
+    context_rows = _cp_selected_status_rows(selected, field="structure_zone_context_state", label="Context zone state", baseline=selected_perf)
+    return {
+        "scope": "MID_LONG 1h Confirmation Predictor Validation-Selected Deep Dive",
+        "model": "READ_ONLY_TP_SL_CAUSE_INSPECTION_V1",
+        "method": (
+            "Only inspects validation rows whose pre-entry score is above threshold. "
+            "It compares TP vs SL and true-confirm vs false-positive evidence without changing the score."
+        ),
+        "score_threshold": score_threshold if score_threshold != 999 else None,
+        "validation_count": len(validation),
+        "selected_count": len(selected),
+        "selected_share_pct": Decimal(len(selected)) / Decimal(len(validation)) * Decimal("100") if validation else None,
+        "selected_performance": selected_perf,
+        "selected_status_counts": {
+            "TP_HIT": len(selected_tp),
+            "SL_HIT": len(selected_sl),
+            "BOTH_HIT_SAME_CANDLE": len(selected_both),
+            "OPEN": len(selected_open),
+            "TRUE_CONFIRM": len(true_positive),
+            "FALSE_POSITIVE": len(false_positive),
+        },
+        "numeric_comparison_rows": numeric_rows[:24],
+        "categorical_comparison_rows": categorical_rows,
+        "status_rows": status_rows,
+        "first_hour_state_rows": first_hour_rows,
+        "primary_zone_rows": path_rows,
+        "context_zone_rows": context_rows,
+        "tp_examples": _cp_example_rows(selected_tp, limit=8),
+        "sl_examples": _cp_example_rows(selected_sl, limit=8),
+        "false_positive_examples": _cp_example_rows(false_positive, limit=8),
+        "summary": _cp_validation_selected_deep_dive_summary(
+            selected_perf=selected_perf,
+            numeric_rows=numeric_rows,
+            selected_count=len(selected),
+            tp_count=len(selected_tp),
+            sl_count=len(selected_sl),
+            min_sample=min_sample,
+        ),
+        "guardrails": [
+            "This deep dive uses outcome fields for diagnostics only, not as live predictor inputs.",
+            "Rows are validation-selected only; conclusions should be promoted to shadow only after a new forward cohort.",
+            "A TP/SL median gap is a research clue, not a hard filter.",
+        ],
+    }
+
+
+def _cp_selected_numeric_comparison_row(
+    selected: list[dict[str, Any]],
+    *,
+    selected_tp: list[dict[str, Any]],
+    selected_sl: list[dict[str, Any]],
+    true_positive: list[dict[str, Any]],
+    false_positive: list[dict[str, Any]],
+    field: str,
+    label: str,
+    family: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    all_values = [_decimal_or_none_any(item.get(field)) for item in selected]
+    available = [value for value in all_values if value is not None]
+    tp_values = [value for item in selected_tp if (value := _decimal_or_none_any(item.get(field))) is not None]
+    sl_values = [value for item in selected_sl if (value := _decimal_or_none_any(item.get(field))) is not None]
+    confirm_values = [value for item in true_positive if (value := _decimal_or_none_any(item.get(field))) is not None]
+    false_positive_values = [value for item in false_positive if (value := _decimal_or_none_any(item.get(field))) is not None]
+    tp_median = _median_decimal(tp_values)
+    sl_median = _median_decimal(sl_values)
+    confirm_median = _median_decimal(confirm_values)
+    false_positive_median = _median_decimal(false_positive_values)
+    row = {
+        "field": field,
+        "label": label,
+        "family": family,
+        "selected_count": len(selected),
+        "available_count": len(available),
+        "missing_count": max(0, len(selected) - len(available)),
+        "available_pct": Decimal(len(available)) / Decimal(len(selected)) * Decimal("100") if selected else None,
+        "selected_median": _median_decimal(available),
+        "selected_q1": _percentile_decimal(available, Decimal("0.25")),
+        "selected_q3": _percentile_decimal(available, Decimal("0.75")),
+        "tp_count": len(tp_values),
+        "sl_count": len(sl_values),
+        "tp_median": tp_median,
+        "sl_median": sl_median,
+        "tp_q1": _percentile_decimal(tp_values, Decimal("0.25")),
+        "tp_q3": _percentile_decimal(tp_values, Decimal("0.75")),
+        "sl_q1": _percentile_decimal(sl_values, Decimal("0.25")),
+        "sl_q3": _percentile_decimal(sl_values, Decimal("0.75")),
+        "tp_sl_median_gap": _decimal_delta(tp_median, sl_median),
+        "confirm_count": len(confirm_values),
+        "false_positive_count": len(false_positive_values),
+        "confirm_median": confirm_median,
+        "false_positive_median": false_positive_median,
+        "confirm_false_positive_median_gap": _decimal_delta(confirm_median, false_positive_median),
+    }
+    row["read"] = _cp_selected_numeric_read(row, min_sample=min_sample)
+    return row
+
+
+def _cp_selected_numeric_read(row: dict[str, Any], *, min_sample: int) -> str:
+    if int(row.get("tp_count") or 0) < min_sample or int(row.get("sl_count") or 0) < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    gap = _decimal_or_none_any(row.get("tp_sl_median_gap"))
+    if gap is None or abs(gap) < Decimal("0.0001"):
+        return "NO_TP_SL_GAP"
+    if gap > 0:
+        return "TP_MEDIAN_HIGHER"
+    return "SL_MEDIAN_HIGHER"
+
+
+def _cp_selected_categorical_comparison_row(
+    selected: list[dict[str, Any]],
+    *,
+    field: str,
+    label: str,
+    family: str,
+    min_sample: int,
+) -> dict[str, Any]:
+    selected_perf = _cp_confirm_perf_summary(selected, baseline=None)
+    rows = _cp_selected_status_rows(selected, field=field, label=label, baseline=selected_perf)
+    best = rows[0] if rows else {}
+    worst = rows[-1] if rows else {}
+    return {
+        "field": field,
+        "label": label,
+        "family": family,
+        "selected_count": len(selected),
+        "bucket_rows": rows,
+        "largest_bucket": best.get("bucket"),
+        "largest_bucket_count": best.get("sample_count"),
+        "largest_bucket_sl_share_pct": best.get("sl_share_pct"),
+        "largest_bucket_confirm_rate_pct": best.get("confirm_rate_pct"),
+        "sl_share_gap_vs_selected": _decimal_delta(best.get("sl_share_pct"), selected_perf.get("sl_share_pct")),
+        "confirm_rate_gap_vs_selected": _decimal_delta(best.get("confirm_rate_pct"), selected_perf.get("confirm_rate_pct")),
+        "read": "CATEGORICAL_SAMPLE_SMALL" if int(best.get("sample_count") or 0) < min_sample else "CATEGORICAL_REVIEW",
+        "least_common_bucket": worst.get("bucket"),
+    }
+
+
+def _cp_selected_status_rows(
+    selected: list[dict[str, Any]],
+    *,
+    field: str,
+    label: str,
+    baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in selected:
+        groups[str(item.get(field) or "MISSING")].append(item)
+    rows = []
+    for bucket, items in groups.items():
+        perf = _cp_confirm_perf_summary(items, baseline=baseline)
+        rows.append(
+            {
+                "field": field,
+                "label": label,
+                "bucket": bucket,
+                **perf,
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            int(row.get("sample_count") or 0),
+            _decimal_or_zero(row.get("realistic_total_r_closed")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _cp_validation_selected_deep_dive_summary(
+    *,
+    selected_perf: dict[str, Any],
+    numeric_rows: list[dict[str, Any]],
+    selected_count: int,
+    tp_count: int,
+    sl_count: int,
+    min_sample: int,
+) -> dict[str, Any]:
+    readable_gaps = [row for row in numeric_rows if row.get("read") != "SAMPLE_TOO_SMALL" and row.get("tp_sl_median_gap") is not None]
+    top_gap = readable_gaps[0] if readable_gaps else None
+    total_r = _decimal_or_zero(selected_perf.get("realistic_total_r_closed"))
+    avg_delta = _decimal_or_none_any(selected_perf.get("realistic_avg_r_delta_vs_baseline"))
+    if selected_count < min_sample:
+        read = "CP_DEEP_SELECTED_SAMPLE_SMALL"
+        next_action = "Collect more validation-selected rows before reading TP/SL causes."
+    elif sl_count > tp_count and total_r < 0:
+        read = "CP_DEEP_SELECTED_SL_DOMINANT"
+        next_action = "Use TP vs SL comparison rows to find reject conditions inside the selected predictor cohort."
+    elif top_gap:
+        read = "CP_DEEP_HAS_TP_SL_GAP"
+        next_action = f"Review {top_gap.get('label')} first; it has the largest TP/SL median separation in selected validation rows."
+    elif avg_delta is not None and avg_delta > 0:
+        read = "CP_DEEP_REDUCES_DAMAGE_NO_CLEAR_DRIVER"
+        next_action = "The selected cohort reduces damage, but TP and SL evidence is not separated enough yet."
+    else:
+        read = "CP_DEEP_NO_DRIVER_FOUND"
+        next_action = "Current selected predictor cohort does not expose a clear pre-entry cause. Keep collecting or redefine label families."
+    return {
+        "read": read,
+        "next_action": next_action,
+        "selected_count": selected_count,
+        "tp_count": tp_count,
+        "sl_count": sl_count,
+        "realistic_total_r_closed": selected_perf.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": selected_perf.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": selected_perf.get("realistic_avg_r_delta_vs_baseline"),
+        "top_gap_field": (top_gap or {}).get("field"),
+        "top_gap_label": (top_gap or {}).get("label"),
+        "top_gap_read": (top_gap or {}).get("read"),
+        "top_gap_tp_sl_median_gap": (top_gap or {}).get("tp_sl_median_gap"),
+    }
 
 
 def _cp_categorical_feature_row(

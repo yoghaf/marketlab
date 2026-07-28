@@ -38,6 +38,10 @@ import {
   MidLongFirstHourSampleRow,
   MidLongFirstHourStateRow,
   MidLongGeometryThresholdRow,
+  MidLongConfirmationDeepDive,
+  MidLongConfirmationDeepDiveCategoricalRow,
+  MidLongConfirmationDeepDiveNumericRow,
+  MidLongConfirmationDeepDiveStatusRow,
   MidLongConfirmationFeatureRow,
   MidLongConfirmationFalseAudit,
   MidLongConfirmationPerf,
@@ -1012,6 +1016,18 @@ function ConfirmationPredictorPanel({ study }: { study: MidLongConfirmationPredi
         <ConfirmationScoreBucketTable rows={study.score_bucket_rows.filter((row) => row.segment === "validation" || row.segment === "all")} />
       </div>
 
+      {study.validation_selected_deep_dive && (
+        <div className="border-b border-line">
+          <div className="px-4 py-3">
+            <div className="font-bold">Validation-selected deep dive</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">
+              Membaca subset validation yang lolos score. Fokusnya: dari signal yang sudah kelihatan confirm, field apa yang memisahkan TP vs SL dan false positive.
+            </div>
+          </div>
+          <ConfirmationDeepDivePanel deepDive={study.validation_selected_deep_dive} />
+        </div>
+      )}
+
       <ConfirmationFalseAuditPanel audit={study.false_positive_negative} />
 
       <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
@@ -1019,6 +1035,211 @@ function ConfirmationPredictorPanel({ study }: { study: MidLongConfirmationPredi
           <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ConfirmationDeepDivePanel({ deepDive }: { deepDive: MidLongConfirmationDeepDive }) {
+  const summary = deepDive.summary;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <Info label="Read" value={humanFlag(summary.read)} helper={summary.next_action} />
+        <Info label="Selected" value={`${deepDive.selected_count} / ${deepDive.validation_count}`} helper={`${formatPct(deepDive.selected_share_pct)} of validation`} />
+        <Info label="Selected TP/SL" value={`${summary.tp_count} / ${summary.sl_count}`} helper={`threshold ${deepDive.score_threshold ?? "-"}`} />
+        <Info label="Selected R" value={`${fmtSigned(summary.realistic_total_r_closed)}R`} helper={`avg ${fmtSigned(summary.realistic_avg_r_closed)}R`} />
+        <Info label="Avg delta" value={`${fmtSigned(summary.realistic_avg_r_delta_vs_baseline)}R`} helper="vs validation baseline" />
+        <Info label="Top gap" value={summary.top_gap_label || "-"} helper={`${humanFlag(summary.top_gap_read || "-")} | gap ${fmtSigned(summary.top_gap_tp_sl_median_gap)}`} />
+        <Info label="True confirm" value={String(deepDive.selected_status_counts.TRUE_CONFIRM || 0)} helper="selected + Y_CONFIRM" />
+        <Info label="False positive" value={String(deepDive.selected_status_counts.FALSE_POSITIVE || 0)} helper="selected + not confirm" />
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">TP vs SL numeric evidence inside selected cohort</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Median/Q1/Q3 field aktual di selected validation. Gap positif berarti TP median lebih tinggi; negatif berarti SL median lebih tinggi.</div>
+        </div>
+        <ConfirmationDeepDiveNumericTable rows={deepDive.numeric_comparison_rows.slice(0, 16)} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 xl:grid-cols-2">
+        <div>
+          <div className="mb-2 font-bold">Result/status split</div>
+          <ConfirmationDeepDiveStatusTable rows={deepDive.status_rows} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">First-hour state split</div>
+          <ConfirmationDeepDiveStatusTable rows={deepDive.first_hour_state_rows} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">Primary zone split</div>
+          <ConfirmationDeepDiveStatusTable rows={deepDive.primary_zone_rows} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">Context zone split</div>
+          <ConfirmationDeepDiveStatusTable rows={deepDive.context_zone_rows} />
+        </div>
+      </div>
+
+      <div className="border-b border-line">
+        <div className="px-4 py-3">
+          <div className="font-bold">Categorical driver check</div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">Mencari bucket status yang menumpuk di selected cohort dan apakah bucket itu menaikkan SL share atau confirm rate.</div>
+        </div>
+        <ConfirmationDeepDiveCategoricalTable rows={deepDive.categorical_comparison_rows} />
+      </div>
+
+      <div className="grid gap-4 p-4 xl:grid-cols-3">
+        <div>
+          <div className="mb-2 font-bold">Selected TP examples</div>
+          <ConfirmationExampleTable rows={deepDive.tp_examples} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">Selected SL examples</div>
+          <ConfirmationExampleTable rows={deepDive.sl_examples} />
+        </div>
+        <div>
+          <div className="mb-2 font-bold">Selected false-positive examples</div>
+          <ConfirmationExampleTable rows={deepDive.false_positive_examples} />
+        </div>
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {deepDive.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationDeepDiveNumericTable({ rows }: { rows: MidLongConfirmationDeepDiveNumericRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Deep dive numeric kosong" detail="Belum ada numeric comparison rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Available</th>
+            <th>Selected median</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>TP-SL gap</th>
+            <th>Confirm vs false-positive</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field} | {row.family}</div>
+              </td>
+              <td>
+                <div>{row.available_count} / miss {row.missing_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.available_pct)} available</div>
+              </td>
+              <td>
+                <div>{fmtSigned(row.selected_median)}</div>
+                <div className="text-xs text-slate-500">{fmtSigned(row.selected_q1)} / {fmtSigned(row.selected_q3)}</div>
+              </td>
+              <td>
+                <div>{fmtSigned(row.tp_median)}</div>
+                <div className="text-xs text-slate-500">n {row.tp_count} | {fmtSigned(row.tp_q1)} / {fmtSigned(row.tp_q3)}</div>
+              </td>
+              <td>
+                <div>{fmtSigned(row.sl_median)}</div>
+                <div className="text-xs text-slate-500">n {row.sl_count} | {fmtSigned(row.sl_q1)} / {fmtSigned(row.sl_q3)}</div>
+              </td>
+              <td className={toneClass(row.tp_sl_median_gap)}>{fmtSigned(row.tp_sl_median_gap)}</td>
+              <td>
+                <div>{fmtSigned(row.confirm_median)} vs {fmtSigned(row.false_positive_median)}</div>
+                <div className="text-xs text-slate-500">gap {fmtSigned(row.confirm_false_positive_median_gap)} | n {row.confirm_count}/{row.false_positive_count}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationDeepDiveCategoricalTable({ rows }: { rows: MidLongConfirmationDeepDiveCategoricalRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Categorical deep dive kosong" detail="Belum ada categorical rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Largest bucket</th>
+            <th>SL share impact</th>
+            <th>Confirm impact</th>
+            <th>Least common</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field} | {row.family}</div>
+              </td>
+              <td>
+                <div><StatusBadge value={humanFlag(row.largest_bucket || "-")} /></div>
+                <div className="mt-1 text-xs text-slate-500">n {row.largest_bucket_count || 0}</div>
+              </td>
+              <td>
+                <div>{formatPct(row.largest_bucket_sl_share_pct)}</div>
+                <div className="text-xs text-slate-500">gap {fmtSigned(row.sl_share_gap_vs_selected)}%</div>
+              </td>
+              <td>
+                <div>{formatPct(row.largest_bucket_confirm_rate_pct)}</div>
+                <div className="text-xs text-slate-500">gap {fmtSigned(row.confirm_rate_gap_vs_selected)}%</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.least_common_bucket || "-")} /></td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ConfirmationDeepDiveStatusTable({ rows }: { rows: MidLongConfirmationDeepDiveStatusRow[] }) {
+  if (!rows.length) return <EmptyState title="Split kosong" detail="Belum ada row." />;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>N</th>
+            <th>Confirm</th>
+            <th>TP / SL</th>
+            <th>R</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 8).map((row) => (
+            <tr key={`${row.field}-${row.bucket}`}>
+              <td><StatusBadge value={humanFlag(row.bucket)} /></td>
+              <td>{row.sample_count || row.signals_evaluated || 0}</td>
+              <td>{row.confirm_count || 0} ({formatPct(row.confirm_rate_pct)})</td>
+              <td>{row.tp_count || 0} / {row.sl_count || 0}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>
+                <div>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg {fmtSigned(row.realistic_avg_r_closed)}R</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

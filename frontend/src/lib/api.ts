@@ -4219,6 +4219,7 @@ export type MidLongConfirmationPredictorStudy = {
   selected_predictor_specs: MidLongConfirmationPredictorSpec[];
   score_threshold?: number | string | null;
   score_bucket_rows: MidLongConfirmationScoreBucketRow[];
+  validation_selected_deep_dive?: MidLongConfirmationDeepDive | null;
   false_positive_negative: MidLongConfirmationFalseAudit;
   summary: {
     read: string;
@@ -4234,6 +4235,92 @@ export type MidLongConfirmationPredictorStudy = {
     unavailable_count: number;
   };
   guardrails: string[];
+};
+
+export type MidLongConfirmationDeepDive = {
+  scope: string;
+  model: string;
+  method: string;
+  score_threshold?: number | string | null;
+  validation_count: number;
+  selected_count: number;
+  selected_share_pct?: string | number | null;
+  selected_performance: MidLongConfirmationPerf;
+  selected_status_counts: Record<string, number>;
+  numeric_comparison_rows: MidLongConfirmationDeepDiveNumericRow[];
+  categorical_comparison_rows: MidLongConfirmationDeepDiveCategoricalRow[];
+  status_rows: MidLongConfirmationDeepDiveStatusRow[];
+  first_hour_state_rows: MidLongConfirmationDeepDiveStatusRow[];
+  primary_zone_rows: MidLongConfirmationDeepDiveStatusRow[];
+  context_zone_rows: MidLongConfirmationDeepDiveStatusRow[];
+  tp_examples: MidLongConfirmationExampleRow[];
+  sl_examples: MidLongConfirmationExampleRow[];
+  false_positive_examples: MidLongConfirmationExampleRow[];
+  summary: {
+    read: string;
+    next_action: string;
+    selected_count: number;
+    tp_count: number;
+    sl_count: number;
+    realistic_total_r_closed?: string | number | null;
+    realistic_avg_r_closed?: string | number | null;
+    realistic_avg_r_delta_vs_baseline?: string | number | null;
+    top_gap_field?: string | null;
+    top_gap_label?: string | null;
+    top_gap_read?: string | null;
+    top_gap_tp_sl_median_gap?: string | number | null;
+  };
+  guardrails: string[];
+};
+
+export type MidLongConfirmationDeepDiveNumericRow = {
+  field: string;
+  label: string;
+  family: string;
+  selected_count: number;
+  available_count: number;
+  missing_count: number;
+  available_pct?: string | number | null;
+  selected_median?: string | number | null;
+  selected_q1?: string | number | null;
+  selected_q3?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  tp_sl_median_gap?: string | number | null;
+  confirm_count: number;
+  false_positive_count: number;
+  confirm_median?: string | number | null;
+  false_positive_median?: string | number | null;
+  confirm_false_positive_median_gap?: string | number | null;
+  read: string;
+};
+
+export type MidLongConfirmationDeepDiveCategoricalRow = {
+  field: string;
+  label: string;
+  family: string;
+  selected_count: number;
+  bucket_rows: MidLongConfirmationDeepDiveStatusRow[];
+  largest_bucket?: string | null;
+  largest_bucket_count?: number | string | null;
+  largest_bucket_sl_share_pct?: string | number | null;
+  largest_bucket_confirm_rate_pct?: string | number | null;
+  sl_share_gap_vs_selected?: string | number | null;
+  confirm_rate_gap_vs_selected?: string | number | null;
+  read: string;
+  least_common_bucket?: string | null;
+};
+
+export type MidLongConfirmationDeepDiveStatusRow = MidLongConfirmationPerf & {
+  field: string;
+  label: string;
+  bucket: string;
 };
 
 export type MidLongConfirmationPerf = {
