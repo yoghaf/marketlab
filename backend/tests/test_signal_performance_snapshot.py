@@ -13,6 +13,7 @@ from app.services.signal_performance_snapshot import (
     MID_SHORT_ENTRY_CONFIRMATION_1H_FILE,
     MID_SHORT_FAILURE_ANATOMY_1H_FILE,
     MID_SHORT_FILTER_COMBO_1H_FILE,
+    MID_LONG_1H_BASELINE_FILE,
     MID_SHORT_SECOND_FILTER_1H_FILE,
     MID_SHORT_SHADOW_FORWARD_1H_FILE,
     MID_SHORT_STRUCTURE_ZONE_1H_FILE,
@@ -131,6 +132,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert (tmp_path / PERFORMANCE_1H_FILE).exists()
     assert (tmp_path / PERFORMANCE_1H_COMPACT_FILE).exists()
     assert (tmp_path / FORWARD_INTEGRITY_1H_FILE).exists()
+    assert (tmp_path / MID_LONG_1H_BASELINE_FILE).exists()
     assert (tmp_path / MID_SHORT_FILTER_COMBO_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_SHADOW_FORWARD_1H_FILE).exists()
     assert (tmp_path / MID_SHORT_FAILURE_ANATOMY_1H_FILE).exists()
@@ -195,6 +197,8 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert mid_short_dynamic_exit["snapshot"]["filename"] == MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE
     assert mid_short_dynamic_exit["artifact_type"] == "mid_short_1h_v21_dynamic_exit_study"
     assert baseline["baseline_id"] == "MID_LONG_1H_V2_BASELINE"
+    assert baseline["cache"]["source"] == "artifact_snapshot"
+    assert baseline["snapshot"]["filename"] == MID_LONG_1H_BASELINE_FILE
     assert baseline["closed_only_snapshot"] is True
     assert baseline["snapshot_coverage"]["mid_long_1h_rows"] == 1
     assert baseline["snapshot_coverage"]["is_truncated"] is False
@@ -214,7 +218,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "entry_area_anatomy" in baseline
     assert "path_anatomy" in baseline
     assert "taxonomy_study" in baseline["definition_audit"]
-    assert baseline["definition_audit"]["taxonomy_study"]["canonical_acceptance_threshold_r"] == Decimal("0.50")
+    assert Decimal(str(baseline["definition_audit"]["taxonomy_study"]["canonical_acceptance_threshold_r"])) == Decimal("0.50")
     assert "setup_family" in baseline["definition_audit"]["taxonomy_study"]["dimension_rows"]
     assert "path_sequence_rows" in baseline["definition_audit"]["taxonomy_study"]
     assert "draft_v21_previews" in baseline["definition_audit"]["taxonomy_study"]
@@ -238,8 +242,18 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert field_sources["body_above_zone_ratio"] == "precise_zone_metric"
     assert field_sources["room_to_next_resistance_atr"] == "precise_zone_metric"
     assert "mechanism_rows" in breakout_deep_dive
+    assert "cause_overlap_rows" in breakout_deep_dive
+    assert "shadow_arm_rows" in breakout_deep_dive
     assert "single_filter_rows" in breakout_deep_dive
     assert "draft_cohort_rows" in breakout_deep_dive
+    assert {row["arm_id"] for row in breakout_deep_dive["shadow_arm_rows"]} >= {
+        "SHADOW_CONTROL",
+        "SHADOW_FLOW_01",
+        "SHADOW_ROOM_01",
+        "SHADOW_FLOW_ROOM_01",
+        "SHADOW_TRADABLE_01",
+        "SHADOW_CROWDING_01",
+    }
     assert breakout_deep_dive["summary"]["read"] in {
         "NO_BREAKOUT_SAMPLE",
         "BREAKOUT_PROXY_ONLY",

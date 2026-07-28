@@ -12,6 +12,7 @@ import {
   MidLongBaselineResponse,
   MidLongBreakoutAcceptedDeepDive,
   MidLongBreakoutCauseRow,
+  MidLongBreakoutCauseOverlapRow,
   MidLongBreakoutDraftRow,
   MidLongBreakoutFieldAvailabilityRow,
   MidLongBreakoutFilterRow,
@@ -19,6 +20,7 @@ import {
   MidLongBreakoutLabelPurityRow,
   MidLongBreakoutMechanismRow,
   MidLongBreakoutObservablePathRow,
+  MidLongBreakoutShadowArmRow,
   MidLongDefinitionLayerRow,
   MidLongDraftPreviewRow,
   MidLongDamageExperimentRow,
@@ -401,7 +403,7 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
         <Info label="Control sample" value={String(lab.control.closed_count || 0)} helper={`${lab.control.tp_count || 0} TP / ${lab.control.sl_count || 0} SL`} />
         <Info label="Control R" value={`${fmtSigned(lab.control.realistic_total_r_closed)}R`} helper={`${fmtSigned(lab.control.realistic_avg_r_closed)}R avg`} />
         <BreakoutSummaryCard title="Best filter" row={summary.best_filter} />
-        <BreakoutSummaryCard title="Worst mechanism" row={summary.worst_mechanism} />
+        <BreakoutSummaryCard title="Best shadow arm" row={summary.best_shadow_arm} />
       </div>
 
       <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.8fr_1.2fr]">
@@ -444,6 +446,23 @@ function BreakoutDeepDivePanel({ lab }: { lab: MidLongBreakoutAcceptedDeepDive }
           <div className="mt-1 text-xs leading-5 text-slate-500">Satu signal bisa kena beberapa flag. Ini hipotesis sebelum entry, bukan klaim penyebab final.</div>
         </div>
         <BreakoutCauseTable rows={lab.pre_entry_cause_rows || []} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">Cause overlap matrix</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Mengecek apakah damage flag saling menumpuk. Jangan baca cause sebagai kontribusi marginal sebelum lihat overlap.</div>
+          </div>
+          <BreakoutCauseOverlapTable rows={lab.cause_overlap_rows || []} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line px-4 py-3">
+            <div className="font-bold">V2.1 shadow arms preview</div>
+            <div className="mt-1 text-xs leading-5 text-slate-500">Arm ini draft read-only. FLOW+ROOM dipisah dari tradability dan crowding agar kontribusinya terbaca bersih.</div>
+          </div>
+          <BreakoutShadowArmTable rows={lab.shadow_arm_rows || []} />
+        </div>
       </div>
 
       <div className="border-b border-line">
@@ -678,6 +697,92 @@ function BreakoutCauseTable({ rows }: { rows: MidLongBreakoutCauseRow[] }) {
               <td className={toneClass(row.realistic_avg_r_delta_vs_baseline)}>{fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</td>
               <td className="max-w-80 text-xs leading-5 text-slate-600">{pathMixSummary(row.observable_path_mix)}</td>
               <td className="max-w-96 text-sm leading-5 text-slate-700">{row.cause_read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutCauseOverlapTable({ rows }: { rows: MidLongBreakoutCauseOverlapRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Overlap kosong" detail="Belum ada overlap antar-cause." /></div>;
+  return (
+    <div className="table-wrap max-h-[34rem] overflow-y-auto">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Overlap</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>Share</th>
+            <th>Path mix</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 18).map((row) => (
+            <tr key={row.filter_id}>
+              <td className="min-w-72">
+                <div className="font-bold">{humanFlag(row.left_cause)}</div>
+                <div className="text-xs text-slate-500">x {humanFlag(row.right_cause)}</div>
+              </td>
+              <td className="font-bold">{row.overlap_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>
+                <div>{formatPct(row.overlap_pct_of_left)} of left</div>
+                <div className="text-xs text-slate-500">{formatPct(row.overlap_pct_of_right)} of right</div>
+              </td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.observable_path_mix)}</td>
+              <td className="max-w-80 text-sm leading-5 text-slate-700">{row.read}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BreakoutShadowArmTable({ rows }: { rows: MidLongBreakoutShadowArmRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Shadow arm kosong" detail="Belum ada arm V2.1 preview." /></div>;
+  return (
+    <div className="table-wrap max-h-[34rem] overflow-y-auto">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Arm</th>
+            <th>Retained / rejected / wait</th>
+            <th>TP / SL</th>
+            <th>Realistic R</th>
+            <th>TP kept / SL rejected</th>
+            <th>Rejected R</th>
+            <th>Rejected path</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.arm_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.arm_id)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+                <div className="mt-1"><StatusBadge value={humanFlag(row.arm_status)} /></div>
+              </td>
+              <td>{row.retained_count} / {row.rejected_count} / {row.waiting_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</td>
+              <td>
+                <div>{formatPct(row.tp_retention_pct)} TP kept</div>
+                <div className="text-xs text-slate-500">{formatPct(row.sl_rejection_pct)} SL rejected</div>
+              </td>
+              <td>
+                <div className={toneClass(row.rejected_realistic_total_r_closed)}>{fmtSigned(row.rejected_realistic_total_r_closed)}R</div>
+                {row.waiting_count > 0 && <div className="text-xs text-slate-500">wait {fmtSigned(row.waiting_realistic_total_r_closed)}R</div>}
+              </td>
+              <td className="max-w-72 text-xs leading-5 text-slate-600">{pathMixSummary(row.rejected_observable_path_mix)}</td>
+              <td className="max-w-96 text-sm leading-5 text-slate-700">{row.arm_read}</td>
             </tr>
           ))}
         </tbody>

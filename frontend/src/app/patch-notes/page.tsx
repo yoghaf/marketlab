@@ -19,6 +19,27 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-28",
+    version: "LAB-RESET-11",
+    title: "MID_LONG V2.1 Shadow Arm Preview",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan overlap matrix dan shadow-arm preview agar calon filter MID_LONG V2.1 tidak dibaca dari cause rows yang saling menumpuk.",
+    changes: [
+      "Breakout deep dive sekarang menampilkan cause_overlap_rows untuk melihat apakah weak flow, low room, crowding, cost, thin close, dan wick besar terjadi pada signal yang sama.",
+      "Menambahkan shadow_arm_rows: SHADOW_CONTROL, SHADOW_FLOW_01, SHADOW_ROOM_01, SHADOW_FLOW_ROOM_01, SHADOW_TRADABLE_01, dan SHADOW_CROWDING_01.",
+      "Room yang belum tersedia diperlakukan WAIT/UNKNOWN, bukan dianggap aman.",
+      "Crowding diperlakukan sebagai risk amplifier conditional, bukan hard reject standalone.",
+      "MID_LONG 1h baseline sekarang ditulis sebagai artifact precomputed agar endpoint tidak menghitung audit berat setiap halaman dibuka.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG bisa membaca kontribusi gate secara lebih bersih: flow dan room sebagai candidate entry-definition, cost sebagai tradability, crowding sebagai interaction risk. Halaman juga lebih ringan setelah snapshot artifact tersedia.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open MID_LONG Shadow Preview" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-28",
     version: "LAB-RESET-10",
     title: "MID_LONG Breakout Purity + Cause Audit",
     status: "LIVE",

@@ -3888,6 +3888,8 @@ export type MidLongBreakoutAcceptedDeepDive = {
   observable_path_rows?: MidLongBreakoutObservablePathRow[];
   mechanism_rows: MidLongBreakoutMechanismRow[];
   pre_entry_cause_rows?: MidLongBreakoutCauseRow[];
+  cause_overlap_rows?: MidLongBreakoutCauseOverlapRow[];
+  shadow_arm_rows?: MidLongBreakoutShadowArmRow[];
   evidence_path_tables: Record<string, MidLongTaxonomyPathCrossRow[]>;
   pre_entry_geometry_path_tables?: Record<string, MidLongTaxonomyPathCrossRow[]>;
   single_filter_rows: MidLongBreakoutFilterRow[];
@@ -3901,6 +3903,7 @@ export type MidLongBreakoutAcceptedDeepDive = {
     best_filter?: MidLongBreakoutSummaryRow | null;
     worst_mechanism?: MidLongBreakoutSummaryRow | null;
     best_draft?: MidLongBreakoutSummaryRow | null;
+    best_shadow_arm?: MidLongBreakoutSummaryRow | null;
   };
   guardrails: string[];
 };
@@ -3965,6 +3968,39 @@ export type MidLongBreakoutCauseRow = MidLongEntryCombinationRow & {
   path_mix: Record<string, number>;
   observable_path_mix: Record<string, number>;
   cause_read: string;
+};
+
+export type MidLongBreakoutCauseOverlapRow = MidLongEntryCombinationRow & {
+  left_cause: string;
+  right_cause: string;
+  left_count: number;
+  right_count: number;
+  overlap_count: number;
+  overlap_pct_of_left?: string | number | null;
+  overlap_pct_of_right?: string | number | null;
+  observable_path_mix: Record<string, number>;
+  read: string;
+};
+
+export type MidLongBreakoutShadowArmRow = MidLongEntryCombinationRow & {
+  arm_id: string;
+  arm_order: number;
+  arm_status: string;
+  retained_count: number;
+  rejected_count: number;
+  waiting_count: number;
+  rejected_tp_count: number;
+  rejected_sl_count: number;
+  waiting_tp_count: number;
+  waiting_sl_count: number;
+  rejected_realistic_total_r_closed?: string | number | null;
+  waiting_realistic_total_r_closed?: string | number | null;
+  tp_retention_pct?: string | number | null;
+  sl_rejection_pct?: string | number | null;
+  retained_observable_path_mix: Record<string, number>;
+  rejected_observable_path_mix: Record<string, number>;
+  waiting_observable_path_mix: Record<string, number>;
+  arm_read: string;
 };
 
 export type MidLongBreakoutFilterRow = MidLongEntryCombinationRow & {

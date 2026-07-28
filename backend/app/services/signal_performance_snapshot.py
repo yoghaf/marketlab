@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -33,6 +34,7 @@ FORWARD_INTEGRITY_FILE = "forward_integrity.json"
 PERFORMANCE_1H_FILE = "performance_closed_1h.json"
 PERFORMANCE_1H_COMPACT_FILE = "performance_closed_1h_compact.json"
 FORWARD_INTEGRITY_1H_FILE = "forward_integrity_1h.json"
+MID_LONG_1H_BASELINE_FILE = "mid_long_1h_baseline.json"
 MID_SHORT_FILTER_COMBO_1H_FILE = "mid_short_filter_combination_1h.json"
 QUALITY_LAB_FILE = "quality_lab.json"
 MID_SHORT_SHADOW_FORWARD_1H_FILE = "mid_short_shadow_forward_1h.json"
@@ -222,6 +224,24 @@ class SignalPerformanceSnapshotRunner:
                 ),
             )
             _atomic_write_json(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE, json_safe(forward_integrity_1h))
+            mid_long_started = perf_counter()
+            mid_long_baseline_payload = _mid_long_1h_baseline_payload(
+                performance_1h,
+                limit=DEFAULT_RESEARCH_LIMIT,
+                items_enricher=service.enrich_mid_long_1h_breakout_diagnostics,
+            )
+            mid_long_baseline_payload["artifact_status"] = "FRESH"
+            mid_long_baseline_payload["calculation_duration_ms"] = int((perf_counter() - mid_long_started) * 1000)
+            mid_long_baseline = _with_snapshot_meta(
+                mid_long_baseline_payload,
+                generated_at_utc=generated_at,
+                source="mid_long_1h_baseline_snapshot",
+                filename=MID_LONG_1H_BASELINE_FILE,
+            )
+            _atomic_write_json(
+                self.artifact_dir / MID_LONG_1H_BASELINE_FILE,
+                json_safe(mid_long_baseline),
+            )
             mid_short_filter_combo = _with_snapshot_meta(
                 service.mid_short_1h_filter_combination_study(
                     epoch=epoch,
@@ -243,6 +263,7 @@ class SignalPerformanceSnapshotRunner:
                     "performance_1h_path": str(self.artifact_dir / PERFORMANCE_1H_FILE),
                     "performance_1h_compact_path": str(self.artifact_dir / PERFORMANCE_1H_COMPACT_FILE),
                     "forward_integrity_1h_path": str(self.artifact_dir / FORWARD_INTEGRITY_1H_FILE),
+                    "mid_long_1h_baseline_path": str(self.artifact_dir / MID_LONG_1H_BASELINE_FILE),
                     "mid_short_filter_combo_1h_path": str(self.artifact_dir / MID_SHORT_FILTER_COMBO_1H_FILE),
                     "performance_1h_items": len(performance_1h.get("items") or []),
                     "performance_1h_compact_items": min(
@@ -250,6 +271,8 @@ class SignalPerformanceSnapshotRunner:
                         DEFAULT_PERFORMANCE_COMPACT_LIMIT,
                     ),
                     "forward_integrity_1h_items": len(forward_integrity_1h.get("items") or []),
+                    "mid_long_1h_rows": (mid_long_baseline.get("snapshot_coverage") or {}).get("mid_long_1h_rows", 0),
+                    "mid_long_1h_calculation_duration_ms": mid_long_baseline_payload.get("calculation_duration_ms"),
                     "mid_short_filter_combo_1h_rows": len(mid_short_filter_combo.get("combination_rows") or []),
                 }
             )
@@ -394,64 +417,18 @@ class SignalPerformanceSnapshotService:
         limit: int,
         items_enricher: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
-        payload = self._read(PERFORMANCE_1H_FILE)
-        aggregate = payload.get("aggregate") or {}
-        source_items = list(payload.get("items") or [])
-        evaluated = [
-            item
-            for item in source_items
-            if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"
-        ]
-        evaluated.sort(key=lambda item: str(item.get("signal_timestamp") or ""), reverse=True)
-        if items_enricher is not None:
-            evaluated = items_enricher(evaluated)
-        baseline_aggregate = aggregate_signal_performance_items(evaluated)
-        source_total = int(aggregate.get("signals_evaluated") or len(source_items))
-        baseline_research = _mid_long_baseline_research(evaluated)
-        rr_distribution = Counter(_rounded_r_distribution_key(item.get("rr")) for item in evaluated)
-        strategy_distribution = Counter(
-            str(item.get("strategy_version") or "UNKNOWN") for item in evaluated
+        artifact_path = self.artifact_dir / MID_LONG_1H_BASELINE_FILE
+        if artifact_path.exists():
+            return _slice_payload(
+                self._read(MID_LONG_1H_BASELINE_FILE),
+                limit=max(1, limit),
+                list_keys=("items",),
+            )
+        return _mid_long_1h_baseline_payload(
+            self._read(PERFORMANCE_1H_FILE),
+            limit=max(1, limit),
+            items_enricher=items_enricher,
         )
-        confidence_distribution = Counter(
-            str(item.get("confidence_tier") or "UNKNOWN") for item in evaluated
-        )
-        return {
-            "generated_at_utc": (payload.get("snapshot") or {}).get("generated_at_utc") or payload.get("generated_at_utc"),
-            "baseline_id": "MID_LONG_1H_V2_BASELINE",
-            "scope": "mid_long_1h_logged_v2_closed_signals",
-            "read_only": True,
-            "not_live_signal": True,
-            "not_execution_instruction": True,
-            "closed_only_snapshot": True,
-            "filters": {
-                "stage": "MID_LONG",
-                "timeframe": "1h",
-                "position_lock": True,
-                "include_watch_only": False,
-                "result_status": "closed",
-                "limit": max(1, limit),
-            },
-            "snapshot_coverage": {
-                "source_1h_rows": len(source_items),
-                "source_1h_total": source_total,
-                "mid_long_1h_rows": len(evaluated),
-                "is_truncated": len(source_items) < source_total,
-            },
-            "latest_evaluation_candle_time": payload.get("latest_futures_15m_close_time")
-            or payload.get("latest_evaluation_candle_time"),
-            "aggregate": baseline_aggregate,
-            **baseline_research,
-            "rr_distribution": dict(sorted(rr_distribution.items())),
-            "strategy_distribution": dict(sorted(strategy_distribution.items())),
-            "confidence_distribution": dict(sorted(confidence_distribution.items())),
-            "items": evaluated[: max(1, limit)],
-            "snapshot": payload.get("snapshot"),
-            "guardrails": [
-                "This page is the frozen MID_LONG 1h V2 baseline, not a filter study.",
-                "Entry, stop, target, RR, and result are read directly from logged V2 signals.",
-                "No geometry override, timeout experiment, filter search, or promotion verdict is applied.",
-            ],
-        }
 
     def mid_short_filter_combination_1h(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(MID_SHORT_FILTER_COMBO_1H_FILE)
@@ -736,6 +713,71 @@ def _rounded_r_distribution_key(value: Any) -> str:
     if formatted in {"", "-0"}:
         formatted = "0"
     return f"{formatted}R"
+
+
+def _mid_long_1h_baseline_payload(
+    payload: dict[str, Any],
+    *,
+    limit: int,
+    items_enricher: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    aggregate = payload.get("aggregate") or {}
+    source_items = list(payload.get("items") or [])
+    evaluated = [
+        item
+        for item in source_items
+        if item.get("stage") == "MID_LONG" and item.get("timeframe") == "1h"
+    ]
+    evaluated.sort(key=lambda item: str(item.get("signal_timestamp") or ""), reverse=True)
+    if items_enricher is not None:
+        evaluated = items_enricher(evaluated)
+    baseline_aggregate = aggregate_signal_performance_items(evaluated)
+    source_total = int(aggregate.get("signals_evaluated") or len(source_items))
+    baseline_research = _mid_long_baseline_research(evaluated)
+    rr_distribution = Counter(_rounded_r_distribution_key(item.get("rr")) for item in evaluated)
+    strategy_distribution = Counter(
+        str(item.get("strategy_version") or "UNKNOWN") for item in evaluated
+    )
+    confidence_distribution = Counter(
+        str(item.get("confidence_tier") or "UNKNOWN") for item in evaluated
+    )
+    return {
+        "generated_at_utc": (payload.get("snapshot") or {}).get("generated_at_utc") or payload.get("generated_at_utc"),
+        "baseline_id": "MID_LONG_1H_V2_BASELINE",
+        "scope": "mid_long_1h_logged_v2_closed_signals",
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "closed_only_snapshot": True,
+        "filters": {
+            "stage": "MID_LONG",
+            "timeframe": "1h",
+            "position_lock": True,
+            "include_watch_only": False,
+            "result_status": "closed",
+            "limit": max(1, limit),
+        },
+        "snapshot_coverage": {
+            "source_1h_rows": len(source_items),
+            "source_1h_total": source_total,
+            "mid_long_1h_rows": len(evaluated),
+            "is_truncated": len(source_items) < source_total,
+        },
+        "latest_evaluation_candle_time": payload.get("latest_futures_15m_close_time")
+        or payload.get("latest_evaluation_candle_time"),
+        "aggregate": baseline_aggregate,
+        **baseline_research,
+        "rr_distribution": dict(sorted(rr_distribution.items())),
+        "strategy_distribution": dict(sorted(strategy_distribution.items())),
+        "confidence_distribution": dict(sorted(confidence_distribution.items())),
+        "items": evaluated[: max(1, limit)],
+        "snapshot": payload.get("snapshot"),
+        "guardrails": [
+            "This page is the frozen MID_LONG 1h V2 baseline, not a filter study.",
+            "Entry, stop, target, RR, and result are read directly from logged V2 signals.",
+            "No geometry override, timeout experiment, filter search, or promotion verdict is applied.",
+        ],
+    }
 
 
 def _mid_long_baseline_research(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2814,6 +2856,17 @@ def _mid_long_breakout_accepted_deep_dive(
         baseline=control,
         min_sample=min_sample,
     )
+    cause_overlap_rows = _mid_long_breakout_cause_overlap_rows(
+        breakout_items,
+        baseline=control,
+        min_sample=min_sample,
+    )
+    shadow_arm_rows = _mid_long_breakout_shadow_arm_rows(
+        breakout_items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=control,
+        min_sample=min_sample,
+    )
     pre_entry_geometry_path_tables = _mid_long_breakout_pre_entry_geometry_path_tables(
         breakout_items,
         baseline=control,
@@ -2836,6 +2889,8 @@ def _mid_long_breakout_accepted_deep_dive(
         "observable_path_rows": observable_path_rows,
         "mechanism_rows": mechanism_rows,
         "pre_entry_cause_rows": pre_entry_cause_rows,
+        "cause_overlap_rows": cause_overlap_rows,
+        "shadow_arm_rows": shadow_arm_rows,
         "evidence_path_tables": {
             "extension_bucket_x_path": _mid_long_taxonomy_path_cross_rows(
                 breakout_items,
@@ -2889,10 +2944,12 @@ def _mid_long_breakout_accepted_deep_dive(
             mechanism_rows=mechanism_rows,
             single_filter_rows=single_filter_rows,
             draft_rows=draft_rows,
+            shadow_arm_rows=shadow_arm_rows,
         ),
         "guardrails": [
             "Breakout proxy is a research label, not a proven continuation rule.",
             "Post-entry path labels explain behavior; they must not become live entry gates.",
+            "Cause rows can overlap; use overlap and shadow-arm rows before reading a cause as marginal contribution.",
             "POST_ENTRY_DIAGNOSTIC_ONLY filters are leakage-risk for initial entries and can only be used as delayed confirmation or management research.",
             "Room-to-resistance UNKNOWN is not a hard reject.",
             "No Signal Factory rule, scanner decision, TP/SL formula, threshold, or execution behavior is changed.",
@@ -3248,6 +3305,252 @@ def _mid_long_breakout_pre_entry_cause_rows(
     return rows
 
 
+def _mid_long_breakout_cause_flag_specs() -> tuple[tuple[str, str, Callable[[dict[str, Any]], bool]], ...]:
+    return (
+        ("THIN_CLOSE_ACCEPTANCE", "close_penetration_atr/body_above_zone/close_location thin", _mid_long_breakout_thin_acceptance),
+        ("LARGE_BREAKOUT_WICK", "upper_wick_to_body_ratio >= 1.00", lambda item: _mid_long_breakout_decimal_gte(item, "upper_wick_to_body_ratio", "1.00")),
+        ("LATE_CHASE", "bars_since_breakout >= 2 AND entry_distance_from_zone_atr >= 1.00", _mid_long_breakout_late_chase),
+        ("LOW_REMAINING_ROOM", "0 <= room_to_next_resistance_atr <= 0.75", _mid_long_breakout_low_room),
+        ("WEAK_INITIATIVE_FLOW", "volume < 1 OR taker_buy < 0.53 OR oi_change <= 0", _mid_long_breakout_weak_flow),
+        ("HIGH_CROWDING", "funding percentile >= 75 OR oi_zscore >= 3.00", _mid_long_breakout_high_crowding),
+        ("HIGH_PROJECTED_COST", "realistic_cost_r_estimate > 0.20", _mid_long_breakout_high_cost),
+    )
+
+
+def _mid_long_breakout_cause_overlap_rows(
+    items: list[dict[str, Any]],
+    *,
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    specs = _mid_long_breakout_cause_flag_specs()
+    selected_by_label: dict[str, list[dict[str, Any]]] = {
+        label: [item for item in items if predicate(item)]
+        for label, _expression, predicate in specs
+    }
+    rows: list[dict[str, Any]] = []
+    for idx, (left_label, left_expression, _left_predicate) in enumerate(specs):
+        left_items = selected_by_label[left_label]
+        left_ids = {str(item.get("signal_id") or id(item)) for item in left_items}
+        for right_label, right_expression, _right_predicate in specs[idx + 1 :]:
+            right_items = selected_by_label[right_label]
+            right_ids = {str(item.get("signal_id") or id(item)) for item in right_items}
+            overlap_ids = left_ids & right_ids
+            overlap_items = [
+                item
+                for item in items
+                if str(item.get("signal_id") or id(item)) in overlap_ids
+            ]
+            row = _mid_long_perf_row(
+                f"CAUSE-OVERLAP:{left_label}:{right_label}",
+                f"{left_label} x {right_label}",
+                f"({left_expression}) AND ({right_expression})",
+                overlap_items,
+                baseline=baseline,
+                required_fields=(),
+                min_sample=min_sample,
+            )
+            row.update(
+                {
+                    "left_cause": left_label,
+                    "right_cause": right_label,
+                    "left_count": len(left_items),
+                    "right_count": len(right_items),
+                    "overlap_count": len(overlap_items),
+                    "overlap_pct_of_left": _pct_decimal(len(overlap_items), len(left_items)),
+                    "overlap_pct_of_right": _pct_decimal(len(overlap_items), len(right_items)),
+                    "observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in overlap_items)),
+                    "read": _mid_long_breakout_cause_overlap_read(row, len(overlap_items), min_sample=min_sample),
+                }
+            )
+            rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            abs(_decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))),
+            int(row.get("overlap_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_breakout_cause_overlap_read(row: dict[str, Any], overlap_count: int, *, min_sample: int) -> str:
+    if overlap_count <= 0:
+        return "No overlap in this sample."
+    if overlap_count < min_sample:
+        return "Overlap exists but sample is small; do not infer marginal contribution."
+    if _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")) < 0:
+        return "Damage overlaps here; compare shadow arms before treating either cause as standalone."
+    return "Overlap is not damaging in this sample; avoid double-counting the cause."
+
+
+def _mid_long_breakout_shadow_arm_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    arm_specs: tuple[tuple[str, str, str, Callable[[dict[str, Any], dict[str, Any]], str], str], ...] = (
+        (
+            "SHADOW_CONTROL",
+            "V2 breakout proxy control",
+            "all MID_LONG_BREAKOUT_PROXY_CANDIDATE rows",
+            lambda _item, _taxonomy: "PASS",
+            "Control only.",
+        ),
+        (
+            "SHADOW_FLOW_01",
+            "Exclude weak initiative flow",
+            "WEAK_INITIATIVE_FLOW -> REJECT",
+            lambda item, _taxonomy: "REJECT" if _mid_long_breakout_weak_flow(item) else "PASS",
+            "Tests whether flow quality alone removes failure faster than winners.",
+        ),
+        (
+            "SHADOW_ROOM_01",
+            "Require sufficient room",
+            "room_to_next_resistance_atr > 0.75; ROOM_UNKNOWN -> WAIT",
+            lambda item, _taxonomy: _mid_long_breakout_room_arm_decision(item),
+            "Room unavailable is not considered safe; it waits outside the retained cohort.",
+        ),
+        (
+            "SHADOW_FLOW_ROOM_01",
+            "Flow + room core candidate",
+            "initiative flow not weak AND room available sufficient",
+            lambda item, _taxonomy: _mid_long_breakout_flow_room_arm_decision(item),
+            "Main entry-definition candidate before tradability and crowding layers.",
+        ),
+        (
+            "SHADOW_TRADABLE_01",
+            "Flow + room + tradability",
+            "FLOW_ROOM pass AND realistic_cost_r_estimate <= 0.20",
+            lambda item, _taxonomy: _mid_long_breakout_tradable_arm_decision(item),
+            "Separates signal-quality filtering from economic tradability.",
+        ),
+        (
+            "SHADOW_CROWDING_01",
+            "Conditional crowding risk",
+            "TRADABLE pass AND NOT(high crowding with weak/mixed flow, low room, or high extension)",
+            lambda item, taxonomy: _mid_long_breakout_crowding_arm_decision(item, taxonomy),
+            "Crowding is treated as a risk amplifier, not a standalone hard reject.",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for order, (arm_id, label, expression, decision_fn, read) in enumerate(arm_specs):
+        passed: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+        waiting: list[dict[str, Any]] = []
+        for idx, item in enumerate(items):
+            taxonomy = taxonomy_by_id[str(item.get("signal_id") or idx)]
+            decision = decision_fn(item, taxonomy)
+            if decision == "PASS":
+                passed.append(item)
+            elif decision == "WAIT":
+                waiting.append(item)
+            else:
+                rejected.append(item)
+        row = _mid_long_perf_row(
+            arm_id,
+            label,
+            expression,
+            passed,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        rejected_perf = aggregate_signal_performance_items(rejected)
+        waiting_perf = aggregate_signal_performance_items(waiting)
+        baseline_tp = int(baseline.get("tp_count") or 0)
+        baseline_sl = int(baseline.get("sl_count") or 0)
+        row.update(
+            {
+                "arm_id": arm_id,
+                "arm_order": order,
+                "arm_status": "DRAFT_PREVIEW_READ_ONLY" if arm_id != "SHADOW_CONTROL" else "CONTROL",
+                "retained_count": len(passed),
+                "rejected_count": len(rejected),
+                "waiting_count": len(waiting),
+                "rejected_tp_count": rejected_perf["tp_count"],
+                "rejected_sl_count": rejected_perf["sl_count"],
+                "waiting_tp_count": waiting_perf["tp_count"],
+                "waiting_sl_count": waiting_perf["sl_count"],
+                "rejected_realistic_total_r_closed": rejected_perf["realistic_total_r_closed"],
+                "waiting_realistic_total_r_closed": waiting_perf["realistic_total_r_closed"],
+                "tp_retention_pct": _pct_decimal(int(row.get("tp_count") or 0), baseline_tp),
+                "sl_rejection_pct": _pct_decimal(int(rejected_perf.get("sl_count") or 0), baseline_sl),
+                "retained_observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in passed)),
+                "rejected_observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in rejected)),
+                "waiting_observable_path_mix": dict(Counter(_mid_long_breakout_observable_path(item) for item in waiting)),
+                "arm_read": _mid_long_breakout_shadow_arm_read(row, rejected_perf, waiting_perf, read=read, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(key=lambda row: int(row.get("arm_order") or 0))
+    return rows
+
+
+def _mid_long_breakout_shadow_arm_read(
+    row: dict[str, Any],
+    rejected_perf: dict[str, Any],
+    waiting_perf: dict[str, Any],
+    *,
+    read: str,
+    min_sample: int,
+) -> str:
+    retained = int(row.get("closed_count") or 0)
+    if str(row.get("arm_id")) == "SHADOW_CONTROL":
+        return read
+    if retained < min_sample:
+        return f"{read} Sample retained too small for promotion."
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    retained_total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    rejected_total = _decimal_or_zero_snapshot(rejected_perf.get("realistic_total_r_closed"))
+    waiting_total = _decimal_or_zero_snapshot(waiting_perf.get("realistic_total_r_closed"))
+    if retained_total > 0 and avg_delta > Decimal("0.10") and rejected_total < 0:
+        return f"{read} Candidate for chronological validation, not live rule."
+    if avg_delta > 0 and rejected_total < 0:
+        return f"{read} Improves retained cohort but needs validation and overlap check."
+    if waiting_total < 0 and retained_total >= 0:
+        return f"{read} Unknown/wait bucket is damaging; inspect data availability before hard-gating."
+    return f"{read} Not sufficient as a standalone shadow arm yet."
+
+
+def _mid_long_breakout_room_arm_decision(item: dict[str, Any]) -> str:
+    room = _mid_long_breakout_decimal(item, "room_to_next_resistance_atr")
+    if room is None:
+        return "WAIT"
+    return "PASS" if room > Decimal("0.75") else "REJECT"
+
+
+def _mid_long_breakout_flow_room_arm_decision(item: dict[str, Any]) -> str:
+    room_decision = _mid_long_breakout_room_arm_decision(item)
+    if room_decision == "WAIT":
+        return "WAIT"
+    if _mid_long_breakout_weak_flow(item) or room_decision == "REJECT":
+        return "REJECT"
+    return "PASS"
+
+
+def _mid_long_breakout_tradable_arm_decision(item: dict[str, Any]) -> str:
+    flow_room = _mid_long_breakout_flow_room_arm_decision(item)
+    if flow_room != "PASS":
+        return flow_room
+    cost = _mid_long_breakout_decimal(item, "realistic_cost_r_estimate")
+    if cost is None:
+        return "WAIT"
+    return "PASS" if cost <= Decimal("0.20") else "REJECT"
+
+
+def _mid_long_breakout_crowding_arm_decision(item: dict[str, Any], taxonomy: dict[str, Any]) -> str:
+    tradable = _mid_long_breakout_tradable_arm_decision(item)
+    if tradable != "PASS":
+        return tradable
+    if _mid_long_breakout_crowding_danger_pair_precise(item, taxonomy):
+        return "REJECT"
+    return "PASS"
+
+
 def _mid_long_breakout_pre_entry_geometry_path_tables(
     items: list[dict[str, Any]],
     *,
@@ -3407,6 +3710,24 @@ def _mid_long_breakout_high_crowding(item: dict[str, Any]) -> bool:
     funding = _mid_long_evidence_value(item, "funding_percentile_30d")
     oi_z = _mid_long_evidence_value(item, "oi_zscore")
     return (funding is not None and funding >= Decimal("75")) or (oi_z is not None and oi_z >= Decimal("3.00"))
+
+
+def _mid_long_breakout_high_cost(item: dict[str, Any]) -> bool:
+    return _mid_long_breakout_decimal_gt(item, "realistic_cost_r_estimate", "0.20")
+
+
+def _mid_long_breakout_high_extension(item: dict[str, Any], taxonomy: dict[str, Any]) -> bool:
+    if taxonomy.get("extension_bucket") in {"HIGH_EXTENSION", "EXTREME_EXTENSION"}:
+        return True
+    extension = _mid_long_evidence_value(item, "atr_extension_normalized")
+    return extension is not None and extension >= Decimal("1.50")
+
+
+def _mid_long_breakout_crowding_danger_pair_precise(item: dict[str, Any], taxonomy: dict[str, Any]) -> bool:
+    if not _mid_long_breakout_high_crowding(item):
+        return False
+    flow_danger = _mid_long_breakout_weak_flow(item) or taxonomy.get("flow_state_provisional") in {"MIXED", "WEAK"}
+    return bool(flow_danger or _mid_long_breakout_low_room(item) or _mid_long_breakout_high_extension(item, taxonomy))
 
 
 def _mid_long_close_penetration_bucket(item: dict[str, Any]) -> str:
@@ -3938,6 +4259,7 @@ def _mid_long_breakout_summary(
     mechanism_rows: list[dict[str, Any]],
     single_filter_rows: list[dict[str, Any]],
     draft_rows: list[dict[str, Any]],
+    shadow_arm_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     precise_missing = [
         row
@@ -3960,6 +4282,11 @@ def _mid_long_breakout_summary(
         key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
         default=None,
     )
+    best_shadow = max(
+        [row for row in shadow_arm_rows if row.get("arm_id") != "SHADOW_CONTROL"],
+        key=lambda row: _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+        default=None,
+    )
     if precise_missing:
         label_purity_read = "PROXY_LABEL_ONLY_NEEDS_ZONE_FIELDS"
     elif any(str(row.get("status")) == "FAIL" for row in label_purity_rows):
@@ -3979,6 +4306,7 @@ def _mid_long_breakout_summary(
         "best_filter": _mid_long_breakout_summary_row(best_filter),
         "worst_mechanism": _mid_long_breakout_summary_row(worst_mechanism),
         "best_draft": _mid_long_breakout_summary_row(best_draft),
+        "best_shadow_arm": _mid_long_breakout_summary_row(best_shadow),
     }
 
 
