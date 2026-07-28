@@ -1389,6 +1389,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    damage_hurdle = _mid_long_family_damage_hurdle_study(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     definition_reset = _mid_long_definition_reset_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1432,6 +1438,7 @@ def _mid_long_definition_audit(
         "sl_anatomy_v2": sl_anatomy,
         "first_hour_response_audit": first_hour_response,
         "first_hour_action_simulation": first_hour_action,
+        "family_damage_hurdle_study": damage_hurdle,
         "first_hour_exact_replay_lab": first_hour_exact_replay,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
@@ -2625,6 +2632,748 @@ def _mid_long_damage_isolation(
             "Protection/BE study must be run after damage-cleaned cohorts are understood.",
         ],
         "read": _mid_long_damage_isolation_read(rows),
+    }
+
+
+def _mid_long_family_damage_hurdle_study(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    state_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_first_hour_state(
+            item,
+            reset_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    labels_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_damage_hurdle_label(
+            item,
+            first_hour_state=state_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    score_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_damage_hurdle_score_state(
+            item,
+            reset=reset_by_id[str(item.get("signal_id") or idx)],
+            taxonomy=taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    baseline_hurdle = _mid_long_hurdle_perf_summary(
+        items,
+        labels_by_id=labels_by_id,
+        baseline=None,
+    )
+    family_rows = _mid_long_hurdle_group_rows(
+        items,
+        group_key="primary_family",
+        group_label="Primary family",
+        group_lookup=lambda idx, item: str(reset_by_id[str(item.get("signal_id") or idx)]["primary_family"]),
+        labels_by_id=labels_by_id,
+        baseline=baseline,
+        baseline_hurdle=baseline_hurdle,
+        min_sample=min_sample,
+    )
+    damage_label_rows = _mid_long_hurdle_group_rows(
+        items,
+        group_key="damage_label",
+        group_label="Damage label",
+        group_lookup=lambda idx, item: str(labels_by_id[str(item.get("signal_id") or idx)]),
+        labels_by_id=labels_by_id,
+        baseline=baseline,
+        baseline_hurdle=baseline_hurdle,
+        min_sample=min_sample,
+    )
+    predictor_group_rows = {
+        "zone_freshness": _mid_long_hurdle_group_rows(
+            items,
+            group_key="zone_freshness",
+            group_label="Zone freshness",
+            group_lookup=lambda idx, item: str(score_by_id[str(item.get("signal_id") or idx)]["components"]["zone_freshness"]),
+            labels_by_id=labels_by_id,
+            baseline=baseline,
+            baseline_hurdle=baseline_hurdle,
+            min_sample=min_sample,
+        ),
+        "entry_geometry": _mid_long_hurdle_group_rows(
+            items,
+            group_key="entry_geometry",
+            group_label="Entry geometry",
+            group_lookup=lambda idx, item: str(score_by_id[str(item.get("signal_id") or idx)]["components"]["entry_geometry"]),
+            labels_by_id=labels_by_id,
+            baseline=baseline,
+            baseline_hurdle=baseline_hurdle,
+            min_sample=min_sample,
+        ),
+        "spatial_room": _mid_long_hurdle_group_rows(
+            items,
+            group_key="spatial_room",
+            group_label="Spatial room",
+            group_lookup=lambda idx, item: str(score_by_id[str(item.get("signal_id") or idx)]["components"]["spatial_room"]),
+            labels_by_id=labels_by_id,
+            baseline=baseline,
+            baseline_hurdle=baseline_hurdle,
+            min_sample=min_sample,
+        ),
+        "flow_crowding": _mid_long_hurdle_group_rows(
+            items,
+            group_key="flow_crowding",
+            group_label="Flow/crowding",
+            group_lookup=lambda idx, item: str(score_by_id[str(item.get("signal_id") or idx)]["components"]["flow_crowding"]),
+            labels_by_id=labels_by_id,
+            baseline=baseline,
+            baseline_hurdle=baseline_hurdle,
+            min_sample=min_sample,
+        ),
+        "tradability": _mid_long_hurdle_group_rows(
+            items,
+            group_key="tradability",
+            group_label="Tradability",
+            group_lookup=lambda idx, item: str(score_by_id[str(item.get("signal_id") or idx)]["components"]["tradability"]),
+            labels_by_id=labels_by_id,
+            baseline=baseline,
+            baseline_hurdle=baseline_hurdle,
+            min_sample=min_sample,
+        ),
+    }
+    score_bucket_rows = _mid_long_hurdle_score_bucket_rows(
+        items,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        baseline=baseline,
+        baseline_hurdle=baseline_hurdle,
+        min_sample=min_sample,
+    )
+    threshold_rows = _mid_long_hurdle_threshold_rows(
+        items,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        baseline=baseline,
+        baseline_hurdle=baseline_hurdle,
+        min_sample=min_sample,
+    )
+    best_threshold = _mid_long_hurdle_best_threshold(threshold_rows, min_sample=min_sample)
+    block_rows = _mid_long_hurdle_chronological_block_rows(
+        items,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        threshold=int(best_threshold.get("threshold_score") or 0) if best_threshold else 0,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h Family-Conditioned Damage Hurdle Study",
+        "method": (
+            "Read-only diagnostic: split MID_LONG 1h by structure family, label early damage from observed path, "
+            "then compare damage share and realistic R across pre-entry predictor groups."
+        ),
+        "model_version": "MID_LONG_DAMAGE_HURDLE_DIAGNOSTIC_V1",
+        "min_sample": min_sample,
+        "target_policy": {
+            "primary_target": "Y_EARLY_DAMAGE",
+            "primary_definition": (
+                "1 when first-hour response is price-reversed/structure-failed or path is instant/shallow SL. "
+                "This is an outcome label for research, not an entry predictor."
+            ),
+            "secondary_target": "realistic_realized_r",
+            "auxiliary_target": "Y_CONFIRM from first-hour response; kept only as diagnostic, not objective final.",
+        },
+        "predictor_groups": [
+            "primary family",
+            "zone freshness",
+            "entry geometry",
+            "spatial room",
+            "flow/crowding",
+            "tradability",
+        ],
+        "baseline": baseline_hurdle,
+        "family_rows": family_rows,
+        "damage_label_rows": damage_label_rows,
+        "predictor_group_rows": predictor_group_rows,
+        "score_bucket_rows": score_bucket_rows,
+        "threshold_rows": threshold_rows,
+        "chronological_block_rows": block_rows,
+        "summary": _mid_long_hurdle_summary(
+            baseline_hurdle=baseline_hurdle,
+            threshold_rows=threshold_rows,
+            block_rows=block_rows,
+            min_sample=min_sample,
+        ),
+        "guardrails": [
+            "Hurdle score is a diagnostic rank, not a live Signal Factory score.",
+            "Y_EARLY_DAMAGE uses post-entry outcome/path only as a label; it must not be used as a pre-entry feature.",
+            "Threshold rows are coverage trade-offs for research, not gates.",
+            "Any V2.1 shadow proposal must survive chronological validation and concentration checks first.",
+        ],
+    }
+
+
+def _mid_long_damage_hurdle_label(item: dict[str, Any], *, first_hour_state: str) -> str:
+    path = _mid_long_path_label_050(item)
+    status = str(item.get("result_status") or "")
+    if first_hour_state in {"FIRST_HOUR_PRICE_REVERSED", "FIRST_HOUR_STRUCTURE_FAILED"}:
+        return "EARLY_DAMAGE"
+    if path in {"INSTANT_SL", "SHALLOW_PROFIT_THEN_FAIL"}:
+        return "EARLY_DAMAGE"
+    if status == "TP_HIT":
+        return "SURVIVED_POSITIVE_PAYOFF"
+    if status == "SL_HIT":
+        return "SURVIVED_NEGATIVE_PAYOFF"
+    return "DAMAGE_UNKNOWN"
+
+
+def _mid_long_damage_hurdle_score_state(
+    item: dict[str, Any],
+    *,
+    reset: dict[str, Any],
+    taxonomy: dict[str, Any],
+) -> dict[str, Any]:
+    components = {
+        "primary_family": _mid_long_hurdle_family_bucket(reset),
+        "zone_freshness": _mid_long_hurdle_zone_bucket(item),
+        "entry_geometry": _mid_long_hurdle_entry_geometry_bucket(item),
+        "spatial_room": _mid_long_hurdle_room_bucket(item, taxonomy),
+        "flow_crowding": _mid_long_hurdle_flow_crowding_bucket(item, taxonomy),
+        "tradability": _mid_long_hurdle_tradability_bucket(item, taxonomy),
+    }
+    points = {
+        "primary_family": components["primary_family"] in {
+            "BREAKOUT_CONTINUATION",
+            "SUPPORT_RETEST",
+            "PULLBACK",
+        },
+        "zone_freshness": components["zone_freshness"] in {"FRESH_REPEATED_ZONE", "MATURE_REPEATED_ZONE"},
+        "entry_geometry": components["entry_geometry"] in {"ACCEPTED_MODERATE_DISTANCE", "ACCEPTED_CLOSE_DISTANCE"},
+        "spatial_room": components["spatial_room"] in {"ROOM_CLEAR", "ROOM_MODERATE"},
+        "flow_crowding": components["flow_crowding"] in {"FLOW_CONFIRMED_NOT_CROWDED", "MIXED_NOT_CROWDED"},
+        "tradability": components["tradability"] in {"LOW_COST", "MODERATE_COST"},
+    }
+    return {
+        "components": components,
+        "points": points,
+        "score": sum(1 for passed in points.values() if passed),
+        "max_score": len(points),
+    }
+
+
+def _mid_long_hurdle_family_bucket(reset: dict[str, Any]) -> str:
+    family = str(reset.get("primary_family") or "")
+    return {
+        "BREAKOUT_CONTINUATION_LONG": "BREAKOUT_CONTINUATION",
+        "SUPPORT_RETEST_LONG": "SUPPORT_RETEST",
+        "PULLBACK_LONG": "PULLBACK",
+        "OTHER_STRUCTURED_LONG": "OTHER_STRUCTURED",
+        "UNCLASSIFIED_MID_LONG": "UNCLASSIFIED",
+    }.get(family, "UNCLASSIFIED")
+
+
+def _mid_long_hurdle_zone_bucket(item: dict[str, Any]) -> str:
+    touches = _mid_long_first_decimal(item, "zone_touch_count")
+    age = _mid_long_first_decimal(item, "zone_age_bars")
+    if touches is None or age is None:
+        return "ZONE_UNKNOWN"
+    if touches < Decimal("2"):
+        return "SINGLE_TOUCH_ZONE"
+    if age <= Decimal("12"):
+        return "FRESH_REPEATED_ZONE"
+    if age <= Decimal("48"):
+        return "MATURE_REPEATED_ZONE"
+    return "OLD_REPEATED_ZONE"
+
+
+def _mid_long_hurdle_entry_geometry_bucket(item: dict[str, Any]) -> str:
+    distance = _mid_long_first_decimal(item, "entry_distance_from_zone_atr")
+    penetration = _mid_long_first_decimal(item, "close_penetration_atr")
+    body = _mid_long_first_decimal(item, "body_above_zone_ratio")
+    if distance is None:
+        return "GEOMETRY_UNKNOWN"
+    if distance > Decimal("1.50"):
+        return "CHASE_DISTANCE"
+    if penetration is not None and penetration < Decimal("0.10"):
+        return "THIN_PENETRATION"
+    if body is not None and body < Decimal("0.35"):
+        return "THIN_BODY_ACCEPTANCE"
+    if distance < Decimal("0.15"):
+        return "ACCEPTED_CLOSE_DISTANCE"
+    return "ACCEPTED_MODERATE_DISTANCE"
+
+
+def _mid_long_hurdle_room_bucket(item: dict[str, Any], taxonomy: dict[str, Any]) -> str:
+    room = _mid_long_first_decimal(
+        item,
+        "room_to_next_resistance_atr",
+        "structure_zone_nearest_resistance_distance_atr",
+    )
+    if room is None:
+        taxonomy_room = str(taxonomy.get("room_to_resistance_bucket") or "")
+        return taxonomy_room or "ROOM_UNKNOWN"
+    if room <= Decimal("0.75"):
+        return "LOW_ROOM"
+    if room <= Decimal("1.50"):
+        return "ROOM_MODERATE"
+    return "ROOM_CLEAR"
+
+
+def _mid_long_hurdle_flow_crowding_bucket(item: dict[str, Any], taxonomy: dict[str, Any]) -> str:
+    flow = str(taxonomy.get("flow_state_provisional") or _mid_long_flow_state(item))
+    crowding = str(taxonomy.get("crowding_bucket") or "")
+    if flow == "UNKNOWN" and crowding in {"", "UNKNOWN"}:
+        return "FLOW_CROWDING_UNKNOWN"
+    if crowding in {"HIGH_CROWDING", "EXTREME_CROWDING"}:
+        return "CROWDED_LONG"
+    if flow == "CONFIRMED":
+        return "FLOW_CONFIRMED_NOT_CROWDED"
+    if flow == "WEAK":
+        return "WEAK_FLOW_NOT_CROWDED"
+    return "MIXED_NOT_CROWDED"
+
+
+def _mid_long_hurdle_tradability_bucket(item: dict[str, Any], taxonomy: dict[str, Any]) -> str:
+    cost_bucket = str(taxonomy.get("projected_cost_bucket") or "")
+    cost = _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))
+    if cost_bucket and cost_bucket != "COST_UNKNOWN":
+        return cost_bucket
+    if cost is None:
+        return "COST_UNKNOWN"
+    if cost <= Decimal("0.10"):
+        return "LOW_COST"
+    if cost <= Decimal("0.20"):
+        return "MODERATE_COST"
+    if cost <= Decimal("0.35"):
+        return "HIGH_COST"
+    return "EXTREME_COST"
+
+
+def _mid_long_first_decimal(item: dict[str, Any], *keys: str) -> Decimal | None:
+    for key in keys:
+        value = _decimal_or_none_snapshot(item.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _mid_long_hurdle_group_rows(
+    items: list[dict[str, Any]],
+    *,
+    group_key: str,
+    group_label: str,
+    group_lookup: Callable[[int, dict[str, Any]], str],
+    labels_by_id: dict[str, str],
+    baseline: dict[str, Any],
+    baseline_hurdle: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        grouped[group_lookup(idx, item)].append(item)
+    rows: list[dict[str, Any]] = []
+    for value, value_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"HURDLE:{group_key}:{value}",
+            value,
+            f"{group_key} == {value}",
+            value_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            _mid_long_hurdle_perf_summary(
+                value_items,
+                labels_by_id=labels_by_id,
+                baseline=baseline_hurdle,
+            )
+        )
+        row.update(
+            {
+                "group_key": group_key,
+                "group_label": group_label,
+                "group_value": value,
+                "read": _mid_long_hurdle_group_read(row, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_hurdle_score_bucket_rows(
+    items: list[dict[str, Any]],
+    *,
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    baseline: dict[str, Any],
+    baseline_hurdle: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        score = int(score_by_id[key]["score"])
+        grouped[f"SCORE_{score}"].append(item)
+    rows: list[dict[str, Any]] = []
+    for score_bucket, bucket_items in sorted(grouped.items(), key=lambda pair: pair[0]):
+        score = int(score_bucket.rsplit("_", 1)[-1])
+        row = _mid_long_perf_row(
+            f"HURDLE_SCORE:{score}",
+            score_bucket,
+            f"hurdle_score == {score}",
+            bucket_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            _mid_long_hurdle_perf_summary(
+                bucket_items,
+                labels_by_id=labels_by_id,
+                baseline=baseline_hurdle,
+            )
+        )
+        row.update(
+            {
+                "score": score,
+                "score_bucket": score_bucket,
+                "read": _mid_long_hurdle_group_read(row, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(key=lambda row: int(row.get("score") or 0), reverse=True)
+    return rows
+
+
+def _mid_long_hurdle_threshold_rows(
+    items: list[dict[str, Any]],
+    *,
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    baseline: dict[str, Any],
+    baseline_hurdle: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    max_score = max((int(state["max_score"]) for state in score_by_id.values()), default=0)
+    rows: list[dict[str, Any]] = []
+    base_tp = int(baseline_hurdle.get("tp_count") or 0)
+    base_sl = int(baseline_hurdle.get("sl_count") or 0)
+    base_damage = int(baseline_hurdle.get("early_damage_count") or 0)
+    for threshold in range(0, max_score + 1):
+        selected = [
+            item
+            for idx, item in enumerate(items)
+            if int(score_by_id[str(item.get("signal_id") or idx)]["score"]) >= threshold
+        ]
+        row = _mid_long_perf_row(
+            f"HURDLE_THRESHOLD:{threshold}",
+            f"score >= {threshold}",
+            f"diagnostic_hurdle_score >= {threshold}",
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            _mid_long_hurdle_perf_summary(
+                selected,
+                labels_by_id=labels_by_id,
+                baseline=baseline_hurdle,
+            )
+        )
+        selected_tp = int(row.get("tp_count") or 0)
+        selected_sl = int(row.get("sl_count") or 0)
+        selected_damage = int(row.get("early_damage_count") or 0)
+        row.update(
+            {
+                "threshold_score": threshold,
+                "coverage_pct": _pct_decimal(len(selected), len(items)),
+                "tp_retention_pct": _pct_decimal(selected_tp, base_tp),
+                "tp_rejection_pct": _pct_decimal(max(0, base_tp - selected_tp), base_tp),
+                "sl_rejection_pct": _pct_decimal(max(0, base_sl - selected_sl), base_sl),
+                "early_damage_rejection_pct": _pct_decimal(max(0, base_damage - selected_damage), base_damage),
+                "read": _mid_long_hurdle_threshold_read(row, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _mid_long_hurdle_chronological_block_rows(
+    items: list[dict[str, Any]],
+    *,
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    threshold: int,
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    ordered = sorted(items, key=lambda item: str(item.get("signal_timestamp") or item.get("window_close_time") or ""))
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(ordered):
+        block_index = min(3, idx * 4 // len(ordered))
+        grouped[block_index].append(item)
+    rows: list[dict[str, Any]] = []
+    for block_index in range(4):
+        block_items = grouped.get(block_index, [])
+        selected = [
+            item
+            for item_idx, item in enumerate(block_items)
+            if int(score_by_id.get(str(item.get("signal_id") or item_idx), {}).get("score") or 0) >= threshold
+        ]
+        baseline = _mid_long_perf_row(
+            f"HURDLE_BLOCK_BASE:{block_index + 1}",
+            f"Block {block_index + 1} baseline",
+            "chronological block baseline",
+            block_items,
+            baseline=None,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        selected_row = _mid_long_perf_row(
+            f"HURDLE_BLOCK_SELECTED:{block_index + 1}",
+            f"Block {block_index + 1} selected",
+            f"diagnostic_hurdle_score >= {threshold}",
+            selected,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        selected_row.update(
+            _mid_long_hurdle_perf_summary(
+                selected,
+                labels_by_id=labels_by_id,
+                baseline=_mid_long_hurdle_perf_summary(block_items, labels_by_id=labels_by_id, baseline=None),
+            )
+        )
+        rows.append(
+            {
+                "block": block_index + 1,
+                "threshold_score": threshold,
+                "sample_count": len(block_items),
+                "selected_count": len(selected),
+                "selected_coverage_pct": _pct_decimal(len(selected), len(block_items)),
+                "first_signal_timestamp": block_items[0].get("signal_timestamp") if block_items else None,
+                "last_signal_timestamp": block_items[-1].get("signal_timestamp") if block_items else None,
+                "baseline_realistic_total_r_closed": baseline.get("realistic_total_r_closed"),
+                "baseline_realistic_avg_r_closed": baseline.get("realistic_avg_r_closed"),
+                "selected_realistic_total_r_closed": selected_row.get("realistic_total_r_closed"),
+                "selected_realistic_avg_r_closed": selected_row.get("realistic_avg_r_closed"),
+                "selected_early_damage_share_pct": selected_row.get("early_damage_share_pct"),
+                "top_symbol": selected_row.get("top_symbol"),
+                "top_symbol_share_pct": selected_row.get("top_symbol_share_pct"),
+                "read": _mid_long_hurdle_block_read(selected_row, min_sample=min_sample),
+            }
+        )
+    return rows
+
+
+def _mid_long_hurdle_perf_summary(
+    items: list[dict[str, Any]],
+    *,
+    labels_by_id: dict[str, str],
+    baseline: dict[str, Any] | None,
+) -> dict[str, Any]:
+    perf = aggregate_signal_performance_items(items)
+    label_counts = Counter(
+        labels_by_id.get(str(item.get("signal_id") or idx), "DAMAGE_UNKNOWN")
+        for idx, item in enumerate(items)
+    )
+    non_damage = [
+        item
+        for idx, item in enumerate(items)
+        if labels_by_id.get(str(item.get("signal_id") or idx), "DAMAGE_UNKNOWN") != "EARLY_DAMAGE"
+    ]
+    cost_values = [
+        value
+        for item in items
+        if (value := _decimal_or_none_snapshot(item.get("realistic_cost_r_estimate"))) is not None
+    ]
+    ideal_total = _decimal_or_zero_snapshot(perf.get("total_r_closed"))
+    realistic_total = _decimal_or_zero_snapshot(perf.get("realistic_total_r_closed"))
+    row: dict[str, Any] = {
+        "early_damage_count": label_counts.get("EARLY_DAMAGE", 0),
+        "survived_positive_count": label_counts.get("SURVIVED_POSITIVE_PAYOFF", 0),
+        "survived_negative_count": label_counts.get("SURVIVED_NEGATIVE_PAYOFF", 0),
+        "damage_unknown_count": label_counts.get("DAMAGE_UNKNOWN", 0),
+        "early_damage_share_pct": _pct_decimal(label_counts.get("EARLY_DAMAGE", 0), len(items)),
+        "non_damage_count": len(non_damage),
+        "non_damage_share_pct": _pct_decimal(len(non_damage), len(items)),
+        "tp_count": perf.get("tp_count"),
+        "sl_count": perf.get("sl_count"),
+        "closed_count": perf.get("closed_count"),
+        "ideal_total_r_closed": perf.get("total_r_closed"),
+        "ideal_avg_r_closed": perf.get("avg_r_closed"),
+        "realistic_total_r_closed": perf.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": perf.get("realistic_avg_r_closed"),
+        "execution_drag_r": realistic_total - ideal_total,
+        "median_projected_cost_r": _median_decimal_snapshot(cost_values),
+        "conditional_non_damage_realistic_total_r": aggregate_signal_performance_items(non_damage).get("realistic_total_r_closed"),
+        "conditional_non_damage_realistic_avg_r": aggregate_signal_performance_items(non_damage).get("realistic_avg_r_closed"),
+        "damage_label_mix": dict(label_counts),
+    }
+    if baseline is not None:
+        row.update(
+            {
+                "early_damage_share_delta_vs_baseline": _decimal_delta_snapshot(
+                    row.get("early_damage_share_pct"),
+                    baseline.get("early_damage_share_pct"),
+                ),
+                "realistic_avg_r_delta_vs_baseline": _decimal_delta_snapshot(
+                    row.get("realistic_avg_r_closed"),
+                    baseline.get("realistic_avg_r_closed"),
+                ),
+                "realistic_total_r_delta_vs_baseline": _decimal_delta_snapshot(
+                    row.get("realistic_total_r_closed"),
+                    baseline.get("realistic_total_r_closed"),
+                ),
+                "execution_drag_delta_vs_baseline": _decimal_delta_snapshot(
+                    row.get("execution_drag_r"),
+                    baseline.get("execution_drag_r"),
+                ),
+            }
+        )
+    return row
+
+
+def _mid_long_hurdle_group_read(row: dict[str, Any], *, min_sample: int) -> str:
+    sample = int(row.get("closed_count") or row.get("sample_count") or 0)
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    damage_delta = _decimal_or_zero_snapshot(row.get("early_damage_share_delta_vs_baseline"))
+    avg_r = _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed"))
+    if sample < min_sample:
+        return "SAMPLE_TOO_SMALL"
+    if avg_r > 0 and avg_delta >= Decimal("0.10") and damage_delta < 0:
+        return "DAMAGE_AND_PAYOFF_IMPROVE"
+    if damage_delta < 0 and avg_delta > 0:
+        return "DAMAGE_REDUCED_PAYOFF_STILL_WEAK"
+    if damage_delta > 0 and avg_delta < 0:
+        return "DAMAGE_CLUSTER"
+    return "MIXED_OR_NO_CLEAR_GAP"
+
+
+def _mid_long_hurdle_threshold_read(row: dict[str, Any], *, min_sample: int) -> str:
+    sample = int(row.get("closed_count") or 0)
+    avg_delta = _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline"))
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    damage_delta = _decimal_or_zero_snapshot(row.get("early_damage_share_delta_vs_baseline"))
+    tp_retention = _decimal_or_zero_snapshot(row.get("tp_retention_pct"))
+    if sample < min_sample:
+        return "THRESHOLD_SAMPLE_SMALL"
+    if total_r > 0 and avg_delta >= Decimal("0.10") and damage_delta < 0 and tp_retention >= Decimal("30"):
+        return "HURDLE_SHADOW_CANDIDATE"
+    if damage_delta < 0 and avg_delta > 0:
+        return "HURDLE_REDUCES_DAMAGE_NOT_ECONOMIC"
+    if tp_retention < Decimal("30"):
+        return "HURDLE_CUTS_TOO_MANY_TP"
+    return "HURDLE_NOT_READY"
+
+
+def _mid_long_hurdle_block_read(row: dict[str, Any], *, min_sample: int) -> str:
+    sample = int(row.get("closed_count") or 0)
+    total = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    if sample < min_sample:
+        return "BLOCK_SAMPLE_SMALL"
+    if total > 0:
+        return "BLOCK_POSITIVE"
+    return "BLOCK_NEGATIVE_OR_FLAT"
+
+
+def _mid_long_hurdle_best_threshold(rows: list[dict[str, Any]], *, min_sample: int) -> dict[str, Any] | None:
+    readable = [row for row in rows if int(row.get("closed_count") or 0) >= min_sample]
+    if not readable:
+        return None
+    return max(
+        readable,
+        key=lambda row: (
+            _mid_long_hurdle_threshold_rank(str(row.get("read") or "")),
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_delta_vs_baseline")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+    )
+
+
+def _mid_long_hurdle_threshold_rank(read: str) -> int:
+    return {
+        "HURDLE_SHADOW_CANDIDATE": 4,
+        "HURDLE_REDUCES_DAMAGE_NOT_ECONOMIC": 3,
+        "HURDLE_NOT_READY": 2,
+        "HURDLE_CUTS_TOO_MANY_TP": 1,
+        "THRESHOLD_SAMPLE_SMALL": 0,
+    }.get(read, 0)
+
+
+def _mid_long_hurdle_summary(
+    *,
+    baseline_hurdle: dict[str, Any],
+    threshold_rows: list[dict[str, Any]],
+    block_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    best = _mid_long_hurdle_best_threshold(threshold_rows, min_sample=min_sample)
+    positive_blocks = sum(1 for row in block_rows if row.get("read") == "BLOCK_POSITIVE")
+    readable_blocks = sum(1 for row in block_rows if row.get("read") != "BLOCK_SAMPLE_SMALL")
+    if not best:
+        read = "HURDLE_DATA_NOT_READY"
+        next_action = "Keep collecting MID_LONG 1h rows; no readable hurdle threshold yet."
+    elif best.get("read") == "HURDLE_SHADOW_CANDIDATE" and positive_blocks >= 3:
+        read = "HURDLE_CANDIDATE_STABLE_ENOUGH_FOR_SHADOW_REPLAY"
+        next_action = "Run exact candle-order shadow replay for this diagnostic threshold before any live rule discussion."
+    elif best.get("read") == "HURDLE_SHADOW_CANDIDATE":
+        read = "HURDLE_CANDIDATE_NEEDS_TIME_STABILITY"
+        next_action = "Do not promote yet; inspect chronological blocks and symbol concentration."
+    elif best.get("read") == "HURDLE_REDUCES_DAMAGE_NOT_ECONOMIC":
+        read = "HURDLE_REDUCES_DAMAGE_BUT_PAYOFF_WEAK"
+        next_action = "Use the best hurdle bucket for failure anatomy, not for a V2.1 rule."
+    else:
+        read = "HURDLE_NOT_SEPARATING"
+        next_action = "Stop threshold tinkering; inspect family-specific damage causes and payoff geometry."
+    return {
+        "read": read,
+        "baseline_early_damage_share_pct": baseline_hurdle.get("early_damage_share_pct"),
+        "baseline_realistic_avg_r_closed": baseline_hurdle.get("realistic_avg_r_closed"),
+        "best_threshold": _mid_long_hurdle_summary_threshold(best),
+        "positive_block_count": positive_blocks,
+        "readable_block_count": readable_blocks,
+        "next_action": next_action,
+    }
+
+
+def _mid_long_hurdle_summary_threshold(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "threshold_score": row.get("threshold_score"),
+        "closed_count": row.get("closed_count"),
+        "coverage_pct": row.get("coverage_pct"),
+        "tp_count": row.get("tp_count"),
+        "sl_count": row.get("sl_count"),
+        "early_damage_share_pct": row.get("early_damage_share_pct"),
+        "realistic_total_r_closed": row.get("realistic_total_r_closed"),
+        "realistic_avg_r_closed": row.get("realistic_avg_r_closed"),
+        "realistic_avg_r_delta_vs_baseline": row.get("realistic_avg_r_delta_vs_baseline"),
+        "tp_retention_pct": row.get("tp_retention_pct"),
+        "sl_rejection_pct": row.get("sl_rejection_pct"),
+        "early_damage_rejection_pct": row.get("early_damage_rejection_pct"),
+        "read": row.get("read"),
     }
 
 

@@ -3884,6 +3884,7 @@ export type MidLongDefinitionAudit = {
   sl_anatomy_v2?: MidLongSlAnatomyV2;
   first_hour_response_audit?: MidLongFirstHourResponseAudit;
   first_hour_action_simulation?: MidLongFirstHourActionSimulation;
+  family_damage_hurdle_study?: MidLongFamilyDamageHurdleStudy;
   first_hour_exact_replay_lab?: MidLongFirstHourExactReplayLab | null;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
@@ -3895,6 +3896,120 @@ export type MidLongDefinitionAudit = {
     recommended_next_step: string;
   };
   guardrails: string[];
+};
+
+export type MidLongFamilyDamageHurdleStudy = {
+  scope: string;
+  method: string;
+  model_version: string;
+  min_sample: number;
+  target_policy: {
+    primary_target: string;
+    primary_definition: string;
+    secondary_target: string;
+    auxiliary_target: string;
+  };
+  predictor_groups: string[];
+  baseline: MidLongHurdleSummaryMetrics;
+  family_rows: MidLongHurdleGroupRow[];
+  damage_label_rows: MidLongHurdleGroupRow[];
+  predictor_group_rows: Record<string, MidLongHurdleGroupRow[]>;
+  score_bucket_rows: MidLongHurdleScoreBucketRow[];
+  threshold_rows: MidLongHurdleThresholdRow[];
+  chronological_block_rows: MidLongHurdleBlockRow[];
+  summary: {
+    read: string;
+    baseline_early_damage_share_pct?: string | number | null;
+    baseline_realistic_avg_r_closed?: string | number | null;
+    best_threshold?: MidLongHurdleSummaryThreshold | null;
+    positive_block_count: number;
+    readable_block_count: number;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongHurdleSummaryMetrics = {
+  early_damage_count: number;
+  survived_positive_count: number;
+  survived_negative_count: number;
+  damage_unknown_count: number;
+  early_damage_share_pct?: string | number | null;
+  non_damage_count: number;
+  non_damage_share_pct?: string | number | null;
+  tp_count: number;
+  sl_count: number;
+  closed_count: number;
+  ideal_total_r_closed?: string | number | null;
+  ideal_avg_r_closed?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  execution_drag_r?: string | number | null;
+  median_projected_cost_r?: string | number | null;
+  conditional_non_damage_realistic_total_r?: string | number | null;
+  conditional_non_damage_realistic_avg_r?: string | number | null;
+  damage_label_mix: Record<string, number>;
+  early_damage_share_delta_vs_baseline?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  execution_drag_delta_vs_baseline?: string | number | null;
+};
+
+export type MidLongHurdleGroupRow = MidLongEntryCombinationRow & MidLongHurdleSummaryMetrics & {
+  group_key: string;
+  group_label: string;
+  group_value: string;
+  read: string;
+};
+
+export type MidLongHurdleScoreBucketRow = MidLongEntryCombinationRow & MidLongHurdleSummaryMetrics & {
+  score: number;
+  score_bucket: string;
+  read: string;
+};
+
+export type MidLongHurdleThresholdRow = MidLongEntryCombinationRow & MidLongHurdleSummaryMetrics & {
+  threshold_score: number;
+  coverage_pct?: string | number | null;
+  tp_retention_pct?: string | number | null;
+  tp_rejection_pct?: string | number | null;
+  sl_rejection_pct?: string | number | null;
+  early_damage_rejection_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongHurdleBlockRow = {
+  block: number;
+  threshold_score: number;
+  sample_count: number;
+  selected_count: number;
+  selected_coverage_pct?: string | number | null;
+  first_signal_timestamp?: string | null;
+  last_signal_timestamp?: string | null;
+  baseline_realistic_total_r_closed?: string | number | null;
+  baseline_realistic_avg_r_closed?: string | number | null;
+  selected_realistic_total_r_closed?: string | number | null;
+  selected_realistic_avg_r_closed?: string | number | null;
+  selected_early_damage_share_pct?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_share_pct?: string | number | null;
+  read: string;
+};
+
+export type MidLongHurdleSummaryThreshold = {
+  threshold_score?: number | string | null;
+  closed_count?: number | string | null;
+  coverage_pct?: string | number | null;
+  tp_count?: number | string | null;
+  sl_count?: number | string | null;
+  early_damage_share_pct?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  tp_retention_pct?: string | number | null;
+  sl_rejection_pct?: string | number | null;
+  early_damage_rejection_pct?: string | number | null;
+  read?: string | null;
 };
 
 export type MidLongSlAnatomyV2 = {

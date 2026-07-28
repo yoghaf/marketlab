@@ -282,6 +282,22 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "ACTION_PROXY_MIXED",
         "NO_ACTION_PROXY_READY",
     }
+    assert "family_damage_hurdle_study" in baseline["definition_audit"]
+    hurdle = baseline["definition_audit"]["family_damage_hurdle_study"]
+    assert hurdle["scope"] == "MID_LONG 1h Family-Conditioned Damage Hurdle Study"
+    assert hurdle["target_policy"]["primary_target"] == "Y_EARLY_DAMAGE"
+    assert hurdle["baseline"]["closed_count"] == 1
+    assert hurdle["family_rows"]
+    assert hurdle["damage_label_rows"]
+    assert hurdle["score_bucket_rows"]
+    assert hurdle["threshold_rows"]
+    assert hurdle["summary"]["read"] in {
+        "HURDLE_DATA_NOT_READY",
+        "HURDLE_CANDIDATE_STABLE_ENOUGH_FOR_SHADOW_REPLAY",
+        "HURDLE_CANDIDATE_NEEDS_TIME_STABILITY",
+        "HURDLE_REDUCES_DAMAGE_BUT_PAYOFF_WEAK",
+        "HURDLE_NOT_SEPARATING",
+    }
     assert "first_hour_exact_replay_lab" in baseline["definition_audit"]
     first_hour_exact = baseline["definition_audit"]["first_hour_exact_replay_lab"]
     assert first_hour_exact["scope"] == "MID_LONG 1h First-Hour Exact Candle Replay"

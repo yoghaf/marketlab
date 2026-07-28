@@ -37,6 +37,11 @@ import {
   MidLongFirstHourResponseAudit,
   MidLongFirstHourSampleRow,
   MidLongFirstHourStateRow,
+  MidLongFamilyDamageHurdleStudy,
+  MidLongHurdleBlockRow,
+  MidLongHurdleGroupRow,
+  MidLongHurdleScoreBucketRow,
+  MidLongHurdleThresholdRow,
   MidLongGeometryThresholdRow,
   MidLongConfirmationDeepDive,
   MidLongConfirmationDeepDiveCategoricalRow,
@@ -171,6 +176,15 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
                   </div>
                 </div>
               </div>
+            </SectionCard>
+          )}
+
+          {audit.family_damage_hurdle_study && (
+            <SectionCard
+              title="0B. Family Damage Hurdle"
+              description="Lab baru: pisahkan family MID_LONG, label early damage, lalu lihat apakah pre-entry quality score benar-benar mengurangi damage dan membuat realistic R membaik."
+            >
+              <FamilyDamageHurdlePanel study={audit.family_damage_hurdle_study} />
             </SectionCard>
           )}
 
@@ -374,6 +388,250 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function FamilyDamageHurdlePanel({ study }: { study: MidLongFamilyDamageHurdleStudy }) {
+  const best = study.summary.best_threshold;
+  const predictorGroups = Object.entries(study.predictor_group_rows || {});
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(study.summary.read)} helper={study.summary.next_action} />
+        <Info label="Baseline damage" value={formatPct(study.summary.baseline_early_damage_share_pct)} helper={`${study.baseline.early_damage_count} early damage`} />
+        <Info label="Baseline avg R" value={`${fmtSigned(study.summary.baseline_realistic_avg_r_closed)}R`} helper="Realistic R per signal" />
+        <Info label="Best threshold" value={best ? `Score >= ${best.threshold_score}` : "-"} helper={best ? `${best.closed_count} rows | ${formatPct(best.coverage_pct)} coverage` : "Belum ada threshold readable"} />
+        <Info label="Best avg delta" value={`${fmtSigned(best?.realistic_avg_r_delta_vs_baseline)}R`} helper={`TP retain ${formatPct(best?.tp_retention_pct)}`} />
+        <Info label="Time blocks" value={`${study.summary.positive_block_count}/${study.summary.readable_block_count}`} helper="Block positif dari selected threshold" />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+          Target utama lab ini bukan menebak confirmation. Targetnya mencari row yang tidak cepat rusak: <strong>{study.target_policy.primary_target}</strong>. Realistic R tetap target ekonomi kedua, dan confirmation cuma label bantu.
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Family split</div>
+            <div className="text-sm leading-6 text-slate-600">Apakah breakout/retest/pullback punya damage dan R yang berbeda.</div>
+          </div>
+          <HurdleGroupTable rows={study.family_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Damage label</div>
+            <div className="text-sm leading-6 text-slate-600">Outcome bucket yang menjadi target research, bukan predictor live.</div>
+          </div>
+          <HurdleGroupTable rows={study.damage_label_rows} />
+        </div>
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Diagnostic hurdle score</div>
+        <div className="grid gap-4 2xl:grid-cols-2">
+          <div className="rounded-md border border-line bg-white">
+            <div className="border-b border-line p-3 text-sm text-slate-600">Score bucket: makin tinggi berarti lebih banyak pre-entry quality group terpenuhi.</div>
+            <HurdleScoreBucketTable rows={study.score_bucket_rows} />
+          </div>
+          <div className="rounded-md border border-line bg-white">
+            <div className="border-b border-line p-3 text-sm text-slate-600">Threshold trade-off: coverage, TP retention, SL/damage rejection.</div>
+            <HurdleThresholdTable rows={study.threshold_rows} />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Predictor group breakdown</div>
+        <div className="grid gap-4 2xl:grid-cols-2">
+          {predictorGroups.map(([group, rows]) => (
+            <div key={group} className="rounded-md border border-line bg-white">
+              <div className="border-b border-line p-3">
+                <div className="font-bold">{humanFlag(group)}</div>
+                <div className="text-sm leading-6 text-slate-600">Baca gap TP/SL dan damage per bucket.</div>
+              </div>
+              <HurdleGroupTable rows={rows.slice(0, 8)} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Chronological stability</div>
+        <HurdleBlockTable rows={study.chronological_block_rows} />
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {study.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HurdleGroupTable({ rows }: { rows: MidLongHurdleGroupRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Bucket kosong" detail="Belum ada row untuk bucket ini." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Early damage</th>
+            <th>Realistic R</th>
+            <th>Non-damage avg</th>
+            <th>Cost / drag</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.group_key}-${row.group_value}`}>
+              <td className="min-w-72">
+                <div className="font-bold">{humanFlag(row.group_value)}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{row.expression}</div>
+              </td>
+              <td>{row.closed_count}</td>
+              <td>
+                <div>{row.tp_count} / {row.sl_count}</div>
+                <div className="text-xs text-slate-500">SL {formatPct(row.sl_share_pct)}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.early_damage_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.early_damage_share_pct)} | delta {fmtSigned(row.early_damage_share_delta_vs_baseline)}%</div>
+              </td>
+              <td>
+                <div className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg {fmtSigned(row.realistic_avg_r_closed)}R | delta {fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</div>
+              </td>
+              <td>{fmtSigned(row.conditional_non_damage_realistic_avg_r)}R</td>
+              <td>
+                <div>{fmtNumber(row.median_projected_cost_r)}R</div>
+                <div className="text-xs text-slate-500">drag {fmtSigned(row.execution_drag_r)}R</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HurdleScoreBucketTable({ rows }: { rows: MidLongHurdleScoreBucketRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Score bucket kosong" detail="Belum ada diagnostic score." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Score</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Damage</th>
+            <th>Realistic R</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.score_bucket}>
+              <td className="font-bold">{row.score}/6</td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>{formatPct(row.early_damage_share_pct)}</td>
+              <td className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R <span className="text-xs text-slate-500">avg {fmtSigned(row.realistic_avg_r_closed)}R</span></td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HurdleThresholdTable({ rows }: { rows: MidLongHurdleThresholdRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Threshold kosong" detail="Belum ada threshold rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Threshold</th>
+            <th>Coverage</th>
+            <th>TP / SL</th>
+            <th>TP retain</th>
+            <th>SL reject</th>
+            <th>Damage reject</th>
+            <th>Realistic R</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.threshold_score}>
+              <td className="font-bold">Score &gt;= {row.threshold_score}</td>
+              <td>{row.closed_count} ({formatPct(row.coverage_pct)})</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>{formatPct(row.tp_retention_pct)}</td>
+              <td>{formatPct(row.sl_rejection_pct)}</td>
+              <td>{formatPct(row.early_damage_rejection_pct)}</td>
+              <td>
+                <div className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg delta {fmtSigned(row.realistic_avg_r_delta_vs_baseline)}R</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HurdleBlockTable({ rows }: { rows: MidLongHurdleBlockRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Block kosong" detail="Belum ada chronological block rows." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Block</th>
+            <th>Range</th>
+            <th>Selected</th>
+            <th>Baseline R</th>
+            <th>Selected R</th>
+            <th>Damage</th>
+            <th>Top symbol</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.block}>
+              <td className="font-bold">Block {row.block}</td>
+              <td className="min-w-64">
+                <div>{fmtTime(row.first_signal_timestamp)}</div>
+                <div className="text-xs text-slate-500">to {fmtTime(row.last_signal_timestamp)}</div>
+              </td>
+              <td>{row.selected_count}/{row.sample_count} ({formatPct(row.selected_coverage_pct)})</td>
+              <td className={toneClass(row.baseline_realistic_total_r_closed)}>{fmtSigned(row.baseline_realistic_total_r_closed)}R</td>
+              <td>
+                <div className={toneClass(row.selected_realistic_total_r_closed)}>{fmtSigned(row.selected_realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg {fmtSigned(row.selected_realistic_avg_r_closed)}R</div>
+              </td>
+              <td>{formatPct(row.selected_early_damage_share_pct)}</td>
+              <td>{row.top_symbol || "-"} ({formatPct(row.top_symbol_share_pct)})</td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
