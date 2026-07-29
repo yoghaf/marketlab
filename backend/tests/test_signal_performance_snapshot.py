@@ -282,6 +282,19 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "ACTION_PROXY_MIXED",
         "NO_ACTION_PROXY_READY",
     }
+    assert "matched_contrastive_anatomy" in baseline["definition_audit"]
+    matched = baseline["definition_audit"]["matched_contrastive_anatomy"]
+    assert matched["scope"] == "MID_LONG 1h Matched Contrastive Anatomy"
+    assert matched["target"] == "TP_HIT versus SL_HIT, matched on pre-entry context"
+    assert "feature_rows" in matched
+    assert "family_rows" in matched
+    assert "match_level_rows" in matched
+    assert matched["summary"]["read"] in {
+        "MATCHED_DATA_NOT_READY",
+        "MATCHED_FINGERPRINT_CANDIDATES_FOUND",
+        "MATCHED_WEAK_FINGERPRINTS_ONLY",
+        "NO_MATCHED_FINGERPRINT_YET",
+    }
     assert "family_damage_hurdle_study" in baseline["definition_audit"]
     hurdle = baseline["definition_audit"]["family_damage_hurdle_study"]
     assert hurdle["scope"] == "MID_LONG 1h Family-Conditioned Damage Hurdle Study"

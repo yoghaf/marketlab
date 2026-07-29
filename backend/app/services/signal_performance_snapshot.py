@@ -1389,6 +1389,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    matched_contrastive = _mid_long_matched_contrastive_anatomy(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     damage_hurdle = _mid_long_family_damage_hurdle_study(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1438,6 +1444,7 @@ def _mid_long_definition_audit(
         "sl_anatomy_v2": sl_anatomy,
         "first_hour_response_audit": first_hour_response,
         "first_hour_action_simulation": first_hour_action,
+        "matched_contrastive_anatomy": matched_contrastive,
         "family_damage_hurdle_study": damage_hurdle,
         "first_hour_exact_replay_lab": first_hour_exact_replay,
         "definition_reset_lab": definition_reset,
@@ -2831,6 +2838,429 @@ def _mid_long_damage_hurdle_label(item: dict[str, Any], *, first_hour_state: str
     if status == "SL_HIT":
         return "SURVIVED_NEGATIVE_PAYOFF"
     return "DAMAGE_UNKNOWN"
+
+
+MID_LONG_MATCHED_NUMERIC_FEATURES: tuple[tuple[str, str, str], ...] = (
+    ("price_return", "Price return %", "evidence"),
+    ("volume_ratio_vs_lookback", "Volume vs 30-candle avg", "evidence"),
+    ("kline_taker_buy_ratio", "Taker buy ratio", "evidence"),
+    ("kline_taker_sell_ratio", "Taker sell ratio", "evidence"),
+    ("oi_change_pct", "OI change %", "evidence"),
+    ("oi_zscore", "OI z-score", "evidence"),
+    ("range_ratio_vs_atr", "Range / ATR", "evidence"),
+    ("atr_extension_normalized", "ATR extension", "evidence"),
+    ("funding_percentile_30d", "Funding percentile", "evidence"),
+    ("futures_spread_pct", "Futures spread %", "evidence"),
+    ("global_long_short_ratio", "Global L/S ratio", "evidence"),
+    ("top_trader_position_ratio", "Top trader position", "evidence"),
+    ("top_trader_account_ratio", "Top trader account", "evidence"),
+    ("realistic_cost_r_estimate", "Realistic cost R", "tradability"),
+    ("entry_distance_from_zone_atr", "Entry distance from zone ATR", "structure"),
+    ("room_to_next_resistance_atr", "Room to next resistance ATR", "structure"),
+    ("close_penetration_atr", "Close penetration ATR", "structure"),
+    ("body_above_zone_ratio", "Body above zone ratio", "structure"),
+    ("upper_wick_to_body_ratio", "Upper wick/body ratio", "structure"),
+    ("bars_since_breakout", "Bars since breakout", "structure"),
+    ("zone_touch_count", "Zone touch count", "structure"),
+    ("zone_age_bars", "Zone age bars", "structure"),
+)
+
+
+def _mid_long_matched_contrastive_anatomy(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    tp_items = [item for item in items if item.get("result_status") == "TP_HIT"]
+    sl_items = [item for item in items if item.get("result_status") == "SL_HIT"]
+    pairs = _mid_long_matched_pairs(
+        tp_items,
+        sl_items,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+    )
+    feature_rows = _mid_long_matched_feature_rows(pairs, min_sample=min_sample)
+    family_rows = _mid_long_matched_family_rows(pairs)
+    match_level_rows = _mid_long_match_level_rows(pairs)
+    return {
+        "scope": "MID_LONG 1h Matched Contrastive Anatomy",
+        "method": (
+            "Pair TP rows with similar SL rows using pre-entry family/cost/flow context, then compare "
+            "pre-entry numeric evidence. This avoids winner-only selection bias."
+        ),
+        "model_version": "MID_LONG_MATCHED_CONTRASTIVE_V1",
+        "min_sample": min_sample,
+        "target": "TP_HIT versus SL_HIT, matched on pre-entry context",
+        "match_policy": {
+            "primary": "primary_family + projected_cost_bucket + flow_state_provisional",
+            "fallback_1": "primary_family + projected_cost_bucket",
+            "fallback_2": "primary_family",
+            "tie_break": "nearest signal timestamp, then same symbol preference",
+            "sl_reuse": "disabled until no unused row exists in a fallback bucket",
+        },
+        "baseline": {
+            "closed_count": baseline.get("closed_count"),
+            "tp_count": baseline.get("tp_count"),
+            "sl_count": baseline.get("sl_count"),
+            "winrate_pct": baseline.get("winrate_pct"),
+            "realistic_total_r_closed": baseline.get("realistic_total_r_closed"),
+            "realistic_avg_r_closed": baseline.get("realistic_avg_r_closed"),
+        },
+        "tp_count": len(tp_items),
+        "sl_count": len(sl_items),
+        "matched_pair_count": len(pairs),
+        "match_level_rows": match_level_rows,
+        "family_rows": family_rows,
+        "feature_rows": feature_rows,
+        "top_feature_candidates": [
+            row
+            for row in feature_rows
+            if row.get("read") in {"CLEAR_MATCHED_GAP", "WEAK_MATCHED_GAP"}
+        ][:8],
+        "pair_examples": [_mid_long_matched_pair_public_row(pair) for pair in pairs[:20]],
+        "summary": _mid_long_matched_summary(
+            pairs=pairs,
+            feature_rows=feature_rows,
+            min_sample=min_sample,
+        ),
+        "guardrails": [
+            "Matched rows are diagnostics, not live gates.",
+            "Only pre-entry fields are compared; MFE/MAE, first-hour response, and path labels are excluded as features.",
+            "Fallback matches are weaker than strict matches and must not be overread.",
+            "Any candidate fingerprint must still pass chronological validation before becoming shadow logic.",
+        ],
+    }
+
+
+def _mid_long_matched_pairs(
+    tp_items: list[dict[str, Any]],
+    sl_items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    used_sl_ids: set[str] = set()
+    pairs: list[dict[str, Any]] = []
+    ordered_tp = sorted(tp_items, key=lambda item: _mid_long_signal_sort_key(item))
+    for pair_index, tp in enumerate(ordered_tp, start=1):
+        tp_key = str(tp.get("signal_id") or pair_index)
+        tp_state = _mid_long_match_state(tp, taxonomy_by_id=taxonomy_by_id, reset_by_id=reset_by_id)
+        candidate = _mid_long_best_sl_match(
+            tp,
+            tp_state=tp_state,
+            sl_items=sl_items,
+            taxonomy_by_id=taxonomy_by_id,
+            reset_by_id=reset_by_id,
+            used_sl_ids=used_sl_ids,
+        )
+        if not candidate:
+            continue
+        sl, sl_state, level = candidate
+        sl_key = str(sl.get("signal_id") or f"sl:{pair_index}")
+        used_sl_ids.add(sl_key)
+        pairs.append(
+            {
+                "pair_id": f"MLPAIR-{pair_index:04d}",
+                "match_level": level,
+                "tp_item": tp,
+                "sl_item": sl,
+                "tp_state": tp_state,
+                "sl_state": sl_state,
+                "family": tp_state["primary_family"],
+                "cost_bucket": tp_state["cost_bucket"],
+                "flow_state": tp_state["flow_state"],
+                "timestamp_gap_seconds": abs(
+                    _mid_long_timestamp_seconds(tp) - _mid_long_timestamp_seconds(sl)
+                ),
+                "same_symbol": str(tp.get("symbol") or "") == str(sl.get("symbol") or ""),
+                "tp_key": tp_key,
+                "sl_key": sl_key,
+            }
+        )
+    return pairs
+
+
+def _mid_long_best_sl_match(
+    tp: dict[str, Any],
+    *,
+    tp_state: dict[str, str],
+    sl_items: list[dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    used_sl_ids: set[str],
+) -> tuple[dict[str, Any], dict[str, str], str] | None:
+    candidates: list[tuple[dict[str, Any], dict[str, str], str, bool]] = []
+    for idx, sl in enumerate(sl_items):
+        sl_key = str(sl.get("signal_id") or f"sl:{idx}")
+        sl_state = _mid_long_match_state(sl, taxonomy_by_id=taxonomy_by_id, reset_by_id=reset_by_id)
+        level = _mid_long_match_level(tp_state, sl_state)
+        if level == "NO_MATCH":
+            continue
+        candidates.append((sl, sl_state, level, sl_key in used_sl_ids))
+    if not candidates:
+        return None
+    level_rank = {"STRICT": 0, "FAMILY_COST": 1, "FAMILY_ONLY": 2, "FALLBACK_ALL": 3}
+    candidates.sort(
+        key=lambda row: (
+            row[3],
+            level_rank.get(row[2], 99),
+            0 if str(row[0].get("symbol") or "") == str(tp.get("symbol") or "") else 1,
+            abs(_mid_long_timestamp_seconds(tp) - _mid_long_timestamp_seconds(row[0])),
+        )
+    )
+    sl, sl_state, level, _used = candidates[0]
+    return sl, sl_state, level
+
+
+def _mid_long_match_state(
+    item: dict[str, Any],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    key = str(item.get("signal_id") or "")
+    taxonomy = taxonomy_by_id.get(key, {})
+    reset = reset_by_id.get(key, {})
+    return {
+        "primary_family": str(reset.get("primary_family") or taxonomy.get("setup_family") or "UNKNOWN"),
+        "cost_bucket": str(taxonomy.get("projected_cost_bucket") or "UNKNOWN"),
+        "flow_state": str(taxonomy.get("flow_state_provisional") or taxonomy.get("flow_regime") or "UNKNOWN"),
+        "crowding_bucket": str(taxonomy.get("crowding_bucket") or "UNKNOWN"),
+    }
+
+
+def _mid_long_match_level(tp_state: dict[str, str], sl_state: dict[str, str]) -> str:
+    if tp_state["primary_family"] == sl_state["primary_family"]:
+        if tp_state["cost_bucket"] == sl_state["cost_bucket"] and tp_state["flow_state"] == sl_state["flow_state"]:
+            return "STRICT"
+        if tp_state["cost_bucket"] == sl_state["cost_bucket"]:
+            return "FAMILY_COST"
+        return "FAMILY_ONLY"
+    return "FALLBACK_ALL"
+
+
+def _mid_long_matched_feature_rows(pairs: list[dict[str, Any]], *, min_sample: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for field, label, source in MID_LONG_MATCHED_NUMERIC_FEATURES:
+        pair_values: list[tuple[Decimal, Decimal]] = []
+        for pair in pairs:
+            tp_value = _mid_long_matched_numeric_value(pair["tp_item"], field)
+            sl_value = _mid_long_matched_numeric_value(pair["sl_item"], field)
+            if tp_value is None or sl_value is None:
+                continue
+            pair_values.append((tp_value, sl_value))
+        tp_values = [tp for tp, _sl in pair_values]
+        sl_values = [sl for _tp, sl in pair_values]
+        diffs = [tp - sl for tp, sl in pair_values]
+        median_gap = _median_decimal_snapshot(diffs)
+        positive_count = sum(1 for diff in diffs if diff > 0)
+        negative_count = sum(1 for diff in diffs if diff < 0)
+        usable_count = len(pair_values)
+        direction = _mid_long_matched_gap_direction(median_gap)
+        directional_share = _pct_decimal(
+            positive_count if direction == "TP_HIGHER" else negative_count if direction == "TP_LOWER" else 0,
+            usable_count,
+        )
+        row = {
+            "field": field,
+            "label": label,
+            "source": source,
+            "matched_count": usable_count,
+            "missing_pair_count": max(0, len(pairs) - usable_count),
+            "tp_median": _median_decimal_snapshot(tp_values),
+            "sl_median": _median_decimal_snapshot(sl_values),
+            "median_gap": median_gap,
+            "tp_q1": _percentile_decimal_snapshot(tp_values, Decimal("0.25")),
+            "tp_q3": _percentile_decimal_snapshot(tp_values, Decimal("0.75")),
+            "sl_q1": _percentile_decimal_snapshot(sl_values, Decimal("0.25")),
+            "sl_q3": _percentile_decimal_snapshot(sl_values, Decimal("0.75")),
+            "direction": direction,
+            "directional_pair_share_pct": directional_share,
+            "tp_higher_count": positive_count,
+            "sl_higher_count": negative_count,
+            "equal_count": usable_count - positive_count - negative_count,
+        }
+        row["read"] = _mid_long_matched_feature_read(row, min_sample=min_sample)
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _mid_long_matched_feature_rank(str(row.get("read") or "")),
+            _decimal_or_zero_snapshot(row.get("directional_pair_share_pct")),
+            int(row.get("matched_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_matched_numeric_value(item: dict[str, Any], field: str) -> Decimal | None:
+    if field == "room_to_next_resistance_atr":
+        return _mid_long_first_decimal(item, "room_to_next_resistance_atr", "structure_zone_nearest_resistance_distance_atr")
+    if field == "room_to_next_support_atr":
+        return _mid_long_first_decimal(item, "room_to_next_support_atr", "structure_zone_nearest_support_distance_atr")
+    direct = _decimal_or_none_snapshot(item.get(field))
+    if direct is not None:
+        return direct
+    return _mid_long_evidence_value(item, field)
+
+
+def _mid_long_matched_gap_direction(median_gap: Decimal | None) -> str:
+    if median_gap is None or median_gap == 0:
+        return "NO_DIRECTION"
+    return "TP_HIGHER" if median_gap > 0 else "TP_LOWER"
+
+
+def _mid_long_matched_feature_read(row: dict[str, Any], *, min_sample: int) -> str:
+    matched = int(row.get("matched_count") or 0)
+    if matched < min_sample:
+        return "MATCHED_SAMPLE_SMALL"
+    share = _decimal_or_zero_snapshot(row.get("directional_pair_share_pct"))
+    gap = _decimal_or_none_snapshot(row.get("median_gap"))
+    if gap is None or gap == 0:
+        return "NO_MATCHED_GAP"
+    if share >= Decimal("70"):
+        return "CLEAR_MATCHED_GAP"
+    if share >= Decimal("60"):
+        return "WEAK_MATCHED_GAP"
+    return "NO_MATCHED_GAP"
+
+
+def _mid_long_matched_feature_rank(read: str) -> int:
+    return {
+        "CLEAR_MATCHED_GAP": 3,
+        "WEAK_MATCHED_GAP": 2,
+        "NO_MATCHED_GAP": 1,
+        "MATCHED_SAMPLE_SMALL": 0,
+    }.get(read, 0)
+
+
+def _mid_long_matched_family_rows(pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for pair in pairs:
+        grouped[str(pair.get("family") or "UNKNOWN")].append(pair)
+    rows: list[dict[str, Any]] = []
+    for family, family_pairs in grouped.items():
+        tp_items = [pair["tp_item"] for pair in family_pairs]
+        sl_items = [pair["sl_item"] for pair in family_pairs]
+        rows.append(
+            {
+                "family": family,
+                "matched_pair_count": len(family_pairs),
+                "strict_pair_count": sum(1 for pair in family_pairs if pair.get("match_level") == "STRICT"),
+                "tp_realistic_median_r": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in tp_items
+                        if (value := _decimal_or_none_snapshot(item.get("realistic_realized_r"))) is not None
+                    ]
+                ),
+                "sl_realistic_median_r": _median_decimal_snapshot(
+                    [
+                        value
+                        for item in sl_items
+                        if (value := _decimal_or_none_snapshot(item.get("realistic_realized_r"))) is not None
+                    ]
+                ),
+                "tp_top_symbol": _mid_long_top_symbol(tp_items),
+                "sl_top_symbol": _mid_long_top_symbol(sl_items),
+            }
+        )
+    rows.sort(key=lambda row: int(row.get("matched_pair_count") or 0), reverse=True)
+    return rows
+
+
+def _mid_long_match_level_rows(pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: Counter[str] = Counter(str(pair.get("match_level") or "UNKNOWN") for pair in pairs)
+    return [
+        {
+            "match_level": level,
+            "pair_count": count,
+            "pair_share_pct": _pct_decimal(count, len(pairs)),
+        }
+        for level, count in grouped.most_common()
+    ]
+
+
+def _mid_long_top_symbol(items: list[dict[str, Any]]) -> str | None:
+    if not items:
+        return None
+    return Counter(str(item.get("symbol") or "UNKNOWN") for item in items).most_common(1)[0][0]
+
+
+def _mid_long_matched_pair_public_row(pair: dict[str, Any]) -> dict[str, Any]:
+    tp = pair["tp_item"]
+    sl = pair["sl_item"]
+    return {
+        "pair_id": pair.get("pair_id"),
+        "match_level": pair.get("match_level"),
+        "family": pair.get("family"),
+        "cost_bucket": pair.get("cost_bucket"),
+        "flow_state": pair.get("flow_state"),
+        "timestamp_gap_seconds": pair.get("timestamp_gap_seconds"),
+        "same_symbol": pair.get("same_symbol"),
+        "tp_symbol": tp.get("symbol"),
+        "tp_signal_timestamp": tp.get("signal_timestamp"),
+        "tp_realistic_r": tp.get("realistic_realized_r"),
+        "sl_symbol": sl.get("symbol"),
+        "sl_signal_timestamp": sl.get("signal_timestamp"),
+        "sl_realistic_r": sl.get("realistic_realized_r"),
+    }
+
+
+def _mid_long_matched_summary(
+    *,
+    pairs: list[dict[str, Any]],
+    feature_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    clear_rows = [row for row in feature_rows if row.get("read") == "CLEAR_MATCHED_GAP"]
+    weak_rows = [row for row in feature_rows if row.get("read") == "WEAK_MATCHED_GAP"]
+    strict_pairs = sum(1 for pair in pairs if pair.get("match_level") == "STRICT")
+    if len(pairs) < min_sample:
+        read = "MATCHED_DATA_NOT_READY"
+        next_action = "Collect more MID_LONG 1h closed rows before reading matched gaps."
+    elif clear_rows:
+        read = "MATCHED_FINGERPRINT_CANDIDATES_FOUND"
+        next_action = "Inspect clear-gap features by family, then test early-damage model without post-entry leakage."
+    elif weak_rows:
+        read = "MATCHED_WEAK_FINGERPRINTS_ONLY"
+        next_action = "Use weak-gap features as hypotheses only; do not turn them into filters yet."
+    else:
+        read = "NO_MATCHED_FINGERPRINT_YET"
+        next_action = "Matched TP and SL remain similar; MID_LONG may need a new family definition or suspension."
+    return {
+        "read": read,
+        "matched_pair_count": len(pairs),
+        "strict_pair_count": strict_pairs,
+        "strict_pair_share_pct": _pct_decimal(strict_pairs, len(pairs)),
+        "clear_gap_feature_count": len(clear_rows),
+        "weak_gap_feature_count": len(weak_rows),
+        "next_action": next_action,
+    }
+
+
+def _mid_long_timestamp_seconds(item: dict[str, Any]) -> int:
+    stamp = str(item.get("signal_timestamp") or item.get("window_close_time") or item.get("result_time_utc") or "")
+    if not stamp:
+        return 0
+    try:
+        return int(datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        digits = "".join(ch for ch in stamp if ch.isdigit())
+        return int(digits[:14] or 0)
+
+
+def _mid_long_signal_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+    return (_mid_long_timestamp_seconds(item), str(item.get("symbol") or ""))
 
 
 def _mid_long_damage_hurdle_score_state(

@@ -18,6 +18,26 @@ type PatchItem = {
 
 const patches: PatchItem[] = [
   {
+    date: "2026-07-29",
+    version: "LAB-RESET-22",
+    title: "MID_LONG Matched TP vs SL Anatomy",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan matched contrastive anatomy agar TP MID_LONG 1h dibandingkan dengan SL yang konteks pre-entry-nya paling mirip, bukan winner-only.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan matched_contrastive_anatomy berisi matched pairs, match quality, family coverage, feature gap, dan pair examples.",
+      "Pairing TP-vs-SL memakai pre-entry context: setup family, projected cost bucket, flow state, lalu fallback bertahap bila match ketat belum cukup.",
+      "Feature comparison hanya memakai data sebelum entry seperti price return, volume, taker, OI, funding, spread, cost, dan structure zone diagnostics.",
+      "Halaman /mid-long-research-study menampilkan panel 0A Matched TP vs SL Anatomy sebelum Family Damage Hurdle.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG sekarang punya alat yang lebih adil untuk mencari fingerprint pemenang: bukan sekadar ciri TP, tetapi ciri TP yang tetap beda setelah dicocokkan dengan SL yang mirip.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Matched Anatomy" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
     date: "2026-07-28",
     version: "LAB-RESET-21",
     title: "MID_LONG Confirmation Predictor Deep Dive",

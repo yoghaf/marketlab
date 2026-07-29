@@ -38,6 +38,8 @@ import {
   MidLongFirstHourSampleRow,
   MidLongFirstHourStateRow,
   MidLongFamilyDamageHurdleStudy,
+  MidLongMatchedContrastiveAnatomy,
+  MidLongMatchedFeatureRow,
   MidLongHurdleBlockRow,
   MidLongHurdleGroupRow,
   MidLongHurdleScoreBucketRow,
@@ -176,6 +178,15 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
                   </div>
                 </div>
               </div>
+            </SectionCard>
+          )}
+
+          {audit.matched_contrastive_anatomy && (
+            <SectionCard
+              title="0A. Matched TP vs SL Anatomy"
+              description="Lab baru: TP tidak dibandingkan asal dengan semua SL. Setiap TP dipasangkan dengan SL yang konteks pre-entry-nya paling mirip, lalu angka sebelum entry dibandingkan."
+            >
+              <MatchedContrastivePanel study={audit.matched_contrastive_anatomy} />
             </SectionCard>
           )}
 
@@ -388,6 +399,225 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function MatchedContrastivePanel({ study }: { study: MidLongMatchedContrastiveAnatomy }) {
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-7">
+        <Info label="Read" value={humanFlag(study.summary.read)} helper={study.summary.next_action} />
+        <Info label="Matched pairs" value={`${study.summary.matched_pair_count}`} helper={`${study.tp_count} TP vs ${study.sl_count} SL source`} />
+        <Info label="Strict pairs" value={`${study.summary.strict_pair_count}`} helper={formatPct(study.summary.strict_pair_share_pct)} />
+        <Info label="Clear gaps" value={`${study.summary.clear_gap_feature_count}`} helper="Feature gap kuat setelah matching" />
+        <Info label="Weak gaps" value={`${study.summary.weak_gap_feature_count}`} helper="Hipotesis, belum gate" />
+        <Info label="Baseline avg" value={`${fmtSigned(study.baseline.realistic_avg_r_closed)}R`} helper={`${study.baseline.tp_count} TP / ${study.baseline.sl_count} SL`} />
+        <Info label="Model" value={study.model_version} helper="Read-only diagnostic" />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+          Tujuan panel ini: menjawab <strong>apa yang beda antara long TP dan long SL saat kondisi awalnya mirip</strong>. Ini menghindari bias winner-only: kita tidak sekadar mengambil TP lalu mencari cirinya.
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Match quality</div>
+            <div className="text-sm leading-6 text-slate-600">Semakin banyak STRICT, semakin fair perbandingan TP vs SL.</div>
+          </div>
+          <MatchedLevelTable rows={study.match_level_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Family coverage</div>
+            <div className="text-sm leading-6 text-slate-600">Pair dipisah menurut family agar breakout tidak dicampur sembarang dengan retest.</div>
+          </div>
+          <MatchedFamilyTable rows={study.family_rows} />
+        </div>
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Matched feature gap</div>
+        <MatchedFeatureTable rows={study.feature_rows} />
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Top matched fingerprint candidates</div>
+        {study.top_feature_candidates.length ? (
+          <MatchedFeatureTable rows={study.top_feature_candidates} compact />
+        ) : (
+          <EmptyState title="Belum ada clear fingerprint" detail="TP dan SL yang sudah dicocokkan masih terlalu mirip, atau sample per feature belum cukup." />
+        )}
+      </div>
+
+      <div className="border-b border-line p-4">
+        <div className="mb-3 font-bold">Pair examples</div>
+        <MatchedPairTable rows={study.pair_examples} />
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {study.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MatchedLevelTable({ rows }: { rows: MidLongMatchedContrastiveAnatomy["match_level_rows"] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Match kosong" detail="Belum ada pasangan TP/SL." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Level</th>
+            <th>Pairs</th>
+            <th>Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.match_level}>
+              <td><StatusBadge value={humanFlag(row.match_level)} /></td>
+              <td>{row.pair_count}</td>
+              <td>{formatPct(row.pair_share_pct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MatchedFamilyTable({ rows }: { rows: MidLongMatchedContrastiveAnatomy["family_rows"] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Family kosong" detail="Belum ada family match." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th>Pairs</th>
+            <th>Strict</th>
+            <th>TP med R</th>
+            <th>SL med R</th>
+            <th>Top symbols</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.family}>
+              <td className="min-w-64 font-bold">{humanFlag(row.family)}</td>
+              <td>{row.matched_pair_count}</td>
+              <td>{row.strict_pair_count}</td>
+              <td className={toneClass(row.tp_realistic_median_r)}>{fmtSigned(row.tp_realistic_median_r)}R</td>
+              <td className={toneClass(row.sl_realistic_median_r)}>{fmtSigned(row.sl_realistic_median_r)}R</td>
+              <td className="min-w-48 text-xs text-slate-600">TP {row.tp_top_symbol || "-"} | SL {row.sl_top_symbol || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MatchedFeatureTable({ rows, compact = false }: { rows: MidLongMatchedFeatureRow[]; compact?: boolean }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Feature kosong" detail="Belum ada matched feature yang bisa dihitung." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>N</th>
+            <th>TP median</th>
+            <th>SL median</th>
+            <th>Gap</th>
+            <th>Direction</th>
+            <th>Pair share</th>
+            {!compact && <th>Q1/Q3</th>}
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.field}>
+              <td className="min-w-72">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs text-slate-500">{row.field} | {row.source}</div>
+              </td>
+              <td>
+                <div>{row.matched_count}</div>
+                <div className="text-xs text-slate-500">miss {row.missing_pair_count}</div>
+              </td>
+              <td>{fmtNumber(row.tp_median)}</td>
+              <td>{fmtNumber(row.sl_median)}</td>
+              <td className={toneClass(row.median_gap)}>{fmtSigned(row.median_gap)}</td>
+              <td>{humanFlag(row.direction)}</td>
+              <td>{formatPct(row.directional_pair_share_pct)}</td>
+              {!compact && (
+                <td className="min-w-44 text-xs text-slate-600">
+                  TP {fmtNumber(row.tp_q1)} / {fmtNumber(row.tp_q3)}
+                  <br />
+                  SL {fmtNumber(row.sl_q1)} / {fmtNumber(row.sl_q3)}
+                </td>
+              )}
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MatchedPairTable({ rows }: { rows: MidLongMatchedContrastiveAnatomy["pair_examples"] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Pair kosong" detail="Belum ada contoh pasangan." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Match</th>
+            <th>TP row</th>
+            <th>SL row</th>
+            <th>Context</th>
+            <th>Time gap</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.pair_id}>
+              <td className="font-bold">{row.pair_id}</td>
+              <td>
+                <StatusBadge value={humanFlag(row.match_level)} />
+                <div className="mt-1 text-xs text-slate-500">{row.same_symbol ? "same symbol" : "cross symbol"}</div>
+              </td>
+              <td className="min-w-56">
+                <div className="font-bold text-emerald-700">{row.tp_symbol}</div>
+                <div className="text-xs text-slate-500">{fmtTime(row.tp_signal_timestamp)}</div>
+                <div className={toneClass(row.tp_realistic_r)}>{fmtSigned(row.tp_realistic_r)}R</div>
+              </td>
+              <td className="min-w-56">
+                <div className="font-bold text-red-700">{row.sl_symbol}</div>
+                <div className="text-xs text-slate-500">{fmtTime(row.sl_signal_timestamp)}</div>
+                <div className={toneClass(row.sl_realistic_r)}>{fmtSigned(row.sl_realistic_r)}R</div>
+              </td>
+              <td className="min-w-72 text-xs text-slate-600">
+                <div>{humanFlag(row.family)}</div>
+                <div>{humanFlag(row.cost_bucket)}</div>
+                <div>{humanFlag(row.flow_state)}</div>
+              </td>
+              <td>{formatDuration(row.timestamp_gap_seconds)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -3867,6 +4097,19 @@ function statusMixSummary(statusCounts?: Record<string, number>): string {
     .sort((left, right) => right[1] - left[1])
     .map(([status, count]) => `${humanFlag(status)} ${count}`)
     .join(" | ");
+}
+
+function formatDuration(value?: string | number | null): string {
+  if (value === null || value === undefined || value === "") return "-";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds)) return String(value);
+  const absSeconds = Math.abs(seconds);
+  const days = Math.floor(absSeconds / 86400);
+  const hours = Math.floor((absSeconds % 86400) / 3600);
+  const minutes = Math.floor((absSeconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function humanFlag(value: string): string {

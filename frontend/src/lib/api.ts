@@ -3884,6 +3884,7 @@ export type MidLongDefinitionAudit = {
   sl_anatomy_v2?: MidLongSlAnatomyV2;
   first_hour_response_audit?: MidLongFirstHourResponseAudit;
   first_hour_action_simulation?: MidLongFirstHourActionSimulation;
+  matched_contrastive_anatomy?: MidLongMatchedContrastiveAnatomy;
   family_damage_hurdle_study?: MidLongFamilyDamageHurdleStudy;
   first_hour_exact_replay_lab?: MidLongFirstHourExactReplayLab | null;
   definition_reset_lab?: MidLongDefinitionResetLab;
@@ -3894,6 +3895,88 @@ export type MidLongDefinitionAudit = {
     labels: string[];
     reasons: string[];
     recommended_next_step: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongMatchedFeatureRow = {
+  field: string;
+  label: string;
+  source: string;
+  matched_count: number;
+  missing_pair_count: number;
+  tp_median?: string | number | null;
+  sl_median?: string | number | null;
+  median_gap?: string | number | null;
+  tp_q1?: string | number | null;
+  tp_q3?: string | number | null;
+  sl_q1?: string | number | null;
+  sl_q3?: string | number | null;
+  direction: string;
+  directional_pair_share_pct?: string | number | null;
+  tp_higher_count: number;
+  sl_higher_count: number;
+  equal_count: number;
+  read: string;
+};
+
+export type MidLongMatchedContrastiveAnatomy = {
+  scope: string;
+  method: string;
+  model_version: string;
+  min_sample: number;
+  target: string;
+  match_policy: Record<string, string>;
+  baseline: {
+    closed_count?: number | string | null;
+    tp_count?: number | string | null;
+    sl_count?: number | string | null;
+    winrate_pct?: string | number | null;
+    realistic_total_r_closed?: string | number | null;
+    realistic_avg_r_closed?: string | number | null;
+  };
+  tp_count: number;
+  sl_count: number;
+  matched_pair_count: number;
+  match_level_rows: Array<{
+    match_level: string;
+    pair_count: number;
+    pair_share_pct?: string | number | null;
+  }>;
+  family_rows: Array<{
+    family: string;
+    matched_pair_count: number;
+    strict_pair_count: number;
+    tp_realistic_median_r?: string | number | null;
+    sl_realistic_median_r?: string | number | null;
+    tp_top_symbol?: string | null;
+    sl_top_symbol?: string | null;
+  }>;
+  feature_rows: MidLongMatchedFeatureRow[];
+  top_feature_candidates: MidLongMatchedFeatureRow[];
+  pair_examples: Array<{
+    pair_id: string;
+    match_level: string;
+    family: string;
+    cost_bucket: string;
+    flow_state: string;
+    timestamp_gap_seconds?: number | string | null;
+    same_symbol: boolean;
+    tp_symbol?: string | null;
+    tp_signal_timestamp?: string | null;
+    tp_realistic_r?: string | number | null;
+    sl_symbol?: string | null;
+    sl_signal_timestamp?: string | null;
+    sl_realistic_r?: string | number | null;
+  }>;
+  summary: {
+    read: string;
+    matched_pair_count: number;
+    strict_pair_count: number;
+    strict_pair_share_pct?: string | number | null;
+    clear_gap_feature_count: number;
+    weak_gap_feature_count: number;
+    next_action: string;
   };
   guardrails: string[];
 };
