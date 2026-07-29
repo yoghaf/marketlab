@@ -19,6 +19,26 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-29",
+    version: "LONG-V2B",
+    title: "Long Historical Backtest Lab",
+    status: "LIVE",
+    area: "LONG 1h research",
+    summary: "Menambahkan replay historis murni untuk rule long baru: MarketLab scan semua futures 1h candle yang tersedia di DB, lalu menguji keluarga breakout/retest/squeeze/chase/crowded dari nol.",
+    changes: [
+      "Service baru LongHistoricalBacktestLab membaca futures_klines_1h dan futures_klines_15m langsung dari DB read-only, bukan dari signal_forward_return_logs lama.",
+      "Runner baru backend/scripts/run_long_historical_backtest_lab.py membuat artifact long_historical_backtest_1h.json untuk dipakai frontend/API.",
+      "Endpoint baru /api/signal-candidates/long-historical-backtest-1h menyajikan coverage, family performance, latest replay entries, dan guardrail.",
+      "Halaman /long-definition-lab sekarang menampilkan historical backtest sebagai blok utama, lalu logged signal audit lama sebagai pembanding.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula live, outcome logic, threshold, atau execution."
+    ],
+    impact: "Pertanyaan riset long sekarang lebih jujur: bukan 'signal lama kalau dilabel ulang hasilnya apa', tetapi 'kalau definisi long baru dicari dari semua data candle, keluarga mana yang benar-benar menghasilkan R lebih baik'.",
+    links: [
+      { href: "/long-definition-lab", label: "Open Long Backtest Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-29",
     version: "LONG-V2A",
     title: "Long Definition Lab V2",
     status: "LIVE",

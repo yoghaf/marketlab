@@ -8,6 +8,7 @@ import {
   LongDefinitionFamilyRow,
   LongDefinitionLabResponse,
   LongDefinitionSignalRow,
+  LongHistoricalBacktestResponse,
   fetchJson,
   fmtNumber,
   fmtTime
@@ -21,7 +22,9 @@ export default async function LongDefinitionLabPage({ searchParams }: { searchPa
   const params = await searchParams;
   const limit = normalizeNumber(firstParam(params.limit), 80, 20, 200);
   let payload: LongDefinitionLabResponse | null = null;
+  let historical: LongHistoricalBacktestResponse | null = null;
   let error: string | null = null;
+  let historicalError: string | null = null;
 
   try {
     payload = await fetchJson<LongDefinitionLabResponse>(
@@ -31,19 +34,29 @@ export default async function LongDefinitionLabPage({ searchParams }: { searchPa
   } catch (reason) {
     error = reason instanceof Error ? reason.message : "LONG definition lab API failed";
   }
+  try {
+    historical = await fetchJson<LongHistoricalBacktestResponse>(
+      `/api/signal-candidates/long-historical-backtest-1h?limit=${limit}`,
+      { revalidateSeconds: 120 }
+    );
+  } catch (reason) {
+    historicalError = reason instanceof Error ? reason.message : "LONG historical backtest API failed";
+  }
 
   const control = payload?.legacy_control;
   const summary = payload?.summary;
   const best = summary?.best_candidate_family;
   const worst = summary?.worst_reject_bucket;
+  const historicalBest = historical?.summary.best_candidate_family;
+  const historicalWorst = historical?.summary.worst_rejection_bucket;
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Long Definition Lab V2"
         badge="READ-ONLY - RULE LIVE BELUM DIUBAH"
-        subtitle="Lab ini memecah label long lama menjadi keluarga yang lebih jelas: breakout, retest, squeeze, late chase, crowded, dan unclassified. Tujuannya mencari definisi long yang layak diuji shadow, bukan mengubah scanner live."
-        updatedAt={fmtTime(payload?.generated_at_utc)}
+        subtitle="Lab ini memecah long menjadi keluarga breakout, retest, squeeze, late chase, crowded, dan unclassified. Bagian atas adalah backtest historis dari semua candle DB; bagian bawah audit signal long lama sebagai pembanding."
+        updatedAt={fmtTime(historical?.generated_at_utc || payload?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
@@ -58,19 +71,99 @@ export default async function LongDefinitionLabPage({ searchParams }: { searchPa
         </Link>
       </div>
 
+      {historicalError ? (
+        <div className="rounded-md border border-warmup bg-yellow-50 p-4 text-sm text-warmup">
+          Historical backtest belum tersedia: {historicalError}. Jalankan runner `run_long_historical_backtest_lab.py` untuk membuat artifact dari DB produksi.
+        </div>
+      ) : historical ? (
+        <>
+          <SectionCard
+            title="Historical backtest dari semua candle 1h"
+            description="Ini yang wajib untuk rule baru: MarketLab scan semua futures 1h yang tersedia di DB, bukan cuma signal lama yang sudah pernah kelog."
+          >
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+              <MetricCard label="Symbols" value={historical.coverage.symbol_count} helper={`${historical.coverage.active_symbol_count} active universe`} />
+              <MetricCard label="1h candles" value={historical.coverage.futures_1h_candle_count} helper="AGG_READY futures" />
+              <MetricCard label="15m forward" value={historical.coverage.futures_15m_candle_count} helper="Untuk cek TP/SL path" />
+              <MetricCard label="Raw long" value={historical.coverage.raw_long_candidate_count_before_lock} helper="Sebelum position lock" tone="info" />
+              <MetricCard label="Evaluated" value={historical.coverage.events_evaluated_after_lock} helper="Setelah position lock" tone="info" />
+              <MetricCard label="Best family" value={historicalBest?.family_label || "-"} helper={historicalBest ? `${fmtSigned(historicalBest.realistic_total_r_closed)}R` : "Belum ada"} tone={toneFor(historicalBest?.realistic_total_r_closed)} />
+              <MetricCard label="Worst bucket" value={historicalWorst?.family_label || "-"} helper={historicalWorst ? `${fmtSigned(historicalWorst.realistic_total_r_closed)}R` : "Belum ada"} tone="warn" />
+              <MetricCard label="Latest 1h" value={historical.coverage.latest_futures_1h_close_time_wib || "-"} helper={historical.filters.since_days ? `Scope ${historical.filters.since_days} hari` : "Full DB scope"} />
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Historical family performance"
+            description="Hasil keluarga long baru jika entry dibuat ulang dari semua candle DB. Ini masih read-only dan belum mengubah Signal Factory."
+          >
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-100 text-left text-xs uppercase text-slate-500">
+                    <th className="px-4 py-3">Family</th>
+                    <th className="px-4 py-3">Role</th>
+                    <th className="px-4 py-3">Sample</th>
+                    <th className="px-4 py-3">TP / SL / Timeout</th>
+                    <th className="px-4 py-3">Winrate</th>
+                    <th className="px-4 py-3">Realistic R</th>
+                    <th className="px-4 py-3">Avg / Median</th>
+                    <th className="px-4 py-3">Top symbol</th>
+                    <th className="px-4 py-3">Research status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historical.family_rows.map((row) => <FamilyRow key={`hist-${row.family_id}`} row={row} />)}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            title="Latest historical replay entries"
+            description="Entry ini dibuat ulang dari candle futures 1h. Entry, SL, TP, dan R tetap futures reference; spot/rich hanya evidence."
+          >
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-100 text-left text-xs uppercase text-slate-500">
+                    <th className="px-4 py-3">Time WIB</th>
+                    <th className="px-4 py-3">Symbol</th>
+                    <th className="px-4 py-3">Source</th>
+                    <th className="px-4 py-3">Family</th>
+                    <th className="px-4 py-3">Result</th>
+                    <th className="px-4 py-3">R</th>
+                    <th className="px-4 py-3">Key evidence</th>
+                    <th className="px-4 py-3">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historical.latest_items.map((row) => <SignalRow key={`hist-${row.signal_id || row.symbol}-${row.signal_timestamp}`} row={row} />)}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+        </>
+      ) : null}
+
       {error ? (
         <div className="rounded-md border border-stale bg-red-50 p-4 text-sm text-stale">{error}</div>
       ) : payload && control && summary ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-            <MetricCard label="Raw long 1h" value={payload.snapshot_coverage.long_1h_rows} helper={`${payload.snapshot_coverage.mid_long_rows} MID_LONG / ${payload.snapshot_coverage.early_long_rows} EARLY_LONG`} />
-            <MetricCard label="Legacy realistic R" value={`${fmtSigned(control.realistic_total_r_closed)}R`} helper={`${control.tp_count} TP / ${control.sl_count} SL`} tone={toneFor(control.realistic_total_r_closed)} />
-            <MetricCard label="Legacy avg R" value={`${fmtSigned(control.realistic_avg_r_closed)}R`} helper="Kontrol lama" tone={toneFor(control.realistic_avg_r_closed)} />
-            <MetricCard label="Best family" value={best?.family_label || "-"} helper={best ? `${fmtSigned(best.realistic_total_r_closed)}R | ${best.closed_count} rows` : "Belum ada"} tone={toneFor(best?.realistic_total_r_closed)} />
-            <MetricCard label="Worst bucket" value={worst?.family_label || "-"} helper={worst ? `${fmtSigned(worst.realistic_total_r_closed)}R | ${worst.closed_count} rows` : "Belum ada"} tone="warn" />
-            <MetricCard label="Candidates" value={summary.candidate_family_count} helper="Breakout/retest/squeeze" tone="info" />
-            <MetricCard label="Reject buckets" value={summary.rejection_bucket_count} helper="Late chase/crowded" tone="warn" />
-          </div>
+          <SectionCard
+            title="Logged signal audit pembanding"
+            description="Bagian ini hanya membaca long signal yang dulu sudah tercatat. Gunanya sebagai kontrol, bukan backtest murni."
+          >
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              <MetricCard label="Raw long 1h" value={payload.snapshot_coverage.long_1h_rows} helper={`${payload.snapshot_coverage.mid_long_rows} MID_LONG / ${payload.snapshot_coverage.early_long_rows} EARLY_LONG`} />
+              <MetricCard label="Legacy realistic R" value={`${fmtSigned(control.realistic_total_r_closed)}R`} helper={`${control.tp_count} TP / ${control.sl_count} SL`} tone={toneFor(control.realistic_total_r_closed)} />
+              <MetricCard label="Legacy avg R" value={`${fmtSigned(control.realistic_avg_r_closed)}R`} helper="Kontrol lama" tone={toneFor(control.realistic_avg_r_closed)} />
+              <MetricCard label="Best family" value={best?.family_label || "-"} helper={best ? `${fmtSigned(best.realistic_total_r_closed)}R | ${best.closed_count} rows` : "Belum ada"} tone={toneFor(best?.realistic_total_r_closed)} />
+              <MetricCard label="Worst bucket" value={worst?.family_label || "-"} helper={worst ? `${fmtSigned(worst.realistic_total_r_closed)}R | ${worst.closed_count} rows` : "Belum ada"} tone="warn" />
+              <MetricCard label="Candidates" value={summary.candidate_family_count} helper="Breakout/retest/squeeze" tone="info" />
+              <MetricCard label="Reject buckets" value={summary.rejection_bucket_count} helper="Late chase/crowded" tone="warn" />
+            </div>
+          </SectionCard>
 
           <SectionCard
             title="Apa fungsi lab ini?"
@@ -112,7 +205,7 @@ export default async function LongDefinitionLabPage({ searchParams }: { searchPa
                     <th className="px-4 py-3">Family</th>
                     <th className="px-4 py-3">Role</th>
                     <th className="px-4 py-3">Sample</th>
-                    <th className="px-4 py-3">TP / SL</th>
+                    <th className="px-4 py-3">TP / SL / Timeout</th>
                     <th className="px-4 py-3">Winrate</th>
                     <th className="px-4 py-3">Realistic R</th>
                     <th className="px-4 py-3">Avg / Median</th>
@@ -176,7 +269,7 @@ function FamilyRow({ row }: { row: LongDefinitionFamilyRow }) {
       </td>
       <td className="px-4 py-3"><StatusBadge value={row.family_role} /></td>
       <td className="px-4 py-3">{row.closed_count}</td>
-      <td className="px-4 py-3">{row.tp_count} / {row.sl_count}</td>
+      <td className="px-4 py-3">{row.tp_count} / {row.sl_count} / {row.timeout_count ?? 0}</td>
       <td className="px-4 py-3">{formatPct(row.winrate_pct)}</td>
       <td className={`px-4 py-3 font-bold ${toneClass(row.realistic_total_r_closed)}`}>{fmtSigned(row.realistic_total_r_closed)}R</td>
       <td className="px-4 py-3">

@@ -35,6 +35,7 @@ PERFORMANCE_1H_FILE = "performance_closed_1h.json"
 PERFORMANCE_1H_COMPACT_FILE = "performance_closed_1h_compact.json"
 FORWARD_INTEGRITY_1H_FILE = "forward_integrity_1h.json"
 MID_LONG_1H_BASELINE_FILE = "mid_long_1h_baseline.json"
+LONG_HISTORICAL_BACKTEST_1H_FILE = "long_historical_backtest_1h.json"
 MID_SHORT_FILTER_COMBO_1H_FILE = "mid_short_filter_combination_1h.json"
 QUALITY_LAB_FILE = "quality_lab.json"
 MID_SHORT_SHADOW_FORWARD_1H_FILE = "mid_short_shadow_forward_1h.json"
@@ -434,6 +435,13 @@ class SignalPerformanceSnapshotService:
     def long_definition_lab(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(PERFORMANCE_1H_FILE)
         return _long_definition_lab_payload(payload, limit=max(1, limit))
+
+    def long_historical_backtest_1h(self, *, limit: int) -> dict[str, Any]:
+        return _slice_payload(
+            self._read(LONG_HISTORICAL_BACKTEST_1H_FILE),
+            limit=max(1, limit),
+            list_keys=("latest_items",),
+        )
 
     def mid_short_filter_combination_1h(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(MID_SHORT_FILTER_COMBO_1H_FILE)

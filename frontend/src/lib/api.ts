@@ -3846,6 +3846,60 @@ export type LongDefinitionLabResponse = {
   cache?: { hit: boolean; ttl_seconds: number };
 };
 
+export type LongHistoricalBacktestResponse = {
+  generated_at_utc?: string | null;
+  artifact_type: string;
+  lab_id: string;
+  scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  production_rule_change: boolean;
+  db_path?: string | null;
+  filters: {
+    timeframe: string;
+    direction: string;
+    active_only: boolean;
+    position_lock: boolean;
+    since_days?: number | null;
+    since_cutoff_utc?: string | null;
+    since_cutoff_wib?: string | null;
+    source: string;
+    raw_long_definition: string;
+  };
+  coverage: {
+    symbol_count: number;
+    active_symbol_count: number;
+    futures_1h_candle_count: number;
+    futures_15m_candle_count: number;
+    raw_long_candidate_count_before_lock: number;
+    events_evaluated_after_lock: number;
+    skipped: Record<string, number>;
+    latest_futures_1h_close_time?: string | null;
+    latest_futures_1h_close_time_wib?: string | null;
+  };
+  summary: {
+    read: string;
+    best_candidate_family?: LongDefinitionFamilyRow | null;
+    worst_rejection_bucket?: LongDefinitionFamilyRow | null;
+    candidate_family_count: number;
+    rejection_bucket_count: number;
+    next_action: string;
+  };
+  family_definitions: {
+    family_id: string;
+    family_label: string;
+    family_role: string;
+    description: string;
+  }[];
+  family_rows: LongDefinitionFamilyRow[];
+  candidate_rows: LongDefinitionFamilyRow[];
+  rejection_rows: LongDefinitionFamilyRow[];
+  latest_items: LongDefinitionSignalRow[];
+  guardrails: string[];
+  cache?: { hit: boolean; ttl_seconds: number };
+};
+
 export type LongDefinitionFamilyRow = MidLongEntryCombinationRow & {
   family_id: string;
   family_role: string;
@@ -5528,6 +5582,7 @@ export type MidLongEntryCombinationRow = {
   tp_count: number;
   sl_count: number;
   both_hit_count?: number;
+  timeout_count?: number;
   winrate_pct?: string | number | null;
   sl_share_pct?: string | number | null;
   ideal_total_r_closed?: string | number | null;
