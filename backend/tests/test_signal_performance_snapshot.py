@@ -159,6 +159,7 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     mid_short_combo = service.mid_short_filter_combination_1h(limit=5)
     mid_short_dynamic_exit = service.research_snapshot(MID_SHORT_V21_DYNAMIC_EXIT_1H_FILE, limit=5)
     baseline = service.mid_long_1h_baseline(limit=5)
+    long_definition_lab = service.long_definition_lab(limit=5)
     v3_filter_map = service.v3_shadow_filter_map()
 
     assert performance["cache"]["source"] == "artifact_snapshot"
@@ -217,6 +218,28 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
     assert "outcome_entry_profiles" in baseline
     assert "entry_area_anatomy" in baseline
     assert "path_anatomy" in baseline
+    assert long_definition_lab["lab_id"] == "LONG_1H_DEFINITION_LAB_V2"
+    assert long_definition_lab["production_rule_change"] is False
+    assert long_definition_lab["not_live_signal"] is True
+    assert long_definition_lab["snapshot_coverage"]["long_1h_rows"] == 1
+    assert long_definition_lab["legacy_control"]["closed_count"] == 1
+    assert {row["family_id"] for row in long_definition_lab["family_rows"]} == {
+        "BREAKOUT_LONG_PROXY",
+        "RETEST_LONG_PROXY",
+        "SQUEEZE_LONG_PROXY",
+        "LATE_CHASE_LONG",
+        "CROWDED_LONG",
+        "UNCLASSIFIED_LONG",
+    }
+    assert long_definition_lab["latest_items"]
+    assert long_definition_lab["latest_items"][0]["family_id"] in {
+        "BREAKOUT_LONG_PROXY",
+        "RETEST_LONG_PROXY",
+        "SQUEEZE_LONG_PROXY",
+        "LATE_CHASE_LONG",
+        "CROWDED_LONG",
+        "UNCLASSIFIED_LONG",
+    }
     assert "taxonomy_study" in baseline["definition_audit"]
     assert Decimal(str(baseline["definition_audit"]["taxonomy_study"]["canonical_acceptance_threshold_r"])) == Decimal("0.50")
     assert "setup_family" in baseline["definition_audit"]["taxonomy_study"]["dimension_rows"]
@@ -310,6 +333,18 @@ def test_signal_performance_snapshot_writes_and_reads_default_payloads(tmp_path)
         "HURDLE_CANDIDATE_NEEDS_TIME_STABILITY",
         "HURDLE_REDUCES_DAMAGE_BUT_PAYOFF_WEAK",
         "HURDLE_NOT_SEPARATING",
+    }
+    assert "dual_track_pattern_discovery" in baseline["definition_audit"]
+    discovery = baseline["definition_audit"]["dual_track_pattern_discovery"]
+    assert discovery["scope"] == "MID_LONG 1h Dual-Track Pattern Discovery Lab"
+    assert discovery["execution_policy"]["production_rule_change"] is False
+    assert discovery["track_a_supervised_discrimination"]["predicate_rows"]
+    assert "archetype_rows" in discovery["track_b_unclassified_archetypes"]
+    assert discovery["summary"]["read"] in {
+        "PROMISING_PATTERN_FOUND",
+        "WEAK_PATTERN_ONLY",
+        "TAXONOMY_ARCHETYPE_CANDIDATE",
+        "NO_STABLE_PATTERN_YET",
     }
     assert "first_hour_exact_replay_lab" in baseline["definition_audit"]
     first_hour_exact = baseline["definition_audit"]["first_hour_exact_replay_lab"]

@@ -19,6 +19,47 @@ type PatchItem = {
 const patches: PatchItem[] = [
   {
     date: "2026-07-29",
+    version: "LONG-V2A",
+    title: "Long Definition Lab V2",
+    status: "LIVE",
+    area: "LONG 1h research",
+    summary: "Menambahkan halaman riset baru untuk mengganti fokus dari label MID_LONG lama menjadi keluarga long yang lebih jelas: breakout, retest, squeeze, late chase, crowded, dan unclassified.",
+    changes: [
+      "Endpoint baru /api/signal-candidates/long-definition-lab membaca artifact performance_closed_1h.json dan memetakan long 1h ke family proxy read-only.",
+      "Family candidate: BREAKOUT_LONG_PROXY, RETEST_LONG_PROXY, dan SQUEEZE_LONG_PROXY.",
+      "Reject bucket: LATE_CHASE_LONG dan CROWDED_LONG; sisanya masuk UNCLASSIFIED_LONG agar tidak dipaksa jadi signal long.",
+      "Halaman baru /long-definition-lab menampilkan legacy control, family performance, family definition, latest classified sample, dan guardrail.",
+      "Navigasi Research Lab sekarang menaruh LONG V2 Definition sebagai fokus, sementara MID_LONG 1h lama dipindah ke archive.",
+      "Patch ini tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, outcome logic, threshold, atau execution."
+    ],
+    impact: "Riset long menjadi lebih rapi dan lebih ringan dibaca. Kita bisa melihat bentuk long mana yang layak shadow test dan bucket mana yang sebaiknya ditolak, tanpa membawa semua beban lab MID_LONG lama ke halaman utama.",
+    links: [
+      { href: "/long-definition-lab", label: "Open Long Definition Lab" },
+      { href: "/mid-long-research-study", label: "Open MID_LONG Archive" }
+    ]
+  },
+  {
+    date: "2026-07-29",
+    version: "LAB-RESET-23",
+    title: "MID_LONG Dual-Track Pattern Discovery",
+    status: "LIVE",
+    area: "MID_LONG 1h research",
+    summary: "Menambahkan lab lokal-safe untuk mencari apakah data pre-entry bisa memisahkan early damage dan apakah UNCLASSIFIED_MID_LONG punya archetype yang bisa didefinisikan.",
+    changes: [
+      "Endpoint MID_LONG 1h menambahkan dual_track_pattern_discovery dengan Track A supervised discrimination dan Track B unclassified archetypes.",
+      "Track A memakai chronological train/validation, predicate sederhana, two-predicate rule, feature group read, dan verdict validation-stable/weak/overfit.",
+      "Track B hanya mengambil UNCLASSIFIED_MID_LONG, membuat archetype dari data pre-entry tanpa outcome, lalu membaca TP/SL/R setelah cluster/archetype terbentuk.",
+      "Halaman /mid-long-research-study menampilkan panel 0 Dual-Track Pattern Discovery sebelum matched anatomy dan family damage hurdle.",
+      "Patch ini tidak menambah dependency ML, tidak mengubah Signal Factory rule, scanner behavior, TP/SL formula, timeout, threshold, outcome logic, atau execution."
+    ],
+    impact: "Riset MID_LONG tidak lagi bergantung pada filter kecil acak. Lab ini menjawab apakah ada pola pre-entry yang stabil, atau MID_LONG 1h memang harus tetap research-only.",
+    links: [
+      { href: "/mid-long-research-study", label: "Open Dual-Track Lab" },
+      { href: "/patch-notes", label: "Patch Notes" }
+    ]
+  },
+  {
+    date: "2026-07-29",
     version: "LAB-RESET-22",
     title: "MID_LONG Matched TP vs SL Anatomy",
     status: "LIVE",

@@ -77,6 +77,7 @@ _MID_SHORT_V21_STRUCTURE_INTERACTION_CACHE_TTL_SECONDS = 3600.0
 _MID_SHORT_V21_STRUCTURE_EXIT_CACHE_TTL_SECONDS = 3600.0
 _MID_SHORT_V21_DYNAMIC_EXIT_CACHE_TTL_SECONDS = 3600.0
 _MID_LONG_BASELINE_CACHE_TTL_SECONDS = 300.0
+_LONG_DEFINITION_LAB_CACHE_TTL_SECONDS = 300.0
 _SIGNAL_PERFORMANCE_CACHE_LOCK = Lock()
 _SIGNAL_PERFORMANCE_CACHE: dict[tuple, tuple[float, dict]] = {}
 _SIGNAL_FORWARD_INTEGRITY_CACHE_LOCK = Lock()
@@ -91,6 +92,8 @@ _STRUCTURE_ZONE_SHADOW_CACHE_LOCK = Lock()
 _STRUCTURE_ZONE_SHADOW_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_LONG_BASELINE_CACHE_LOCK = Lock()
 _MID_LONG_BASELINE_CACHE: dict[tuple, tuple[float, dict]] = {}
+_LONG_DEFINITION_LAB_CACHE_LOCK = Lock()
+_LONG_DEFINITION_LAB_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_SHADOW_FORWARD_CACHE_LOCK = Lock()
 _MID_SHORT_SHADOW_FORWARD_CACHE: dict[tuple, tuple[float, dict]] = {}
 _MID_SHORT_FAILURE_ANATOMY_CACHE_LOCK = Lock()
@@ -582,6 +585,29 @@ def signal_candidates_mid_long_1h_baseline(
         return payload
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail="MID_LONG 1h baseline snapshot is not available yet") from exc
+
+
+@router.get("/api/signal-candidates/long-definition-lab")
+def signal_candidates_long_definition_lab(
+    limit: int = 100,
+):
+    normalized_limit = max(1, min(limit, 200))
+    cache_key = (normalized_limit,)
+    now = monotonic()
+    with _LONG_DEFINITION_LAB_CACHE_LOCK:
+        cached = _LONG_DEFINITION_LAB_CACHE.get(cache_key)
+        if cached and now - cached[0] <= _LONG_DEFINITION_LAB_CACHE_TTL_SECONDS:
+            payload = dict(cached[1])
+            payload["cache"] = {"hit": True, "ttl_seconds": _LONG_DEFINITION_LAB_CACHE_TTL_SECONDS}
+            return payload
+    try:
+        payload = json_safe(SignalPerformanceSnapshotService().long_definition_lab(limit=normalized_limit))
+        payload["cache"] = {"hit": False, "ttl_seconds": _LONG_DEFINITION_LAB_CACHE_TTL_SECONDS}
+        with _LONG_DEFINITION_LAB_CACHE_LOCK:
+            _LONG_DEFINITION_LAB_CACHE[cache_key] = (monotonic(), payload)
+        return payload
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="LONG definition lab snapshot is not available yet") from exc
 
 
 @router.get("/api/signal-candidates/structure-zone-shadow-study")

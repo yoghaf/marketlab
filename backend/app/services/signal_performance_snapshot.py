@@ -431,6 +431,10 @@ class SignalPerformanceSnapshotService:
             items_enricher=items_enricher,
         )
 
+    def long_definition_lab(self, *, limit: int) -> dict[str, Any]:
+        payload = self._read(PERFORMANCE_1H_FILE)
+        return _long_definition_lab_payload(payload, limit=max(1, limit))
+
     def mid_short_filter_combination_1h(self, *, limit: int) -> dict[str, Any]:
         payload = self._read(MID_SHORT_FILTER_COMBO_1H_FILE)
         return _slice_payload(
@@ -783,6 +787,387 @@ def _mid_long_1h_baseline_payload(
             "No geometry override, timeout experiment, filter search, or promotion verdict is applied.",
         ],
     }
+
+
+LONG_DEFINITION_FAMILIES: tuple[dict[str, str], ...] = (
+    {
+        "family_id": "BREAKOUT_LONG_PROXY",
+        "family_label": "Breakout Long Proxy",
+        "family_role": "candidate",
+        "description": "Close menembus zona/resistance dengan room ke resistance berikutnya masih cukup.",
+    },
+    {
+        "family_id": "RETEST_LONG_PROXY",
+        "family_label": "Retest Long Proxy",
+        "family_role": "candidate",
+        "description": "Entry dekat support/retest/flip zone, bukan chase di tengah range.",
+    },
+    {
+        "family_id": "SQUEEZE_LONG_PROXY",
+        "family_label": "Squeeze Long Proxy",
+        "family_role": "candidate",
+        "description": "Harga naik saat OI turun dan taker buy dominan; dibaca sebagai squeeze/context, bukan entry live.",
+    },
+    {
+        "family_id": "LATE_CHASE_LONG",
+        "family_label": "Late Chase Long",
+        "family_role": "reject",
+        "description": "Entry terlalu extended atau room ke resistance terlalu sempit.",
+    },
+    {
+        "family_id": "CROWDED_LONG",
+        "family_label": "Crowded Long",
+        "family_role": "reject",
+        "description": "Long crowding tinggi dari funding/OI/positioning sehingga raw bullish impulse dicurigai rapuh.",
+    },
+    {
+        "family_id": "UNCLASSIFIED_LONG",
+        "family_label": "Unclassified Long",
+        "family_role": "unknown",
+        "description": "Belum punya pola pre-entry yang cukup jelas untuk disebut breakout, retest, squeeze, late chase, atau crowded.",
+    },
+)
+
+
+def _long_definition_lab_payload(payload: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    source_items = list(payload.get("items") or [])
+    long_items = [
+        item
+        for item in source_items
+        if str(item.get("timeframe") or "") == "1h"
+        and str(item.get("direction") or "").upper().startswith("LONG")
+        and str(item.get("stage") or "") in {"MID_LONG", "EARLY_LONG"}
+    ]
+    long_items.sort(key=lambda item: str(item.get("signal_timestamp") or ""), reverse=True)
+    baseline = _mid_long_perf_row(
+        "LONG_1H_LEGACY_CONTROL",
+        "Legacy long 1h control",
+        "stage in EARLY_LONG/MID_LONG and direction LONG",
+        long_items,
+        baseline=None,
+        required_fields=(),
+        min_sample=20,
+    )
+    family_specs = {spec["family_id"]: spec for spec in LONG_DEFINITION_FAMILIES}
+    family_items: dict[str, list[dict[str, Any]]] = {str(spec["family_id"]): [] for spec in LONG_DEFINITION_FAMILIES}
+    classified_rows: list[dict[str, Any]] = []
+    for item in long_items:
+        classification = _long_definition_classification(item)
+        family_items[classification["family_id"]].append(item)
+        classified_rows.append(_long_definition_signal_row(item, classification))
+
+    family_rows: list[dict[str, Any]] = []
+    for family_id, items in family_items.items():
+        spec = family_specs[family_id]
+        if not items:
+            row = {
+                "filter_id": family_id,
+                "label": spec["family_label"],
+                "expression": spec["description"],
+                "required_fields": [],
+                "missing_data_count": 0,
+                "sample_count": 0,
+                "sample_retention_pct": _pct_decimal(0, len(long_items)),
+                "closed_count": 0,
+                "tp_count": 0,
+                "sl_count": 0,
+                "both_hit_count": 0,
+                "winrate_pct": None,
+                "sl_share_pct": None,
+                "ideal_total_r_closed": Decimal("0"),
+                "realistic_total_r_closed": Decimal("0"),
+                "realistic_avg_r_closed": None,
+                "median_realistic_r_closed": None,
+                "max_realistic_drawdown_r": Decimal("0"),
+                "top_symbol": "-",
+                "top_symbol_count": 0,
+                "top_symbol_share_pct": None,
+                "verdict": "SAMPLE_TOO_SMALL",
+                "note": "Belum ada sample.",
+            }
+        else:
+            row = _mid_long_perf_row(
+                family_id,
+                spec["family_label"],
+                spec["description"],
+                items,
+                baseline=baseline,
+                required_fields=(),
+                min_sample=20,
+            )
+        row.update(
+            {
+                "family_id": family_id,
+                "family_role": spec["family_role"],
+                "family_label": spec["family_label"],
+                "description": spec["description"],
+                "research_status": _long_definition_family_verdict(row, str(spec["family_role"])),
+            }
+        )
+        family_rows.append(row)
+
+    candidate_rows = [row for row in family_rows if row["family_role"] == "candidate"]
+    reject_rows = [row for row in family_rows if row["family_role"] == "reject"]
+    best_candidate = _long_definition_best_candidate(candidate_rows)
+    worst_reject = _long_definition_worst_bucket(reject_rows)
+    return {
+        "generated_at_utc": (payload.get("snapshot") or {}).get("generated_at_utc") or payload.get("generated_at_utc"),
+        "lab_id": "LONG_1H_DEFINITION_LAB_V2",
+        "scope": "long_1h_logged_v2_closed_signals",
+        "read_only": True,
+        "not_live_signal": True,
+        "not_execution_instruction": True,
+        "production_rule_change": False,
+        "filters": {
+            "direction": "LONG",
+            "timeframe": "1h",
+            "stages": ["EARLY_LONG", "MID_LONG"],
+            "position_lock": True,
+            "include_watch_only": False,
+            "result_status": "closed",
+            "limit": max(1, limit),
+        },
+        "snapshot_coverage": {
+            "source_1h_rows": len(source_items),
+            "long_1h_rows": len(long_items),
+            "mid_long_rows": sum(1 for item in long_items if item.get("stage") == "MID_LONG"),
+            "early_long_rows": sum(1 for item in long_items if item.get("stage") == "EARLY_LONG"),
+        },
+        "latest_evaluation_candle_time": payload.get("latest_futures_15m_close_time")
+        or payload.get("latest_evaluation_candle_time"),
+        "legacy_control": baseline,
+        "summary": {
+            "read": _long_definition_lab_read(baseline, best_candidate, worst_reject),
+            "raw_long_count": len(long_items),
+            "candidate_family_count": sum(1 for row in candidate_rows if int(row.get("closed_count") or 0) > 0),
+            "rejection_bucket_count": sum(1 for row in reject_rows if int(row.get("closed_count") or 0) > 0),
+            "best_candidate_family": best_candidate,
+            "worst_reject_bucket": worst_reject,
+            "next_action": "Use this page to decide which long family deserves a shadow replay; do not promote legacy MID_LONG directly.",
+        },
+        "family_definitions": list(LONG_DEFINITION_FAMILIES),
+        "family_rows": family_rows,
+        "candidate_rows": candidate_rows,
+        "rejection_rows": reject_rows,
+        "latest_items": classified_rows[: max(1, limit)],
+        "guardrails": [
+            "This is a definition lab only; Signal Factory V2 live rules are unchanged.",
+            "Families use pre-entry evidence and structure fields already logged in the snapshot.",
+            "TP/SL/R are evaluation outputs only, never predictors for family assignment.",
+            "Old EARLY_LONG and MID_LONG labels are treated as source labels, not final future definitions.",
+        ],
+        "snapshot": payload.get("snapshot"),
+    }
+
+
+def _long_definition_classification(item: dict[str, Any]) -> dict[str, Any]:
+    taker_buy = _long_ratio_value(_mid_long_evidence_value(item, "kline_taker_buy_ratio"))
+    price_return = _mid_long_evidence_value(item, "price_return")
+    oi_change = _mid_long_evidence_value(item, "oi_change_pct")
+    oi_zscore = _mid_long_evidence_value(item, "oi_zscore")
+    funding = _mid_long_evidence_value(item, "funding_percentile_30d")
+    global_ls = _mid_long_evidence_value(item, "global_long_short_ratio")
+    top_position = _mid_long_evidence_value(item, "top_trader_position_ratio")
+    top_account = _mid_long_evidence_value(item, "top_trader_account_ratio")
+    atr_extension = _mid_long_evidence_value(item, "atr_extension_normalized")
+    range_atr = _mid_long_evidence_value(item, "range_ratio_vs_atr")
+    room_resistance = _long_item_decimal_any(item, ("room_to_next_resistance_atr", "breakout_room_to_next_resistance_atr"))
+    entry_distance = _long_item_decimal_any(item, ("entry_distance_from_zone_atr", "breakout_entry_distance_from_zone_atr"))
+    close_penetration = _long_item_decimal_any(item, ("close_penetration_atr", "breakout_close_penetration_atr"))
+    body_above = _long_item_decimal_any(item, ("body_above_zone_ratio", "breakout_body_above_zone_ratio"))
+    state_text = " ".join(
+        str(item.get(key) or "")
+        for key in (
+            "structure_zone_status",
+            "structure_zone_primary_state",
+            "structure_zone_context_state",
+            "structure_zone_reason",
+            "structure_zone_shadow",
+            "quality_shadow_reason",
+        )
+    ).upper()
+
+    crowding_flags: list[str] = []
+    if funding is not None and funding >= Decimal("100"):
+        crowding_flags.append("funding_percentile=100")
+    if oi_zscore is not None and oi_zscore >= Decimal("6.5"):
+        crowding_flags.append("oi_zscore>=6.5")
+    if global_ls is not None and global_ls >= Decimal("1.75"):
+        crowding_flags.append("global_long_short>=1.75")
+    if top_position is not None and top_position >= Decimal("1.90"):
+        crowding_flags.append("top_position>=1.90")
+    if top_account is not None and top_account >= Decimal("2.00"):
+        crowding_flags.append("top_account>=2.00")
+
+    chase_flags: list[str] = []
+    if room_resistance is not None and room_resistance < Decimal("1.0"):
+        chase_flags.append("room_to_resistance<1ATR")
+    if atr_extension is not None and atr_extension >= Decimal("1.5"):
+        chase_flags.append("atr_extension>=1.5")
+    if range_atr is not None and range_atr >= Decimal("1.8"):
+        chase_flags.append("range_vs_atr>=1.8")
+    if entry_distance is not None and entry_distance >= Decimal("1.0"):
+        chase_flags.append("entry_distance_from_zone>=1ATR")
+
+    support_like = any(token in state_text for token in ("SUPPORT", "RETEST", "BOUNCE", "RECLAIM", "FLIP"))
+    breakout_like = (
+        any(token in state_text for token in ("BREAKOUT", "RESISTANCE_BREAKOUT", "ACCEPT"))
+        or (close_penetration is not None and close_penetration >= Decimal("0.10"))
+        or (body_above is not None and body_above >= Decimal("0.35"))
+    )
+    has_room = room_resistance is None or room_resistance >= Decimal("1.0")
+    not_crowded = funding is None or funding <= Decimal("85")
+
+    if len(crowding_flags) >= 3 or ("funding_percentile=100" in crowding_flags and len(crowding_flags) >= 2):
+        return _long_definition_result("CROWDED_LONG", "Crowding long tinggi: " + ", ".join(crowding_flags), crowding_flags, chase_flags)
+    if chase_flags:
+        return _long_definition_result("LATE_CHASE_LONG", "Entry raw long terlihat telat/sempit: " + ", ".join(chase_flags), crowding_flags, chase_flags)
+    if (
+        price_return is not None
+        and price_return > 0
+        and oi_change is not None
+        and oi_change < 0
+        and taker_buy is not None
+        and taker_buy >= Decimal("0.52")
+        and has_room
+        and not_crowded
+    ):
+        return _long_definition_result("SQUEEZE_LONG_PROXY", "Price naik + OI turun + taker buy dominan; dibaca squeeze proxy.", crowding_flags, chase_flags)
+    if support_like and (entry_distance is None or entry_distance <= Decimal("0.75")) and has_room and (taker_buy is None or taker_buy >= Decimal("0.50")):
+        return _long_definition_result("RETEST_LONG_PROXY", "Entry dekat support/retest/flip zone dengan room cukup.", crowding_flags, chase_flags)
+    if breakout_like and has_room and (taker_buy is None or taker_buy >= Decimal("0.52")) and not_crowded:
+        return _long_definition_result("BREAKOUT_LONG_PROXY", "Close/entry menembus zona dengan room dan taker buy cukup.", crowding_flags, chase_flags)
+    return _long_definition_result("UNCLASSIFIED_LONG", "Belum cukup bukti untuk keluarga breakout/retest/squeeze atau rejection bucket.", crowding_flags, chase_flags)
+
+
+def _long_definition_result(
+    family_id: str,
+    reason: str,
+    crowding_flags: list[str],
+    chase_flags: list[str],
+) -> dict[str, Any]:
+    spec = next(spec for spec in LONG_DEFINITION_FAMILIES if spec["family_id"] == family_id)
+    return {
+        "family_id": family_id,
+        "family_label": spec["family_label"],
+        "family_role": spec["family_role"],
+        "family_reason": reason,
+        "crowding_flags": crowding_flags,
+        "anti_chase_flags": chase_flags,
+    }
+
+
+def _long_definition_signal_row(item: dict[str, Any], classification: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "signal_id": item.get("signal_id"),
+        "symbol": item.get("symbol"),
+        "source_stage": item.get("stage"),
+        "timeframe": item.get("timeframe"),
+        "direction": item.get("direction"),
+        "signal_timestamp": item.get("signal_timestamp"),
+        "signal_time_wib": item.get("signal_time_wib"),
+        "result_status": item.get("result_status"),
+        "realistic_realized_r": item.get("realistic_realized_r"),
+        "mfe_r": item.get("mfe_r"),
+        "mae_r": item.get("mae_r"),
+        "family_id": classification["family_id"],
+        "family_label": classification["family_label"],
+        "family_role": classification["family_role"],
+        "family_reason": classification["family_reason"],
+        "crowding_flags": classification["crowding_flags"],
+        "anti_chase_flags": classification["anti_chase_flags"],
+        "price_return": _mid_long_evidence_value(item, "price_return"),
+        "volume_ratio_vs_lookback": _mid_long_evidence_value(item, "volume_ratio_vs_lookback"),
+        "taker_buy_ratio": _long_ratio_value(_mid_long_evidence_value(item, "kline_taker_buy_ratio")),
+        "oi_change_pct": _mid_long_evidence_value(item, "oi_change_pct"),
+        "oi_zscore": _mid_long_evidence_value(item, "oi_zscore"),
+        "funding_percentile_30d": _mid_long_evidence_value(item, "funding_percentile_30d"),
+        "room_to_next_resistance_atr": _long_item_decimal_any(item, ("room_to_next_resistance_atr", "breakout_room_to_next_resistance_atr")),
+        "room_to_next_support_atr": _long_item_decimal_any(item, ("room_to_next_support_atr", "breakout_room_to_next_support_atr")),
+        "entry_distance_from_zone_atr": _long_item_decimal_any(item, ("entry_distance_from_zone_atr", "breakout_entry_distance_from_zone_atr")),
+        "atr_extension_normalized": _mid_long_evidence_value(item, "atr_extension_normalized"),
+        "range_ratio_vs_atr": _mid_long_evidence_value(item, "range_ratio_vs_atr"),
+        "close_penetration_atr": _long_item_decimal_any(item, ("close_penetration_atr", "breakout_close_penetration_atr")),
+        "body_above_zone_ratio": _long_item_decimal_any(item, ("body_above_zone_ratio", "breakout_body_above_zone_ratio")),
+        "structure_zone_status": item.get("structure_zone_status"),
+        "structure_zone_primary_state": item.get("structure_zone_primary_state"),
+    }
+
+
+def _long_definition_family_verdict(row: dict[str, Any], role: str) -> str:
+    closed = int(row.get("closed_count") or 0)
+    total_r = _decimal_or_zero_snapshot(row.get("realistic_total_r_closed"))
+    avg_r = _decimal_or_none_snapshot(row.get("realistic_avg_r_closed"))
+    top_share = _decimal_or_none_snapshot(row.get("top_symbol_share_pct"))
+    if closed < 20:
+        return "SAMPLE_TOO_SMALL"
+    if role == "reject":
+        return "DAMAGE_BUCKET" if total_r < 0 else "REJECT_BUCKET_NOT_CONFIRMED"
+    if role == "candidate" and total_r > 0 and avg_r is not None and avg_r > 0 and (top_share is None or top_share <= Decimal("35")):
+        return "LONG_RESEARCH_CANDIDATE"
+    if role == "candidate" and total_r > 0:
+        return "LONG_MONITOR_MORE"
+    if role == "unknown":
+        return "NEEDS_REDEFINITION"
+    return "NO_LONG_EDGE_YET"
+
+
+def _long_definition_best_candidate(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    readable = [row for row in rows if int(row.get("closed_count") or 0) >= 20]
+    if not readable:
+        return None
+    return sorted(
+        readable,
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )[0]
+
+
+def _long_definition_worst_bucket(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    readable = [row for row in rows if int(row.get("closed_count") or 0) >= 20]
+    if not readable:
+        return None
+    return sorted(
+        readable,
+        key=lambda row: (
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+            _decimal_or_zero_snapshot(row.get("realistic_total_r_closed")),
+        ),
+    )[0]
+
+
+def _long_definition_lab_read(
+    baseline: dict[str, Any],
+    best_candidate: dict[str, Any] | None,
+    worst_reject: dict[str, Any] | None,
+) -> str:
+    if best_candidate and str(best_candidate.get("research_status")) == "LONG_RESEARCH_CANDIDATE":
+        return "LONG_FAMILY_CANDIDATE_FOUND"
+    if worst_reject and _decimal_or_zero_snapshot(worst_reject.get("realistic_total_r_closed")) < 0:
+        return "LONG_DAMAGE_BUCKETS_IDENTIFIED"
+    if _decimal_or_zero_snapshot(baseline.get("realistic_total_r_closed")) < 0:
+        return "LEGACY_LONG_BASELINE_WEAK"
+    return "LONG_DEFINITION_INCONCLUSIVE"
+
+
+def _long_item_decimal_any(item: dict[str, Any], keys: tuple[str, ...]) -> Decimal | None:
+    for key in keys:
+        value = _item_decimal(item, key)
+        if value is not None:
+            return value
+    return None
+
+
+def _long_ratio_value(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    if value > Decimal("2"):
+        return value / Decimal("100")
+    return value
 
 
 def _mid_long_baseline_research(
@@ -1401,6 +1786,12 @@ def _mid_long_definition_audit(
         baseline=baseline,
         min_sample=min_sample,
     )
+    dual_track_discovery = _mid_long_dual_track_pattern_discovery(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
     definition_reset = _mid_long_definition_reset_lab(
         items,
         taxonomy_by_id=taxonomy_by_id,
@@ -1446,6 +1837,7 @@ def _mid_long_definition_audit(
         "first_hour_action_simulation": first_hour_action,
         "matched_contrastive_anatomy": matched_contrastive,
         "family_damage_hurdle_study": damage_hurdle,
+        "dual_track_pattern_discovery": dual_track_discovery,
         "first_hour_exact_replay_lab": first_hour_exact_replay,
         "definition_reset_lab": definition_reset,
         "sub_setup_split_lab": sub_setup,
@@ -2838,6 +3230,783 @@ def _mid_long_damage_hurdle_label(item: dict[str, Any], *, first_hour_state: str
     if status == "SL_HIT":
         return "SURVIVED_NEGATIVE_PAYOFF"
     return "DAMAGE_UNKNOWN"
+
+
+def _mid_long_dual_track_pattern_discovery(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> dict[str, Any]:
+    reset_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_reset_state(
+            item,
+            taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    first_hour_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_first_hour_state(
+            item,
+            reset_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    labels_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_damage_hurdle_label(
+            item,
+            first_hour_state=first_hour_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    score_by_id = {
+        str(item.get("signal_id") or idx): _mid_long_damage_hurdle_score_state(
+            item,
+            reset=reset_by_id[str(item.get("signal_id") or idx)],
+            taxonomy=taxonomy_by_id[str(item.get("signal_id") or idx)],
+        )
+        for idx, item in enumerate(items)
+    }
+    ordered = sorted(items, key=_mid_long_signal_sort_key)
+    split_index = max(1, min(len(ordered), int(Decimal(len(ordered)) * Decimal("0.70")))) if ordered else 0
+    train_items = ordered[:split_index]
+    validation_items = ordered[split_index:]
+    if len(validation_items) < min_sample and len(ordered) >= min_sample * 2:
+        split_index = max(min_sample, len(ordered) - min_sample)
+        train_items = ordered[:split_index]
+        validation_items = ordered[split_index:]
+
+    predicate_specs = _mid_long_dual_predicate_specs()
+    predicate_rows = _mid_long_dual_predicate_rows(
+        train_items,
+        validation_items,
+        predicate_specs=predicate_specs,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        min_sample=min_sample,
+    )
+    rule_rows = _mid_long_dual_rule_rows(
+        train_items,
+        validation_items,
+        predicate_rows=predicate_rows,
+        predicate_specs=predicate_specs,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        min_sample=min_sample,
+    )
+    group_rows = _mid_long_dual_group_rows(predicate_rows, rule_rows)
+    cluster_rows = _mid_long_unclassified_archetype_rows(
+        items,
+        taxonomy_by_id=taxonomy_by_id,
+        reset_by_id=reset_by_id,
+        score_by_id=score_by_id,
+        labels_by_id=labels_by_id,
+        baseline=baseline,
+        min_sample=min_sample,
+    )
+    summary = _mid_long_dual_discovery_summary(
+        predicate_rows=predicate_rows,
+        rule_rows=rule_rows,
+        group_rows=group_rows,
+        cluster_rows=cluster_rows,
+        min_sample=min_sample,
+    )
+    return {
+        "scope": "MID_LONG 1h Dual-Track Pattern Discovery Lab",
+        "method": (
+            "Track A asks whether pre-entry fields can separate early damage from viable continuation using "
+            "chronological train/validation predicate discovery. Track B splits UNCLASSIFIED_MID_LONG into "
+            "pre-entry archetypes before looking at outcome."
+        ),
+        "model_version": "MID_LONG_DUAL_TRACK_DISCOVERY_V1_LOCAL_SAFE",
+        "execution_policy": {
+            "runtime": "local-safe lightweight diagnostics",
+            "dependency_policy": "no new sklearn/lightgbm dependency; deterministic predicates and archetypes only",
+            "production_rule_change": False,
+        },
+        "target_policy": {
+            "primary_target": "EARLY_DAMAGE",
+            "primary_definition": (
+                "Outcome label for research only: first-hour reversed/structure-failed, instant SL, or shallow-profit fail."
+            ),
+            "economic_metric": "realistic_R on validation and selected cohorts",
+            "forbidden_inputs": [
+                "result_status",
+                "realized R",
+                "MFE/MAE",
+                "first-hour state as a predictor",
+                "future candles",
+            ],
+        },
+        "chronological_split": {
+            "train_count": len(train_items),
+            "validation_count": len(validation_items),
+            "train_first": train_items[0].get("signal_timestamp") if train_items else None,
+            "train_last": train_items[-1].get("signal_timestamp") if train_items else None,
+            "validation_first": validation_items[0].get("signal_timestamp") if validation_items else None,
+            "validation_last": validation_items[-1].get("signal_timestamp") if validation_items else None,
+        },
+        "track_a_supervised_discrimination": {
+            "baseline_train": _mid_long_dual_metrics(train_items, baseline_items=train_items, labels_by_id=labels_by_id),
+            "baseline_validation": _mid_long_dual_metrics(
+                validation_items,
+                baseline_items=validation_items,
+                labels_by_id=labels_by_id,
+            ),
+            "predicate_rows": predicate_rows[:24],
+            "rule_rows": rule_rows[:20],
+            "feature_group_rows": group_rows,
+        },
+        "track_b_unclassified_archetypes": {
+            "target_family": "UNCLASSIFIED_MID_LONG",
+            "archetype_rows": cluster_rows,
+        },
+        "summary": summary,
+        "guardrails": [
+            "This lab is read-only and must not change Signal Factory rules.",
+            "Track A uses chronological validation; train-only winners are not candidates.",
+            "Track B assigns unclassified archetypes without outcome, then reads TP/SL/R afterward.",
+            "Optuna/threshold optimization remains blocked until a stable pattern or archetype survives validation.",
+        ],
+    }
+
+
+def _mid_long_dual_predicate_specs() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "FAMILY_BREAKOUT",
+            "label": "Breakout continuation family",
+            "group": "structure",
+            "expression": "primary_family == BREAKOUT_CONTINUATION_LONG",
+            "predicate": lambda _idx, _item, ctx: ctx["reset"].get("primary_family") == "BREAKOUT_CONTINUATION_LONG",
+        },
+        {
+            "id": "FAMILY_SUPPORT_RETEST",
+            "label": "Support retest family",
+            "group": "structure",
+            "expression": "primary_family == SUPPORT_RETEST_LONG",
+            "predicate": lambda _idx, _item, ctx: ctx["reset"].get("primary_family") == "SUPPORT_RETEST_LONG",
+        },
+        {
+            "id": "NOT_UNCLASSIFIED",
+            "label": "Structure classified",
+            "group": "structure",
+            "expression": "primary_family != UNCLASSIFIED_MID_LONG",
+            "predicate": lambda _idx, _item, ctx: ctx["reset"].get("primary_family") != "UNCLASSIFIED_MID_LONG",
+        },
+        {
+            "id": "ZONE_REPEATED",
+            "label": "Repeated zone",
+            "group": "structure",
+            "expression": "zone_touch_count >= 2",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "zone_touch_count") is not None
+            and _mid_long_first_decimal(item, "zone_touch_count") >= Decimal("2"),
+        },
+        {
+            "id": "ZONE_NOT_OLD",
+            "label": "Zone age <= 48 bars",
+            "group": "structure",
+            "expression": "zone_age_bars <= 48",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "zone_age_bars") is not None
+            and _mid_long_first_decimal(item, "zone_age_bars") <= Decimal("48"),
+        },
+        {
+            "id": "ROOM_GE_100",
+            "label": "Room to resistance >= 1.00 ATR",
+            "group": "geometry",
+            "expression": "room_to_next_resistance_atr >= 1.00",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(
+                item,
+                "room_to_next_resistance_atr",
+                "structure_zone_nearest_resistance_distance_atr",
+            )
+            is not None
+            and _mid_long_first_decimal(
+                item,
+                "room_to_next_resistance_atr",
+                "structure_zone_nearest_resistance_distance_atr",
+            )
+            >= Decimal("1.00"),
+        },
+        {
+            "id": "ROOM_GE_150",
+            "label": "Room to resistance >= 1.50 ATR",
+            "group": "geometry",
+            "expression": "room_to_next_resistance_atr >= 1.50",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(
+                item,
+                "room_to_next_resistance_atr",
+                "structure_zone_nearest_resistance_distance_atr",
+            )
+            is not None
+            and _mid_long_first_decimal(
+                item,
+                "room_to_next_resistance_atr",
+                "structure_zone_nearest_resistance_distance_atr",
+            )
+            >= Decimal("1.50"),
+        },
+        {
+            "id": "ENTRY_DISTANCE_LE_100",
+            "label": "Entry distance <= 1.00 ATR",
+            "group": "geometry",
+            "expression": "entry_distance_from_zone_atr <= 1.00",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "entry_distance_from_zone_atr") is not None
+            and _mid_long_first_decimal(item, "entry_distance_from_zone_atr") <= Decimal("1.00"),
+        },
+        {
+            "id": "BODY_ACCEPTED",
+            "label": "Body above zone >= 0.35",
+            "group": "geometry",
+            "expression": "body_above_zone_ratio >= 0.35",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "body_above_zone_ratio") is not None
+            and _mid_long_first_decimal(item, "body_above_zone_ratio") >= Decimal("0.35"),
+        },
+        {
+            "id": "PENETRATION_GE_010",
+            "label": "Close penetration >= 0.10 ATR",
+            "group": "geometry",
+            "expression": "close_penetration_atr >= 0.10",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "close_penetration_atr") is not None
+            and _mid_long_first_decimal(item, "close_penetration_atr") >= Decimal("0.10"),
+        },
+        {
+            "id": "WICK_BODY_LE_025",
+            "label": "Upper wick/body <= 0.25",
+            "group": "geometry",
+            "expression": "upper_wick_to_body_ratio <= 0.25",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "upper_wick_to_body_ratio") is not None
+            and _mid_long_first_decimal(item, "upper_wick_to_body_ratio") <= Decimal("0.25"),
+        },
+        {
+            "id": "ATR_EXTENSION_LE_150",
+            "label": "ATR extension <= 1.50",
+            "group": "extension",
+            "expression": "atr_extension_normalized <= 1.50",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "atr_extension_normalized") is not None
+            and _mid_long_first_decimal(item, "atr_extension_normalized") <= Decimal("1.50"),
+        },
+        {
+            "id": "RANGE_ATR_LE_150",
+            "label": "Range/ATR <= 1.50",
+            "group": "extension",
+            "expression": "range_ratio_vs_atr <= 1.50",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "range_ratio_vs_atr") is not None
+            and _mid_long_first_decimal(item, "range_ratio_vs_atr") <= Decimal("1.50"),
+        },
+        {
+            "id": "VOLUME_GE_100",
+            "label": "Volume >= 30-candle avg",
+            "group": "flow",
+            "expression": "volume_ratio_vs_lookback >= 1.00",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "volume_ratio_vs_lookback") is not None
+            and _mid_long_first_decimal(item, "volume_ratio_vs_lookback") >= Decimal("1.00"),
+        },
+        {
+            "id": "TAKER_BUY_GE_052",
+            "label": "Taker buy >= 52%",
+            "group": "flow",
+            "expression": "kline_taker_buy_ratio >= 52",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "kline_taker_buy_ratio") is not None
+            and _mid_long_first_decimal(item, "kline_taker_buy_ratio") >= Decimal("52"),
+        },
+        {
+            "id": "OI_Z_GE_100",
+            "label": "OI z-score >= 1.00",
+            "group": "flow_oi",
+            "expression": "oi_zscore >= 1.00",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "oi_zscore") is not None
+            and _mid_long_first_decimal(item, "oi_zscore") >= Decimal("1.00"),
+        },
+        {
+            "id": "OI_CHANGE_010_TO_100",
+            "label": "OI change 0.10% to 1.00%",
+            "group": "flow_oi",
+            "expression": "0.10 <= oi_change_pct <= 1.00",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "oi_change_pct") is not None
+            and Decimal("0.10") <= _mid_long_first_decimal(item, "oi_change_pct") <= Decimal("1.00"),
+        },
+        {
+            "id": "FLOW_NOT_WEAK",
+            "label": "Flow not weak",
+            "group": "flow_oi",
+            "expression": "flow_state_provisional != WEAK",
+            "predicate": lambda _idx, _item, ctx: ctx["taxonomy"].get("flow_state_provisional") != "WEAK",
+        },
+        {
+            "id": "NOT_CROWDED",
+            "label": "Not high/ extreme crowded",
+            "group": "crowding",
+            "expression": "crowding_bucket not high/extreme",
+            "predicate": lambda _idx, _item, ctx: ctx["taxonomy"].get("crowding_bucket") not in {"HIGH_CROWDING", "EXTREME_CROWDING"},
+        },
+        {
+            "id": "FUNDING_PCTL_LE_80",
+            "label": "Funding percentile <= 80",
+            "group": "crowding",
+            "expression": "funding_percentile_30d <= 80",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "funding_percentile_30d") is not None
+            and _mid_long_first_decimal(item, "funding_percentile_30d") <= Decimal("80"),
+        },
+        {
+            "id": "COST_LE_020R",
+            "label": "Projected cost <= 0.20R",
+            "group": "tradability",
+            "expression": "realistic_cost_r_estimate <= 0.20R",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "realistic_cost_r_estimate") is not None
+            and _mid_long_first_decimal(item, "realistic_cost_r_estimate") <= Decimal("0.20"),
+        },
+        {
+            "id": "SPREAD_LE_003",
+            "label": "Futures spread <= 0.03%",
+            "group": "tradability",
+            "expression": "futures_spread_pct <= 0.03",
+            "predicate": lambda _idx, item, _ctx: _mid_long_first_decimal(item, "futures_spread_pct") is not None
+            and _mid_long_first_decimal(item, "futures_spread_pct") <= Decimal("0.03"),
+        },
+    ]
+
+
+def _mid_long_dual_predicate_rows(
+    train_items: list[dict[str, Any]],
+    validation_items: list[dict[str, Any]],
+    *,
+    predicate_specs: list[dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for spec in predicate_specs:
+        train_selected = _mid_long_dual_select(
+            train_items,
+            predicate=spec["predicate"],
+            taxonomy_by_id=taxonomy_by_id,
+            reset_by_id=reset_by_id,
+            score_by_id=score_by_id,
+        )
+        validation_selected = _mid_long_dual_select(
+            validation_items,
+            predicate=spec["predicate"],
+            taxonomy_by_id=taxonomy_by_id,
+            reset_by_id=reset_by_id,
+            score_by_id=score_by_id,
+        )
+        rows.append(
+            _mid_long_dual_candidate_row(
+                spec["id"],
+                spec["label"],
+                spec["group"],
+                spec["expression"],
+                train_selected,
+                validation_selected,
+                train_items=train_items,
+                validation_items=validation_items,
+                labels_by_id=labels_by_id,
+                min_sample=min_sample,
+                row_type="PREDICATE",
+            )
+        )
+    rows.sort(key=_mid_long_dual_row_sort_key, reverse=True)
+    return rows
+
+
+def _mid_long_dual_rule_rows(
+    train_items: list[dict[str, Any]],
+    validation_items: list[dict[str, Any]],
+    *,
+    predicate_rows: list[dict[str, Any]],
+    predicate_specs: list[dict[str, Any]],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    specs_by_id = {str(spec["id"]): spec for spec in predicate_specs}
+    candidate_ids = [
+        str(row["rule_id"])
+        for row in predicate_rows
+        if int(row.get("validation_selected_count") or 0) >= max(10, min_sample // 2)
+    ][:12]
+    rows: list[dict[str, Any]] = []
+    for left_index, left_id in enumerate(candidate_ids):
+        for right_id in candidate_ids[left_index + 1 :]:
+            left = specs_by_id[left_id]
+            right = specs_by_id[right_id]
+            if left["group"] == right["group"] and left["id"] not in {"NOT_UNCLASSIFIED", "FAMILY_BREAKOUT", "FAMILY_SUPPORT_RETEST"}:
+                continue
+
+            def _pair_predicate(idx: int, item: dict[str, Any], ctx: dict[str, Any], left=left, right=right) -> bool:
+                return bool(left["predicate"](idx, item, ctx) and right["predicate"](idx, item, ctx))
+
+            train_selected = _mid_long_dual_select(
+                train_items,
+                predicate=_pair_predicate,
+                taxonomy_by_id=taxonomy_by_id,
+                reset_by_id=reset_by_id,
+                score_by_id=score_by_id,
+            )
+            validation_selected = _mid_long_dual_select(
+                validation_items,
+                predicate=_pair_predicate,
+                taxonomy_by_id=taxonomy_by_id,
+                reset_by_id=reset_by_id,
+                score_by_id=score_by_id,
+            )
+            rows.append(
+                _mid_long_dual_candidate_row(
+                    f"{left_id}__AND__{right_id}",
+                    f"{left['label']} + {right['label']}",
+                    f"{left['group']}+{right['group']}",
+                    f"{left['expression']} AND {right['expression']}",
+                    train_selected,
+                    validation_selected,
+                    train_items=train_items,
+                    validation_items=validation_items,
+                    labels_by_id=labels_by_id,
+                    min_sample=min_sample,
+                    row_type="TWO_PREDICATE_RULE",
+                )
+            )
+    rows.sort(key=_mid_long_dual_row_sort_key, reverse=True)
+    return rows[:30]
+
+
+def _mid_long_dual_select(
+    items: list[dict[str, Any]],
+    *,
+    predicate: Callable[[int, dict[str, Any], dict[str, Any]], bool],
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    score_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        ctx = {
+            "taxonomy": taxonomy_by_id.get(key, {}),
+            "reset": reset_by_id.get(key, {}),
+            "score": score_by_id.get(key, {}),
+        }
+        try:
+            if predicate(idx, item, ctx):
+                selected.append(item)
+        except Exception:
+            continue
+    return selected
+
+
+def _mid_long_dual_candidate_row(
+    rule_id: str,
+    label: str,
+    feature_group: str,
+    expression: str,
+    train_selected: list[dict[str, Any]],
+    validation_selected: list[dict[str, Any]],
+    *,
+    train_items: list[dict[str, Any]],
+    validation_items: list[dict[str, Any]],
+    labels_by_id: dict[str, str],
+    min_sample: int,
+    row_type: str,
+) -> dict[str, Any]:
+    train_baseline = _mid_long_dual_metrics(train_items, baseline_items=train_items, labels_by_id=labels_by_id)
+    validation_baseline = _mid_long_dual_metrics(
+        validation_items,
+        baseline_items=validation_items,
+        labels_by_id=labels_by_id,
+    )
+    train = _mid_long_dual_metrics(train_selected, baseline_items=train_items, labels_by_id=labels_by_id)
+    validation = _mid_long_dual_metrics(
+        validation_selected,
+        baseline_items=validation_items,
+        labels_by_id=labels_by_id,
+    )
+    row = {
+        "row_type": row_type,
+        "rule_id": rule_id,
+        "label": label,
+        "feature_group": feature_group,
+        "expression": expression,
+        "train_selected_count": len(train_selected),
+        "validation_selected_count": len(validation_selected),
+        "train_coverage_pct": _pct_decimal(len(train_selected), len(train_items)),
+        "validation_coverage_pct": _pct_decimal(len(validation_selected), len(validation_items)),
+        "train": train,
+        "validation": validation,
+        "train_baseline": train_baseline,
+        "validation_baseline": validation_baseline,
+    }
+    row["read"] = _mid_long_dual_candidate_read(row, min_sample=min_sample)
+    return row
+
+
+def _mid_long_dual_metrics(
+    items: list[dict[str, Any]],
+    *,
+    baseline_items: list[dict[str, Any]],
+    labels_by_id: dict[str, str],
+) -> dict[str, Any]:
+    metrics = _mid_long_hurdle_perf_summary(
+        items,
+        labels_by_id=labels_by_id,
+        baseline=_mid_long_hurdle_perf_summary(baseline_items, labels_by_id=labels_by_id, baseline=None),
+    )
+    symbols = Counter(str(item.get("symbol") or "UNKNOWN") for item in items)
+    top_symbol, top_symbol_count = symbols.most_common(1)[0] if symbols else ("-", 0)
+    metrics.update(
+        {
+            "sample_count": len(items),
+            "top_symbol": top_symbol,
+            "top_symbol_count": top_symbol_count,
+            "top_symbol_share_pct": _pct_decimal(top_symbol_count, len(items)) if items else None,
+        }
+    )
+    return metrics
+
+
+def _mid_long_dual_candidate_read(row: dict[str, Any], *, min_sample: int) -> str:
+    train = row.get("train") or {}
+    validation = row.get("validation") or {}
+    validation_count = int(row.get("validation_selected_count") or 0)
+    train_count = int(row.get("train_selected_count") or 0)
+    validation_avg_delta = _decimal_or_zero_snapshot(validation.get("realistic_avg_r_delta_vs_baseline"))
+    validation_total = _decimal_or_zero_snapshot(validation.get("realistic_total_r_closed"))
+    validation_damage_delta = _decimal_or_zero_snapshot(validation.get("early_damage_share_delta_vs_baseline"))
+    train_avg_delta = _decimal_or_zero_snapshot(train.get("realistic_avg_r_delta_vs_baseline"))
+    top_share = _decimal_or_zero_snapshot(validation.get("top_symbol_share_pct"))
+    if train_count < min_sample:
+        return "TRAIN_SAMPLE_TOO_SMALL"
+    if validation_count < min_sample:
+        return "VALIDATION_SAMPLE_TOO_SMALL"
+    if train_count >= min_sample and train_avg_delta > 0 and validation_avg_delta <= 0:
+        return "TRAIN_ONLY_OVERFIT"
+    if validation_total > 0 and validation_avg_delta >= Decimal("0.10") and validation_damage_delta < 0 and top_share <= Decimal("35"):
+        return "PROMISING_PATTERN"
+    if validation_avg_delta > 0 and validation_damage_delta <= 0:
+        return "WEAK_VALIDATION_LIFT"
+    if validation_damage_delta > 0 and validation_avg_delta < 0:
+        return "DAMAGE_CLUSTER"
+    return "NO_STABLE_LIFT"
+
+
+def _mid_long_dual_row_sort_key(row: dict[str, Any]) -> tuple[int, Decimal, Decimal, int]:
+    validation = row.get("validation") or {}
+    return (
+        _mid_long_dual_read_rank(str(row.get("read") or "")),
+        _decimal_or_zero_snapshot(validation.get("realistic_avg_r_delta_vs_baseline")),
+        _decimal_or_zero_snapshot(validation.get("realistic_total_r_closed")),
+        int(row.get("validation_selected_count") or 0),
+    )
+
+
+def _mid_long_dual_read_rank(read: str) -> int:
+    return {
+        "PROMISING_PATTERN": 5,
+        "WEAK_VALIDATION_LIFT": 4,
+        "DAMAGE_CLUSTER": 3,
+        "NO_STABLE_LIFT": 2,
+        "TRAIN_ONLY_OVERFIT": 1,
+        "TRAIN_SAMPLE_TOO_SMALL": 0,
+        "VALIDATION_SAMPLE_TOO_SMALL": 0,
+    }.get(read, 0)
+
+
+def _mid_long_dual_group_rows(predicate_rows: list[dict[str, Any]], rule_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in [*predicate_rows, *rule_rows]:
+        grouped[str(row.get("feature_group") or "unknown")].append(row)
+    rows: list[dict[str, Any]] = []
+    for group, group_items in grouped.items():
+        sorted_items = sorted(group_items, key=_mid_long_dual_row_sort_key, reverse=True)
+        best = sorted_items[0]
+        rows.append(
+            {
+                "feature_group": group,
+                "candidate_count": len(group_items),
+                "promising_count": sum(1 for item in group_items if item.get("read") == "PROMISING_PATTERN"),
+                "weak_lift_count": sum(1 for item in group_items if item.get("read") == "WEAK_VALIDATION_LIFT"),
+                "overfit_count": sum(1 for item in group_items if item.get("read") == "TRAIN_ONLY_OVERFIT"),
+                "best_rule_id": best.get("rule_id"),
+                "best_label": best.get("label"),
+                "best_read": best.get("read"),
+                "best_validation_count": best.get("validation_selected_count"),
+                "best_validation_avg_delta_r": (best.get("validation") or {}).get("realistic_avg_r_delta_vs_baseline"),
+                "best_validation_total_r": (best.get("validation") or {}).get("realistic_total_r_closed"),
+                "best_validation_damage_delta_pct": (best.get("validation") or {}).get("early_damage_share_delta_vs_baseline"),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            int(row.get("promising_count") or 0),
+            int(row.get("weak_lift_count") or 0),
+            _decimal_or_zero_snapshot(row.get("best_validation_avg_delta_r")),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_unclassified_archetype_rows(
+    items: list[dict[str, Any]],
+    *,
+    taxonomy_by_id: dict[str, dict[str, Any]],
+    reset_by_id: dict[str, dict[str, Any]],
+    score_by_id: dict[str, dict[str, Any]],
+    labels_by_id: dict[str, str],
+    baseline: dict[str, Any],
+    min_sample: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, item in enumerate(items):
+        key = str(item.get("signal_id") or idx)
+        reset = reset_by_id.get(key, {})
+        if reset.get("primary_family") != "UNCLASSIFIED_MID_LONG":
+            continue
+        archetype = _mid_long_unclassified_archetype(
+            item,
+            taxonomy=taxonomy_by_id.get(key, {}),
+            score_state=score_by_id.get(key, {}),
+        )
+        grouped[archetype].append(item)
+    rows: list[dict[str, Any]] = []
+    baseline_hurdle = _mid_long_hurdle_perf_summary(items, labels_by_id=labels_by_id, baseline=None)
+    for archetype, archetype_items in grouped.items():
+        row = _mid_long_perf_row(
+            f"UNCLASSIFIED_ARCHETYPE:{archetype}",
+            archetype,
+            _mid_long_unclassified_archetype_definition(archetype),
+            archetype_items,
+            baseline=baseline,
+            required_fields=(),
+            min_sample=min_sample,
+        )
+        row.update(
+            _mid_long_hurdle_perf_summary(
+                archetype_items,
+                labels_by_id=labels_by_id,
+                baseline=baseline_hurdle,
+            )
+        )
+        row.update(
+            {
+                "archetype": archetype,
+                "definition": _mid_long_unclassified_archetype_definition(archetype),
+                "read": _mid_long_unclassified_archetype_read(row, min_sample=min_sample),
+            }
+        )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            int(row.get("closed_count") or 0) >= min_sample,
+            _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed")),
+            -_decimal_or_zero_snapshot(row.get("early_damage_share_pct")),
+            int(row.get("closed_count") or 0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _mid_long_unclassified_archetype(
+    item: dict[str, Any],
+    *,
+    taxonomy: dict[str, Any],
+    score_state: dict[str, Any],
+) -> str:
+    components = score_state.get("components") or {}
+    if components.get("spatial_room") == "LOW_ROOM":
+        return "UNCLASSIFIED_LOW_ROOM"
+    if components.get("entry_geometry") == "CHASE_DISTANCE" or taxonomy.get("entry_timing_bucket") == "LATE_CHASE":
+        return "UNCLASSIFIED_CHASE_EXTENSION"
+    if components.get("flow_crowding") in {"WEAK_FLOW_NOT_CROWDED", "CROWDED_LONG"}:
+        return "UNCLASSIFIED_WEAK_FLOW_OR_CROWDING"
+    if components.get("tradability") in {"HIGH_COST", "EXTREME_COST"}:
+        return "UNCLASSIFIED_COST_RISK"
+    if components.get("zone_freshness") == "ZONE_UNKNOWN" or str(item.get("structure_zone_status") or "").upper() in {"", "UNAVAILABLE"}:
+        return "UNCLASSIFIED_STRUCTURE_MISSING"
+    return "UNCLASSIFIED_NEUTRAL_STRUCTURE"
+
+
+def _mid_long_unclassified_archetype_definition(archetype: str) -> str:
+    return {
+        "UNCLASSIFIED_LOW_ROOM": "Unclassified entry with low room to next resistance.",
+        "UNCLASSIFIED_CHASE_EXTENSION": "Unclassified entry with chase distance, late timing, or high extension proxy.",
+        "UNCLASSIFIED_WEAK_FLOW_OR_CROWDING": "Unclassified entry with weak initiative flow or crowded long context.",
+        "UNCLASSIFIED_COST_RISK": "Unclassified entry where projected cost/spread is already high.",
+        "UNCLASSIFIED_STRUCTURE_MISSING": "Unclassified because structure/zone data is missing or unavailable.",
+        "UNCLASSIFIED_NEUTRAL_STRUCTURE": "Unclassified row without one dominant pre-entry risk archetype.",
+    }.get(archetype, "Unclassified archetype.")
+
+
+def _mid_long_unclassified_archetype_read(row: dict[str, Any], *, min_sample: int) -> str:
+    sample = int(row.get("closed_count") or row.get("sample_count") or 0)
+    avg_r = _decimal_or_zero_snapshot(row.get("realistic_avg_r_closed"))
+    damage_delta = _decimal_or_zero_snapshot(row.get("early_damage_share_delta_vs_baseline"))
+    if sample < min_sample:
+        return "ARCHETYPE_SAMPLE_TOO_SMALL"
+    if avg_r > 0 and damage_delta < 0:
+        return "ARCHETYPE_PROMISING"
+    if avg_r < 0 and damage_delta > 0:
+        return "ARCHETYPE_DAMAGE_CLUSTER"
+    return "ARCHETYPE_MIXED"
+
+
+def _mid_long_dual_discovery_summary(
+    *,
+    predicate_rows: list[dict[str, Any]],
+    rule_rows: list[dict[str, Any]],
+    group_rows: list[dict[str, Any]],
+    cluster_rows: list[dict[str, Any]],
+    min_sample: int,
+) -> dict[str, Any]:
+    all_rows = [*predicate_rows, *rule_rows]
+    promising = [row for row in all_rows if row.get("read") == "PROMISING_PATTERN"]
+    weak = [row for row in all_rows if row.get("read") == "WEAK_VALIDATION_LIFT"]
+    overfit = [row for row in all_rows if row.get("read") == "TRAIN_ONLY_OVERFIT"]
+    archetype_promising = [row for row in cluster_rows if row.get("read") == "ARCHETYPE_PROMISING"]
+    if promising:
+        read = "PROMISING_PATTERN_FOUND"
+        next_action = "Replay the top validation-stable pattern with exact candle ordering before any shadow rule discussion."
+    elif weak:
+        read = "WEAK_PATTERN_ONLY"
+        next_action = "Treat weak-lift rows as hypotheses; collect more data or combine with clearer taxonomy first."
+    elif archetype_promising:
+        read = "TAXONOMY_ARCHETYPE_CANDIDATE"
+        next_action = "Inspect charts from promising unclassified archetypes and try deterministic family definition."
+    else:
+        read = "NO_STABLE_PATTERN_YET"
+        next_action = "Do not optimize thresholds. MID_LONG needs more structure definition or should remain research-only."
+    best = max(all_rows, key=_mid_long_dual_row_sort_key) if all_rows else None
+    return {
+        "read": read,
+        "min_sample": min_sample,
+        "promising_pattern_count": len(promising),
+        "weak_pattern_count": len(weak),
+        "train_only_overfit_count": len(overfit),
+        "promising_archetype_count": len(archetype_promising),
+        "best_rule": {
+            "rule_id": best.get("rule_id"),
+            "label": best.get("label"),
+            "read": best.get("read"),
+            "validation_selected_count": best.get("validation_selected_count"),
+            "validation_avg_delta_r": (best.get("validation") or {}).get("realistic_avg_r_delta_vs_baseline"),
+            "validation_total_r": (best.get("validation") or {}).get("realistic_total_r_closed"),
+            "validation_early_damage_delta_pct": (best.get("validation") or {}).get("early_damage_share_delta_vs_baseline"),
+        }
+        if best
+        else None,
+        "top_feature_group": group_rows[0] if group_rows else None,
+        "next_action": next_action,
+    }
 
 
 MID_LONG_MATCHED_NUMERIC_FEATURES: tuple[tuple[str, str, str], ...] = (

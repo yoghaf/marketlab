@@ -24,6 +24,10 @@ import {
   MidLongDefinitionLayerRow,
   MidLongDefinitionResetLab,
   MidLongDraftPreviewRow,
+  MidLongDualArchetypeRow,
+  MidLongDualFeatureGroupRow,
+  MidLongDualPatternRow,
+  MidLongDualTrackPatternDiscovery,
   MidLongDamageExperimentRow,
   MidLongEconomicRow,
   MidLongEvidenceComparisonRow,
@@ -113,13 +117,16 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
   return (
     <div className="space-y-5">
       <PageHeader
-        title="MID_LONG 1h Definition Audit"
-        badge="READ-ONLY - BELUM RULE V2.1"
-        subtitle="Halaman ini membedah fundamental MID_LONG 1h: apakah loss berasal dari definisi entry, structure, flow, crowding, geometry TP/SL, atau biaya realistis. Semua signal tetap masuk sampel; flag belum menjadi gate live."
+        title="MID_LONG 1h Legacy Archive"
+        badge="READ-ONLY - LEGACY V2 CONTROL"
+        subtitle="Arsip riset MID_LONG 1h lama. Fokus definisi long baru sudah dipindah ke Long Definition Lab V2; halaman ini tetap disimpan untuk audit historis dan pembanding baseline."
         updatedAt={fmtTime(payload?.generated_at_utc)}
       />
 
       <div className="flex flex-wrap gap-2 text-sm">
+        <Link className="rounded-md border border-blue-300 bg-blue-50 px-3 py-2 font-semibold text-blue-700 hover:bg-blue-100" href="/long-definition-lab">
+          Open Long Definition Lab V2
+        </Link>
         <Link className="rounded-md border border-line bg-white px-3 py-2 font-semibold hover:bg-field" href="/signal-performance?stage=MID_LONG&timeframe=1h&position_lock=true">
           Open closed signal history
         </Link>
@@ -178,6 +185,15 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
                   </div>
                 </div>
               </div>
+            </SectionCard>
+          )}
+
+          {audit.dual_track_pattern_discovery && (
+            <SectionCard
+              title="0. Dual-Track Pattern Discovery"
+              description="Lab lokal-safe: Track A mencari pola pre-entry yang bisa memisahkan early damage di validation; Track B memecah UNCLASSIFIED_MID_LONG menjadi archetype tanpa memakai outcome."
+            >
+              <DualTrackPatternDiscoveryPanel study={audit.dual_track_pattern_discovery} />
             </SectionCard>
           )}
 
@@ -399,6 +415,214 @@ export default async function MidLongDefinitionAuditPage({ searchParams }: { sea
       ) : (
         <EmptyState title="Definition audit belum tersedia" detail="Tunggu snapshot Signal Performance 1h dibuat oleh research loop." />
       )}
+    </div>
+  );
+}
+
+function DualTrackPatternDiscoveryPanel({ study }: { study: MidLongDualTrackPatternDiscovery }) {
+  const trackA = study.track_a_supervised_discrimination;
+  const trackB = study.track_b_unclassified_archetypes;
+  const best = study.summary.best_rule;
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-line p-4 md:grid-cols-2 xl:grid-cols-6">
+        <Info label="Read" value={humanFlag(study.summary.read)} helper={study.summary.next_action} />
+        <Info label="Train / validation" value={`${study.chronological_split.train_count} / ${study.chronological_split.validation_count}`} helper={`${fmtTime(study.chronological_split.validation_first)} -> ${fmtTime(study.chronological_split.validation_last)}`} />
+        <Info label="Promising" value={String(study.summary.promising_pattern_count)} helper="Validation-stable pattern" />
+        <Info label="Weak lift" value={String(study.summary.weak_pattern_count)} helper="Hipotesis, belum rule" />
+        <Info label="Overfit" value={String(study.summary.train_only_overfit_count)} helper="Bagus di train, gagal validation" />
+        <Info label="Best rule" value={best?.label || "-"} helper={best ? `${humanFlag(best.read || "")} | val ${best.validation_selected_count}` : "Belum ada"} />
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 xl:grid-cols-2">
+        <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+          <div className="font-bold">Track A - supervised discrimination</div>
+          <p className="mt-1">
+            Targetnya <strong>{study.target_policy.primary_target}</strong>: mencari tanda sebelum entry yang bisa mengurangi early damage di validation. R tetap dibaca sebagai ekonomi, bukan label tunggal.
+          </p>
+        </div>
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          <div className="font-bold">Track B - taxonomy discovery</div>
+          <p className="mt-1">
+            Targetnya <strong>{trackB.target_family}</strong>: pecah kelompok unclassified menjadi archetype pre-entry, lalu baru lihat outcome. Ini mencegah kita mengarang family dari hasil TP/SL.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-2">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Top validation predicates</div>
+            <div className="text-sm leading-6 text-slate-600">Single condition. Yang penting validation, bukan train.</div>
+          </div>
+          <DualPatternTable rows={trackA.predicate_rows.slice(0, 12)} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Top two-predicate rules</div>
+            <div className="text-sm leading-6 text-slate-600">Kombinasi sederhana yang masih bisa dibaca manusia.</div>
+          </div>
+          <DualPatternTable rows={trackA.rule_rows.slice(0, 12)} />
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-line p-4 2xl:grid-cols-[0.8fr_1.2fr]">
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Feature group read</div>
+            <div className="text-sm leading-6 text-slate-600">Kelompok mana yang paling sering memberi lift atau overfit.</div>
+          </div>
+          <DualFeatureGroupTable rows={trackA.feature_group_rows} />
+        </div>
+        <div className="rounded-md border border-line bg-white">
+          <div className="border-b border-line p-3">
+            <div className="font-bold">Unclassified archetypes</div>
+            <div className="text-sm leading-6 text-slate-600">Outcome dibaca setelah archetype ditentukan dari data sebelum entry.</div>
+          </div>
+          <DualArchetypeTable rows={trackB.archetype_rows} />
+        </div>
+      </div>
+
+      <div className="grid gap-2 border-t border-line p-4 text-sm text-slate-700 md:grid-cols-2">
+        {study.guardrails.map((guardrail) => (
+          <div key={guardrail} className="rounded-md border border-line bg-field/40 p-3">- {guardrail}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DualPatternTable({ rows }: { rows: MidLongDualPatternRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Belum ada row" detail="Pattern discovery belum menghasilkan candidate row." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Rule</th>
+            <th>Validation N</th>
+            <th>Validation TP/SL</th>
+            <th>Damage</th>
+            <th>Validation R</th>
+            <th>Train check</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.rule_id}>
+              <td className="min-w-80">
+                <div className="font-bold">{row.label}</div>
+                <div className="text-xs leading-5 text-slate-500">{row.expression}</div>
+                <div className="mt-1 text-xs text-slate-500">{humanFlag(row.feature_group)} | {row.row_type}</div>
+              </td>
+              <td>
+                <div className="font-bold">{row.validation_selected_count}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.validation_coverage_pct)} coverage</div>
+              </td>
+              <td>{row.validation.tp_count} / {row.validation.sl_count}</td>
+              <td>
+                <div>{formatPct(row.validation.early_damage_share_pct)}</div>
+                <div className="text-xs text-slate-500">delta {fmtSigned(row.validation.early_damage_share_delta_vs_baseline)}%</div>
+              </td>
+              <td>
+                <div className={toneClass(row.validation.realistic_total_r_closed)}>{fmtSigned(row.validation.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg delta {fmtSigned(row.validation.realistic_avg_r_delta_vs_baseline)}R</div>
+              </td>
+              <td>
+                <div>{row.train_selected_count} train</div>
+                <div className="text-xs text-slate-500">avg delta {fmtSigned(row.train.realistic_avg_r_delta_vs_baseline)}R</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DualFeatureGroupTable({ rows }: { rows: MidLongDualFeatureGroupRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Feature group kosong" detail="Belum ada group yang bisa dibaca." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Rules</th>
+            <th>Best rule</th>
+            <th>Validation R</th>
+            <th>Damage delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.feature_group}>
+              <td className="font-bold">{humanFlag(row.feature_group)}</td>
+              <td>
+                <div>{row.candidate_count} checked</div>
+                <div className="text-xs text-slate-500">{row.promising_count} promising | {row.weak_lift_count} weak | {row.overfit_count} overfit</div>
+              </td>
+              <td className="min-w-72">
+                <div className="font-semibold">{row.best_label}</div>
+                <div className="text-xs text-slate-500">{humanFlag(row.best_read || "")} | val {row.best_validation_count}</div>
+              </td>
+              <td>
+                <div className={toneClass(row.best_validation_total_r)}>{fmtSigned(row.best_validation_total_r)}R</div>
+                <div className="text-xs text-slate-500">avg delta {fmtSigned(row.best_validation_avg_delta_r)}R</div>
+              </td>
+              <td>{fmtSigned(row.best_validation_damage_delta_pct)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DualArchetypeTable({ rows }: { rows: MidLongDualArchetypeRow[] }) {
+  if (!rows.length) return <div className="p-4"><EmptyState title="Unclassified kosong" detail="Tidak ada unclassified archetype yang bisa dibaca." /></div>;
+  return (
+    <div className="table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>Archetype</th>
+            <th>N</th>
+            <th>TP / SL</th>
+            <th>Damage</th>
+            <th>Realistic R</th>
+            <th>Top symbol</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.archetype}>
+              <td className="min-w-80">
+                <div className="font-bold">{humanFlag(row.archetype)}</div>
+                <div className="text-xs leading-5 text-slate-500">{row.definition}</div>
+              </td>
+              <td>{row.closed_count}</td>
+              <td>{row.tp_count} / {row.sl_count}</td>
+              <td>
+                <div>{formatPct(row.early_damage_share_pct)}</div>
+                <div className="text-xs text-slate-500">delta {fmtSigned(row.early_damage_share_delta_vs_baseline)}%</div>
+              </td>
+              <td>
+                <div className={toneClass(row.realistic_total_r_closed)}>{fmtSigned(row.realistic_total_r_closed)}R</div>
+                <div className="text-xs text-slate-500">avg {fmtSigned(row.realistic_avg_r_closed)}R</div>
+              </td>
+              <td>
+                <div className="font-semibold">{row.top_symbol}</div>
+                <div className="text-xs text-slate-500">{formatPct(row.top_symbol_share_pct)}</div>
+              </td>
+              <td><StatusBadge value={humanFlag(row.read)} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -17,7 +17,7 @@ const labGroups = [
     title: "Research Fokus",
     links: [
       { href: "/mid-short-filter-combination-study", label: "MID_SHORT V2.1 Decision", helper: "Filter kandidat promosi" },
-      { href: "/mid-long-research-study", label: "MID_LONG 1h Baseline", helper: "V2 control only" },
+      { href: "/long-definition-lab", label: "LONG V2 Definition", helper: "Breakout/retest/squeeze" },
       { href: "/signal-misidentification-audit", label: "Misidentification Audit", helper: "Salah arah atau risk" },
       { href: "/signal-quality-lab", label: "Signal Quality Lab", helper: "Kenapa TP/SL" },
       { href: "/signal-1h-review", label: "1h Review", helper: "Long/short 1h" },
@@ -40,6 +40,7 @@ const labGroups = [
     title: "Raw & Ops",
     links: [
       { href: "/patch-notes", label: "Patch Notes", helper: "History update" },
+      { href: "/mid-long-research-study", label: "MID_LONG Archive", helper: "Legacy long audit" },
       { href: "/signal-factory", label: "Signal Factory Raw", helper: "Payload mentah" },
       { href: "/strategy-optimization-lab", label: "Strategy Optimization", helper: "Lab archived" },
       { href: "/v3-forward-log", label: "V3 Archive", helper: "Shadow lama" },

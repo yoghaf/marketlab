@@ -3793,6 +3793,102 @@ export type MidLongBaselineResponse = {
   guardrails: string[];
 };
 
+export type LongDefinitionLabResponse = {
+  generated_at_utc?: string | null;
+  lab_id: string;
+  scope: string;
+  read_only: boolean;
+  not_live_signal: boolean;
+  not_execution_instruction: boolean;
+  production_rule_change: boolean;
+  filters: {
+    direction: string;
+    timeframe: string;
+    stages: string[];
+    position_lock: boolean;
+    include_watch_only: boolean;
+    result_status: string;
+    limit: number;
+  };
+  snapshot_coverage: {
+    source_1h_rows: number;
+    long_1h_rows: number;
+    mid_long_rows: number;
+    early_long_rows: number;
+  };
+  latest_evaluation_candle_time?: string | null;
+  legacy_control: MidLongEntryCombinationRow;
+  summary: {
+    read: string;
+    raw_long_count: number;
+    candidate_family_count: number;
+    rejection_bucket_count: number;
+    best_candidate_family?: LongDefinitionFamilyRow | null;
+    worst_reject_bucket?: LongDefinitionFamilyRow | null;
+    next_action: string;
+  };
+  family_definitions: {
+    family_id: string;
+    family_label: string;
+    family_role: string;
+    description: string;
+  }[];
+  family_rows: LongDefinitionFamilyRow[];
+  candidate_rows: LongDefinitionFamilyRow[];
+  rejection_rows: LongDefinitionFamilyRow[];
+  latest_items: LongDefinitionSignalRow[];
+  guardrails: string[];
+  snapshot?: {
+    source?: string | null;
+    filename?: string | null;
+    generated_at_utc?: string | null;
+  } | null;
+  cache?: { hit: boolean; ttl_seconds: number };
+};
+
+export type LongDefinitionFamilyRow = MidLongEntryCombinationRow & {
+  family_id: string;
+  family_role: string;
+  family_label: string;
+  description: string;
+  research_status: string;
+};
+
+export type LongDefinitionSignalRow = {
+  signal_id?: string | null;
+  symbol?: string | null;
+  source_stage?: string | null;
+  timeframe?: string | null;
+  direction?: string | null;
+  signal_timestamp?: string | null;
+  signal_time_wib?: string | null;
+  result_status?: string | null;
+  realistic_realized_r?: string | number | null;
+  mfe_r?: string | number | null;
+  mae_r?: string | number | null;
+  family_id: string;
+  family_label: string;
+  family_role: string;
+  family_reason: string;
+  crowding_flags: string[];
+  anti_chase_flags: string[];
+  price_return?: string | number | null;
+  volume_ratio_vs_lookback?: string | number | null;
+  taker_buy_ratio?: string | number | null;
+  oi_change_pct?: string | number | null;
+  oi_zscore?: string | number | null;
+  funding_percentile_30d?: string | number | null;
+  room_to_next_resistance_atr?: string | number | null;
+  room_to_next_support_atr?: string | number | null;
+  entry_distance_from_zone_atr?: string | number | null;
+  atr_extension_normalized?: string | number | null;
+  range_ratio_vs_atr?: string | number | null;
+  close_penetration_atr?: string | number | null;
+  body_above_zone_ratio?: string | number | null;
+  structure_zone_status?: string | null;
+  structure_zone_primary_state?: string | null;
+};
+
 export type MidLongReverseShadowAudit = {
   scope: string;
   method: string;
@@ -3886,6 +3982,7 @@ export type MidLongDefinitionAudit = {
   first_hour_action_simulation?: MidLongFirstHourActionSimulation;
   matched_contrastive_anatomy?: MidLongMatchedContrastiveAnatomy;
   family_damage_hurdle_study?: MidLongFamilyDamageHurdleStudy;
+  dual_track_pattern_discovery?: MidLongDualTrackPatternDiscovery;
   first_hour_exact_replay_lab?: MidLongFirstHourExactReplayLab | null;
   definition_reset_lab?: MidLongDefinitionResetLab;
   sub_setup_split_lab?: MidLongSubSetupSplitLab;
@@ -3979,6 +4076,117 @@ export type MidLongMatchedContrastiveAnatomy = {
     next_action: string;
   };
   guardrails: string[];
+};
+
+export type MidLongDualTrackPatternDiscovery = {
+  scope: string;
+  method: string;
+  model_version: string;
+  execution_policy: {
+    runtime: string;
+    dependency_policy: string;
+    production_rule_change: boolean;
+  };
+  target_policy: {
+    primary_target: string;
+    primary_definition: string;
+    economic_metric: string;
+    forbidden_inputs: string[];
+  };
+  chronological_split: {
+    train_count: number;
+    validation_count: number;
+    train_first?: string | null;
+    train_last?: string | null;
+    validation_first?: string | null;
+    validation_last?: string | null;
+  };
+  track_a_supervised_discrimination: {
+    baseline_train: MidLongDualMetrics;
+    baseline_validation: MidLongDualMetrics;
+    predicate_rows: MidLongDualPatternRow[];
+    rule_rows: MidLongDualPatternRow[];
+    feature_group_rows: MidLongDualFeatureGroupRow[];
+  };
+  track_b_unclassified_archetypes: {
+    target_family: string;
+    archetype_rows: MidLongDualArchetypeRow[];
+  };
+  summary: {
+    read: string;
+    min_sample: number;
+    promising_pattern_count: number;
+    weak_pattern_count: number;
+    train_only_overfit_count: number;
+    promising_archetype_count: number;
+    best_rule?: {
+      rule_id?: string | null;
+      label?: string | null;
+      read?: string | null;
+      validation_selected_count?: number | string | null;
+      validation_avg_delta_r?: string | number | null;
+      validation_total_r?: string | number | null;
+      validation_early_damage_delta_pct?: string | number | null;
+    } | null;
+    top_feature_group?: MidLongDualFeatureGroupRow | null;
+    next_action: string;
+  };
+  guardrails: string[];
+};
+
+export type MidLongDualMetrics = {
+  sample_count: number;
+  closed_count: number;
+  tp_count: number;
+  sl_count: number;
+  early_damage_count: number;
+  early_damage_share_pct?: string | number | null;
+  realistic_total_r_closed?: string | number | null;
+  realistic_avg_r_closed?: string | number | null;
+  realistic_avg_r_delta_vs_baseline?: string | number | null;
+  realistic_total_r_delta_vs_baseline?: string | number | null;
+  early_damage_share_delta_vs_baseline?: string | number | null;
+  top_symbol?: string | null;
+  top_symbol_count?: number;
+  top_symbol_share_pct?: string | number | null;
+};
+
+export type MidLongDualPatternRow = {
+  row_type: string;
+  rule_id: string;
+  label: string;
+  feature_group: string;
+  expression: string;
+  train_selected_count: number;
+  validation_selected_count: number;
+  train_coverage_pct?: string | number | null;
+  validation_coverage_pct?: string | number | null;
+  train: MidLongDualMetrics;
+  validation: MidLongDualMetrics;
+  train_baseline: MidLongDualMetrics;
+  validation_baseline: MidLongDualMetrics;
+  read: string;
+};
+
+export type MidLongDualFeatureGroupRow = {
+  feature_group: string;
+  candidate_count: number;
+  promising_count: number;
+  weak_lift_count: number;
+  overfit_count: number;
+  best_rule_id?: string | null;
+  best_label?: string | null;
+  best_read?: string | null;
+  best_validation_count?: number | string | null;
+  best_validation_avg_delta_r?: string | number | null;
+  best_validation_total_r?: string | number | null;
+  best_validation_damage_delta_pct?: string | number | null;
+};
+
+export type MidLongDualArchetypeRow = MidLongEntryCombinationRow & MidLongDualMetrics & {
+  archetype: string;
+  definition: string;
+  read: string;
 };
 
 export type MidLongFamilyDamageHurdleStudy = {
